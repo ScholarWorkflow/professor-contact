@@ -535,6 +535,7 @@ selected_candidate_union = _contact_base.selected_candidate_union
 direction_fingerprint = _contact_base.direction_fingerprint
 render_frontmatter = _contact_base.render_frontmatter
 split_frontmatter = _contact_base.split_frontmatter
+managed_snapshot = _contact_base.managed_snapshot
 managed_conflict = _contact_base.managed_conflict
 managed_write = _contact_base.managed_write
 managed_write_raw = _contact_base.managed_write_raw
@@ -756,8 +757,9 @@ def _canonical_under(program_root: Path, value) -> str | None:
 # never builds a second channel or a second copy of any helper.
 _stage2_preflight = _stage2_preflight_module.build(
     fail=fail, soft_exit=soft_exit, emit=emit, read_json_file=read_json_file,
-    sha256_obj=sha256_obj, sha256_bytes=sha256_bytes, sha256_text=sha256_text,
-    split_frontmatter=split_frontmatter, direction_machine_id=direction_machine_id,
+    sha256_obj=sha256_obj, sha256_bytes=sha256_bytes,
+    managed_snapshot=managed_snapshot,
+    direction_machine_id=direction_machine_id,
     facts_direction_id=facts_direction_id, direction_relevant_keys=direction_relevant_keys,
     gap_scope_keys=gap_scope_keys, read_stage1_professor_entry=read_stage1_professor_entry,
     stage1_state_path=stage1_state_path, _canonical_under=_canonical_under,
@@ -799,6 +801,7 @@ cmd_stage2_plan = _stage2_preflight.cmd_stage2_plan
 
 STAGE2_PREFLIGHT_VERSION = _stage2_preflight_module.STAGE2_PREFLIGHT_VERSION
 STAGE2_RESOLUTION_SEMANTICS_VERSION = _stage2_preflight_module.STAGE2_RESOLUTION_SEMANTICS_VERSION
+STAGE2_U1_DISPLAY_VERSION = _stage2_preflight_module.STAGE2_U1_DISPLAY_VERSION
 STAGE2_TARGET_FILE_NAME = _stage2_preflight_module.STAGE2_TARGET_FILE_NAME
 AUTHORSHIP_LEDGER_FILE = _stage2_preflight_module.AUTHORSHIP_LEDGER_FILE
 PAPER_ANALYSIS_SCOPES = _stage2_preflight_module.PAPER_ANALYSIS_SCOPES
@@ -833,8 +836,11 @@ validate_narrative = _stage2_render.validate_narrative
 citation_render = _stage2_render.citation_render
 rendered_markdown_block_lines = _stage2_render.rendered_markdown_block_lines
 render_positioning_block = _stage2_render.render_positioning_block
+render_positioning_block_parts = _stage2_render.render_positioning_block_parts
 redact_item_keys = _stage2_render.redact_item_keys
+stage2_replace_declared_citations = _stage2_render.stage2_replace_declared_citations
 build_direction_pack = _stage2_render.build_direction_pack
+render_analysis_document = _stage2_render.render_analysis_document
 render_analysis_md = _stage2_render.render_analysis_md
 stage2_trusted_paper_title = _stage2_render.stage2_trusted_paper_title
 stage2_require_later_paper_titles = _stage2_render.stage2_require_later_paper_titles
@@ -850,14 +856,17 @@ _stage2_finalize = _stage2_finalize_module.build(
     fail=fail,
     soft_exit=soft_exit,
     now_utc=now_utc,
-    sha256_text=sha256_text,
+    sha256_bytes=sha256_bytes,
     sha256_obj=sha256_obj,
     read_json_file=read_json_file,
     direction_machine_id=direction_machine_id,
     pack_paper_index=pack_paper_index,
     pack_direction_relevant_keys=pack_direction_relevant_keys,
-    split_frontmatter=split_frontmatter,
+    managed_snapshot=managed_snapshot,
+    managed_conflict=managed_conflict,
     managed_write=managed_write,
+    atomic_write=atomic_write,
+    render_frontmatter=render_frontmatter,
     save_freshness_cache=save_freshness_cache,
     _resolve_evidence=_resolve_evidence,
     _current_resolve_fingerprint=_current_resolve_fingerprint,
@@ -868,10 +877,12 @@ _stage2_finalize = _stage2_finalize_module.build(
     read_stage1_professor_entry=read_stage1_professor_entry,
     stage2_preflight_cheap_inputs=stage2_preflight_cheap_inputs,
     stage2_preflight_metadata=stage2_preflight_metadata,
+    stage2_pack_state_fingerprint=stage2_pack_state_fingerprint,
     stage2_pack_content_fingerprint=stage2_pack_content_fingerprint,
     validate_freshness_results=validate_freshness_results,
     validate_narrative=validate_narrative,
     build_direction_pack=build_direction_pack,
+    render_analysis_document=render_analysis_document,
     render_analysis_md=render_analysis_md,
     MANAGED_BY=MANAGED_BY,
     INPUT_PACK_SCHEMA=INPUT_PACK_SCHEMA,
@@ -881,6 +892,7 @@ _stage2_finalize = _stage2_finalize_module.build(
     ANALYSIS_MD=ANALYSIS_MD,
     STAGE2_RESOLUTION_SEMANTICS_VERSION=STAGE2_RESOLUTION_SEMANTICS_VERSION,
     PLACEHOLDER_RE=PLACEHOLDER_RE,
+    STAGE2_U1_DISPLAY_VERSION=STAGE2_U1_DISPLAY_VERSION,
     stage2_trusted_paper_title=stage2_trusted_paper_title,
     stage2_require_later_paper_titles=stage2_require_later_paper_titles)
 
@@ -1459,26 +1471,22 @@ _stage2_validation = _stage2_validation_module.build(
     _stage3_normalized_absolute_path=_stage3_normalized_absolute_path,
     now_utc=now_utc,
     sha256_bytes=sha256_bytes,
-    sha256_text=sha256_text,
     sha256_obj=sha256_obj,
     read_json_file=read_json_file,
     truncate=truncate,
     filename_component=filename_component,
     direction_machine_id=direction_machine_id,
     pack_paper_index=pack_paper_index,
-    direction_papers=direction_papers,
     load_input_pack=load_input_pack,
     pack_direction_relevant_keys=pack_direction_relevant_keys,
-    split_frontmatter=split_frontmatter,
+    managed_snapshot=managed_snapshot,
     managed_conflict=managed_conflict,
     managed_write=managed_write,
     _canonical_directory=_canonical_directory,
     stage2_pack_state_fingerprint=stage2_pack_state_fingerprint,
     stage2_pack_content_fingerprint=stage2_pack_content_fingerprint,
     validate_narrative_entry=validate_narrative_entry,
-    rendered_markdown_block_lines=rendered_markdown_block_lines,
-    render_positioning_block=render_positioning_block,
-    render_analysis_md=render_analysis_md,
+    render_analysis_document=render_analysis_document,
     stage2_require_paper_reference_titles=stage2_require_paper_reference_titles,
     stage2_trusted_paper_title=stage2_trusted_paper_title,
     stage2_require_later_paper_titles=stage2_require_later_paper_titles,

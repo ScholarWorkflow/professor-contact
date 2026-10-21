@@ -268,10 +268,18 @@ def build(*, fail,
             lines.append("")
         return lines
 
-    def render_positioning_block(block: dict, paper_lookup: dict, gap_no: dict,
-                                 professor_dir: Path, seen: dict,
-                                 fallback_papers: dict | None = None) -> str:
-        """Render one structured positioning block exactly as the analysis view does."""
+    def render_positioning_block_parts(block: dict, paper_lookup: dict, gap_no: dict,
+                                       professor_dir: Path, seen: dict,
+                                       fallback_papers: dict | None = None,
+                                       meta_for=None) -> list:
+        """Render one positioning block as ordered (text, ownership) segments.
+
+        A substituted citation is its own segment: a P-paper title is a trusted
+        paper fact the model may not rewrite, while a later-paper title keeps
+        the existing narrative permission and a G placeholder's generated text
+        is not user-owned wording. Literal narrative wording stays one editable
+        segment.
+        """
         text = block["text"]
         fallback_papers = fallback_papers or {}
 
@@ -284,12 +292,36 @@ def build(*, fail,
                 "title": None, "year": None, "analysis_file": None}
             return citation_render(value, paper, professor_dir, seen)
 
-        text = PLACEHOLDER_RE.sub(replace, text)
-        examples = "；具体对象：{}；输入：{}；输出：{}。".format(
-            block.get("concrete_object", ""), block.get("input_example", ""),
-            block.get("output_example", ""))
+        def meta(field):
+            return meta_for(field) if meta_for else None
+
         prefix = "- " if block.get("kind") == "bullet" else ""
-        return f"{prefix}{text}{examples}"
+        parts = [(prefix, meta("template"))]
+        cursor = 0
+        for match in PLACEHOLDER_RE.finditer(text):
+            if match.start() > cursor:
+                parts.append((text[cursor:match.start()], meta("text")))
+            kind = match.group(1)
+            citation_type = "citation-g" if kind == "G" else (
+                "citation-l" if kind == "L" else "citation-p")
+            parts.append((replace(match), meta(citation_type)))
+            cursor = match.end()
+        if cursor < len(text):
+            parts.append((text[cursor:], meta("text")))
+        for field, label in (("concrete_object", "；具体对象："),
+                             ("input_example", "；输入："),
+                             ("output_example", "；输出：")):
+            parts.append((label, meta("template")))
+            parts.append((block.get(field, ""), meta(field)))
+        parts.append(("。", meta("template")))
+        return parts
+
+    def render_positioning_block(block: dict, paper_lookup: dict, gap_no: dict,
+                                 professor_dir: Path, seen: dict,
+                                 fallback_papers: dict | None = None) -> str:
+        """Render one structured positioning block exactly as the analysis view does."""
+        return "".join(text for text, _meta in render_positioning_block_parts(
+            block, paper_lookup, gap_no, professor_dir, seen, fallback_papers))
 
     def redact_item_keys(text: str, papers: dict) -> str:
         """Keep deterministic human-facing red lines free of internal item keys."""
@@ -298,6 +330,187 @@ def build(*, fail,
             if key in rendered:
                 rendered = rendered.replace(key, papers[key].get("title") or "该论文")
         return re.sub(r"(?<![A-Za-z0-9])[A-Z0-9]{8}(?![A-Za-z0-9])", "相关论文", rendered)
+
+    STAGE2_ZOTERO_PREFIX = "zotero://select/library/items/"
+    STAGE2_ZOTERO_ITEM_RE = re.compile(
+        r"zotero://select/library/items/([A-Za-z0-9]+)")
+    STAGE2_MARKDOWN_LINK_RE = re.compile(r"\[([^\]\n]*)\]\(([^)\n]*)\)")
+    STAGE2_ANY_URL_RE = re.compile(r"[A-Za-z][A-Za-z0-9+.-]*://[^\s<>()]+")
+
+    def stage2_trusted_citation_title(title_for, key: str, *, direction,
+                                      gap_id, field) -> str:
+        title = title_for(key)
+        if title is None:
+            fail("missing_paper_reference_title",
+                 f"cannot render the declared paper reference {key} in {field}: no trusted "
+                 "title exists in the current structured records or the accepted input pack; "
+                 "fix the source data instead of editing the managed Markdown",
+                 item_key=key, direction=direction, gap_id=gap_id, field=field)
+        return title
+
+    def stage2_replace_declared_citations_parts(text: str, declared_keys, title_for, *,
+                                                direction, gap_id, field):
+        """Return ``(text, owner)`` spans for declared paper references.
+
+        The source owns the paper facts (including a trusted title); the renderer
+        owns the link punctuation and Zotero destination it generates.  Existing
+        Markdown links keep their source owner, including an existing Zotero link
+        whose label is redrawn to the trusted title.
+        """
+        if not isinstance(text, str) or not text:
+            return []
+
+        keys = sorted({key for key in declared_keys if isinstance(key, str) and key},
+                      key=len, reverse=True)
+        key_pattern = None
+        if keys:
+            key_pattern = re.compile(
+                r"(?<![A-Za-z0-9])(?:" + "|".join(re.escape(key) for key in keys)
+                + r")(?![A-Za-z0-9])")
+
+        def trusted_title(key):
+            return stage2_trusted_citation_title(
+                title_for, key, direction=direction, gap_id=gap_id, field=field)
+
+        def generated_link(title, destination):
+            return [("[", "generator"), (title, "source"),
+                    (f"]({destination})", "generator")]
+
+        def replace_bare_keys(segment):
+            if not segment or key_pattern is None:
+                return [(segment, "source")] if segment else []
+            output, cursor = [], 0
+            for match in key_pattern.finditer(segment):
+                if match.start() > cursor:
+                    output.append((segment[cursor:match.start()], "source"))
+                key = match.group(0)
+                output.extend(generated_link(
+                    trusted_title(key), f"{STAGE2_ZOTERO_PREFIX}{key}"))
+                cursor = match.end()
+            if cursor < len(segment):
+                output.append((segment[cursor:], "source"))
+            return output
+
+        def convert_segment(segment):
+            """Convert bare declared keys and bare Zotero item URIs in one span."""
+            if not segment:
+                return []
+            output, cursor = [], 0
+            for zotero in STAGE2_ZOTERO_ITEM_RE.finditer(segment):
+                output.extend(replace_bare_keys(segment[cursor:zotero.start()]))
+                output.extend(generated_link(
+                    trusted_title(zotero.group(1)), zotero.group(0)))
+                cursor = zotero.end()
+            output.extend(replace_bare_keys(segment[cursor:]))
+            return output
+
+        protected = [(match.start(), match.end(), "link", match)
+                     for match in STAGE2_MARKDOWN_LINK_RE.finditer(text)]
+        for match in STAGE2_ANY_URL_RE.finditer(text):
+            if any(start <= match.start() < end
+                   for start, end, _kind, _match in protected):
+                continue
+            # Bare Zotero item URIs are explicit references and are converted
+            # below, not protected as opaque addresses.
+            if match.group(0).startswith(STAGE2_ZOTERO_PREFIX):
+                continue
+            protected.append((match.start(), match.end(), "external", match))
+        protected.sort(key=lambda entry: entry[0])
+
+        parts, cursor = [], 0
+        for start, end, kind, match in protected:
+            parts.extend(convert_segment(text[cursor:start]))
+            if kind == "link" and match.group(2).startswith(STAGE2_ZOTERO_PREFIX):
+                label, destination = match.group(1), match.group(2)
+                key = destination[len(STAGE2_ZOTERO_PREFIX):].strip()
+                title = trusted_title(key)
+                parts.append((match.group(0) if label == title
+                              else f"[{title}]({destination})", "source"))
+            else:
+                parts.append((match.group(0), "source"))
+            cursor = end
+        parts.extend(convert_segment(text[cursor:]))
+        return [(part, owner) for part, owner in parts if part]
+
+    def stage2_replace_declared_citations(text: str, declared_keys, title_for, *,
+                                          direction, gap_id, field) -> str:
+        """Display declared paper references as trusted titles plus Zotero links.
+
+        Only structured references (the field's declared candidate/completed keys or
+        an explicit `zotero://select/library/items/<key>` link) may turn into a
+        citation. Ordinary prose, dates and eight-character strings without a
+        structured reference stay untouched; external links and their labels are
+        never rewritten.
+        """
+        if not isinstance(text, str) or not text:
+            return text
+        return "".join(part for part, _owner in stage2_replace_declared_citations_parts(
+            text, declared_keys, title_for, direction=direction, gap_id=gap_id,
+            field=field))
+
+    class Stage2RenderDocument:
+        """Accumulate the exact managed Markdown body plus its ownership map.
+
+        Every text segment carries the source/generator/narrative/excluded region
+        it came from, so the validator can look up ownership by the final physical
+        line and character interval instead of reverse-engineering the Markdown.
+        """
+
+        def __init__(self):
+            self.rows: list[list] = []
+            self.fragments: list[dict] = []
+
+        def add(self, *segments) -> None:
+            row: list = []
+            self.rows.append(row)
+            for segment in segments:
+                if isinstance(segment, str):
+                    text, meta = segment, None
+                else:
+                    text, meta = segment
+                if text is None:
+                    continue
+                if meta is not None and not isinstance(meta, dict):
+                    meta = None
+                pieces = re.split(
+                    "\r\n|[\n\r\v\f\x1c\x1d\x1e\x85\u2028\u2029]",
+                    str(text))
+                for index, piece in enumerate(pieces):
+                    if index:
+                        row = []
+                        self.rows.append(row)
+                    if meta is not None and not meta.get("_fid"):
+                        self.fragments.append(meta)
+                        meta["_fid"] = len(self.fragments)
+                    if piece:
+                        row.append((piece, meta))
+
+        def add_line(self, text: str, meta=None) -> None:
+            self.add((text, meta) if meta is not None else text)
+
+        def blank(self) -> None:
+            self.rows.append([])
+
+        def build(self) -> tuple[str, dict]:
+            while self.rows and not any(text for text, _meta in self.rows[-1]):
+                self.rows.pop()
+            lines = ["".join(text for text, _meta in row) for row in self.rows]
+            body = "\n".join(lines) + "\n"
+            ranges: dict[int, list] = {id(meta): [] for meta in self.fragments}
+            for line_index, row in enumerate(self.rows):
+                column = 0
+                for text, meta in row:
+                    if meta is not None:
+                        ranges[id(meta)].append([line_index, column, column + len(text)])
+                    column += len(text)
+            fragments = []
+            for meta in self.fragments:
+                entry = {key: value for key, value in meta.items()
+                         if not str(key).startswith("_")}
+                entry["ranges"] = ranges[id(meta)]
+                fragments.append(entry)
+            return body, {"version": 1, "line_count": len(lines),
+                          "fragments": fragments}
 
     def build_direction_pack(ctx: Stage2Context, plan: dict, statuses: dict,
                              narrative: dict | None) -> tuple[dict, dict]:
@@ -328,6 +541,7 @@ def build(*, fail,
                     "gap_id": gap["gap_id"], "item_key": gap["item_key"],
                     "paper_title": gap.get("paper_title"), "paper_year": gap.get("paper_year"),
                     "completed_by_item_key": (record.get("candidate_paper_ids") or [None])[0],
+                    "candidate_paper_ids": list(record.get("candidate_paper_ids") or []),
                     "evidence": record.get("model_evidence"),
                     "quote_trunc": truncate(gap["quote"], 120),
                     "translation_zh": truncate(gap["translation_zh"], 120),
@@ -467,8 +681,9 @@ def build(*, fail,
         }
         return pack_direction, papers
 
-    def render_analysis_md(ctx: Stage2Context, pack: dict,
-                           state_fingerprint: str) -> str:
+    def render_analysis_document(ctx: Stage2Context, pack: dict,
+                                 state_fingerprint: str) -> tuple[str, dict]:
+        """Render the managed analysis body plus its generated ownership map."""
         professor = ctx.professor
         pack_directions = pack.get("directions") or []
         for direction in pack_directions:
@@ -478,14 +693,52 @@ def build(*, fail,
         full = sum(1 for papers in projected.values() for p in papers
                    if p.get("analysis_file") or p.get("pdf_available"))
         abstracted = sum(len(papers) for papers in projected.values()) - full
-        lines = [
-            f"# 套磁候选分析 — {professor}",
-            "",
-            "$$\\newcommand{\\dif}{\\mathop{}\\!\\mathrm{d}}$$",
-            "",
-            f"> {now_utc()} ｜ 数据来源：全文级 {full} 篇 · 摘要级 {abstracted} 篇（共 {full + abstracted} 篇）｜ 由 contact_state 确定性渲染（重跑=全量重写）",
-            "",
-        ]
+        papers_lookup = pack_paper_index(pack)
+
+        def paper_record(key: str) -> dict | None:
+            record = papers_lookup.get(key)
+            if isinstance(record, dict):
+                return record
+            return ctx.papers.get(key)
+
+        def title_for(key: str) -> str | None:
+            return stage2_trusted_paper_title(paper_record(key), key)
+
+        def meta(region: str, owner: str, direction=None, gap_id=None, field=None,
+                 repairable: bool = False) -> dict:
+            return {"region": region, "owner": owner, "direction": direction,
+                    "gap_id": gap_id, "field": field, "repairable": bool(repairable)}
+
+        def excluded(direction=None) -> dict:
+            return meta("excluded", "excluded", direction)
+
+        def generator(direction, gap_id=None, field=None) -> dict:
+            return meta("fixed", "generator", direction, gap_id, field)
+
+        def source(direction, gap_id, field) -> dict:
+            return meta("fixed", "source", direction, gap_id, field)
+
+        def narrative(direction, gap_id, field) -> dict:
+            return meta("narrative", "narrative", direction, gap_id, field, True)
+
+        def citation_segments(text, declared, direction, gap_id, field):
+            return [
+                (part, source(direction, gap_id, field) if owner == "source"
+                 else generator(direction, gap_id, field))
+                for part, owner in stage2_replace_declared_citations_parts(
+                    text, declared, title_for, direction=direction,
+                    gap_id=gap_id, field=field)]
+
+        doc = Stage2RenderDocument()
+        doc.add_line(f"# 套磁候选分析 — {professor}", excluded())
+        doc.blank()
+        doc.add_line("$$\\newcommand{\\dif}{\\mathop{}\\!\\mathrm{d}}$$", excluded())
+        doc.blank()
+        doc.add_line(
+            f"> {now_utc()} ｜ 数据来源：全文级 {full} 篇 · 摘要级 {abstracted} 篇"
+            f"（共 {full + abstracted} 篇）｜ 由 contact_state 确定性渲染（重跑=全量重写）",
+            excluded())
+        doc.blank()
         global_lines = []
         for d in pack_directions:
             for red in d.get("red_lines", []):
@@ -493,23 +746,24 @@ def build(*, fail,
                     text = red.get("text", "").strip()
                     if text and text not in global_lines:
                         global_lines.append(redact_item_keys(text, ctx.papers))
-        lines.append("## 全局须知")
-        lines.append("")
+        doc.add_line("## 全局须知", excluded())
+        doc.blank()
         for text in global_lines:
-            lines.append(f"- 【全局】{text}")
+            doc.add_line(f"- 【全局】{text}", excluded())
         if not global_lines:
-            lines.append("-（无跨方向红线）")
-        lines.append("")
+            doc.add_line("-（无跨方向红线）", excluded())
+        doc.blank()
         for index, d in enumerate(pack_directions, start=1):
+            did = direction_machine_id(d)
             credibility = d.get("credibility") or {}
             verdict = credibility.get("verdict") or "未判定"
             mainline = credibility.get("mainline") or "未判定"
             authorship_line = credibility.get("authorship_line") or "insufficient"
-            years = [p.get("year") for p in projected[direction_machine_id(d)] if p.get("year")]
+            years = [p.get("year") for p in projected[did] if p.get("year")]
             span = f"{min(years)}–{max(years)}" if years else "年份不明"
-            lines.append(f"## 方向 {index}：{d['name_ja']}（{d.get('name_zh') or ''}）")
-            lines.append("")
-            # Show resolution info if available
+            doc.add_line(f"## 方向 {index}：{d['name_ja']}（{d.get('name_zh') or ''}）",
+                         excluded())
+            doc.blank()
             rd = d.get("resolved_direction")
             if rd and rd.get("resolution_type") and rd["resolution_type"] != "unchanged":
                 res_type_label = {
@@ -518,37 +772,52 @@ def build(*, fail,
                     "merged_into": "合并",
                     "refined": "修正",
                 }.get(rd["resolution_type"], rd["resolution_type"])
-                lines.append(f"> 方向解析：{res_type_label}（provisional → resolved）")
+                doc.add_line(f"> 方向解析：{res_type_label}（provisional → resolved）", excluded())
                 if rd.get("papers_to_remove"):
-                    removed_titles = [ctx.papers.get(k, {}).get("title", k) for k in rd["papers_to_remove"]]
-                    lines.append(f"> - 移除论文：{'、'.join(removed_titles)}")
+                    removed_titles = [ctx.papers.get(k, {}).get("title", k)
+                                      for k in rd["papers_to_remove"]]
+                    doc.add_line(f"> - 移除论文：{'、'.join(removed_titles)}", excluded())
                 if rd.get("papers_to_add"):
-                    added_titles = [ctx.papers.get(k, {}).get("title", k) for k in rd["papers_to_add"]]
-                    lines.append(f"> + 新增论文：{'、'.join(added_titles)}")
-                lines.append("")
-            lines.append("### 方向定位")
-            lines.append("")
-            lines.append(f"<可信度一句：{verdict} ｜ {mainline} ｜ 相关 {len(projected[direction_machine_id(d)])} 篇（{span}）。>")
-            lines.append("")
-            lines.append(f"<署名线：{authorship_line}。>")
-            lines.append("")
+                    added_titles = [ctx.papers.get(k, {}).get("title", k)
+                                    for k in rd["papers_to_add"]]
+                    doc.add_line(f"> + 新增论文：{'、'.join(added_titles)}", excluded())
+                doc.blank()
+            doc.add_line("### 方向定位", excluded())
+            doc.blank()
+            doc.add_line(
+                f"<可信度一句：{verdict} ｜ {mainline} ｜ 相关 {len(projected[did])} 篇（{span}）。>",
+                excluded())
+            doc.blank()
+            doc.add_line(f"<署名线：{authorship_line}。>", excluded())
+            doc.blank()
             seen = {}
-            narrative = d.get("narrative") or {}
-            paper_lookup = {p["item_key"]: p for p in projected[direction_machine_id(d)]}
-            # Reference-scope records (relevant_keys) live in the same canonical
-            # map; they may be cited through {{P:key}} without being members.
+            narrative_data = d.get("narrative") or {}
+            paper_lookup = {p["item_key"]: p for p in projected[did]}
             reference_lookup = pack_paper_index(pack)
             gap_no = {g["gap_id"]: g["no"] for g in d.get("gap_shortlist", [])}
-            for block in narrative.get("positioning", []):
-                lines.append(render_positioning_block(
+            for block in narrative_data.get("positioning", []):
+                def narrative_meta(field, direction_id=did):
+                    if field == "template":
+                        return excluded(direction_id)
+                    # Only the model-authored narrative wording (and an allowed
+                    # expanded later-paper title) stays repairable. A P-paper
+                    # title is a trusted fact, and G placeholder text is
+                    # generated, so a blocking quote on them is not a rewrite
+                    # licence (the claim stays a source/generator finding).
+                    repairable = field in ("text", "concrete_object", "input_example",
+                                           "output_example", "citation-l")
+                    return meta("narrative", "narrative", direction_id, None,
+                                f"positioning.{field}", repairable)
+                doc.add(*render_positioning_block_parts(
                     block, paper_lookup, gap_no, ctx.professor_dir, seen,
-                    {**ctx.papers, **reference_lookup}))
-            lines.append("")
-            lines.append("### 论文一览")
-            lines.append("")
-            lines.append("| 论文 | 年份 | 署名 | 分析 | 来源 |")
-            lines.append("|---|---|---|---|---|")
-            for p in projected[direction_machine_id(d)]:
+                    {**ctx.papers, **reference_lookup},
+                    meta_for=narrative_meta))
+            doc.blank()
+            doc.add_line("### 论文一览", excluded())
+            doc.blank()
+            doc.add_line("| 论文 | 年份 | 署名 | 分析 | 来源 |", excluded())
+            doc.add_line("|---|---|---|---|---|", excluded())
+            for p in projected[did]:
                 analysis_cell = "—"
                 if p.get("analysis_file"):
                     analysis_cell = f"[分析]({rel_path(Path(p['analysis_file']), ctx.professor_dir)})"
@@ -558,64 +827,157 @@ def build(*, fail,
                     source_cell = "用户指定"
                 else:
                     source_cell = "provisional"
-                lines.append(f"| [{p['title']}](zotero://select/library/items/{p['item_key']}) | {p.get('year') or '—'} | {p.get('authorship') or 'pending'} | {analysis_cell} | {source_cell} |")
-            lines.append("")
-            lines.append("### 用户笔记（原文）")
-            lines.append("")
+                doc.add_line(
+                    f"| [{p['title']}](zotero://select/library/items/{p['item_key']}) "
+                    f"| {p.get('year') or '—'} | {p.get('authorship') or 'pending'} "
+                    f"| {analysis_cell} | {source_cell} |", excluded(did))
+            doc.blank()
+            doc.add_line("### 用户笔记（原文）", excluded())
+            doc.blank()
             if d.get("user_note"):
                 for note_line in d["user_note"].splitlines():
-                    lines.append(f"> {note_line}" if note_line else ">")
+                    doc.add_line(f"> {note_line}" if note_line else ">", excluded(did))
             else:
-                lines.append("> 仅打标记，未写用户笔记。")
-            lines.append("")
-            lines.append("### 可延伸方向")
-            lines.append("")
-            gap_notes = narrative.get("gap_notes") or {}
+                doc.add_line("> 仅打标记，未写用户笔记。", excluded(did))
+            doc.blank()
+            doc.add_line("### 可延伸方向", excluded())
+            doc.blank()
+            gap_notes = narrative_data.get("gap_notes") or {}
             for gap in d.get("gap_shortlist", []):
-                note_entry = gap_notes.get(gap["gap_id"], {})
-                summary = note_entry.get("summary") or truncate(gap["translation_zh"] or gap["quote"], 60)
+                gap_id = gap["gap_id"]
+                note_entry = gap_notes.get(gap_id, {})
+                summary_text = note_entry.get("summary")
+                if summary_text:
+                    summary = summary_text
+                    summary_meta = narrative(did, gap_id, "summary")
+                else:
+                    summary = truncate(gap.get("translation_zh") or gap.get("quote"), 60)
+                    summary_meta = source(did, gap_id, "summary")
                 explanation = note_entry.get("explanation")
                 number = gap["no"]
-                lines.append(f"1. 【作者 future work】{summary}（源自 [{gap['paper_title']}](zotero://select/library/items/{gap['item_key']})，{gap.get('paper_year') or '年份不明'}）")
-                details = [
-                    f"- 作者原话：「{gap['quote']}」",
-                    f"- 中译：{gap['translation_zh']}",
-                    f"- 页码：p.{gap.get('page')}（{gap.get('source')}）",
-                    f"- 当前状态：{gap.get('status')}（置信度 {gap.get('confidence')}）",
-                    f"- 后续论文依据：{gap.get('evidence') or '—'}",
-                    f"- 评估时间：{gap.get('evaluated_at') or '—'}",
-                ]
+                doc.add((f"1. 【作者 future work】", excluded(did)),
+                        (summary, summary_meta),
+                        ("（源自 ", excluded(did)),
+                        (f"[{gap.get('paper_title')}]"
+                         f"(zotero://select/library/items/{gap.get('item_key')})",
+                         excluded(did)),
+                        (f"，{gap.get('paper_year') or '年份不明'}）", excluded(did)))
+                card_id = gap_id
+                card_title = generator(did, card_id, "card_title")
+                doc.add_line(
+                    f"   <details><summary>freshness 卡 — future work #{number}</summary>",
+                    card_title)
+                doc.blank()
+                doc.add(("- 作者原话：「", generator(did, card_id, "label")),
+                        (str(gap.get("quote")), source(did, card_id, "quote")),
+                        ("」", generator(did, card_id, "label")))
+                doc.add(("- 中译：", generator(did, card_id, "label")),
+                        (str(gap.get("translation_zh")),
+                         source(did, card_id, "translation_zh")))
+                doc.add(("- 页码：p.", generator(did, card_id, "label")),
+                        (str(gap.get("page")), source(did, card_id, "page")),
+                        ("（", generator(did, card_id, "label")),
+                        (str(gap.get("source")), source(did, card_id, "source")),
+                        ("）", generator(did, card_id, "label")))
+                doc.add(("- 当前状态：", generator(did, card_id, "label")),
+                        (str(gap.get("status")), source(did, card_id, "status")),
+                        ("（置信度 ", generator(did, card_id, "label")),
+                        (str(gap.get("confidence")), source(did, card_id, "confidence")),
+                        ("）", generator(did, card_id, "label")))
+                declared = list(gap.get("candidate_paper_ids") or [])
+                evidence = citation_segments(
+                    gap.get("evidence") or "—", declared, did, card_id, "evidence")
+                doc.add(("- 后续论文依据：", generator(did, card_id, "label")),
+                        *evidence)
+                doc.add(("- 评估时间：", generator(did, card_id, "label")),
+                        (str(gap.get("evaluated_at") or "—"),
+                         source(did, card_id, "evaluated_at")))
                 if gap.get("status") == "partial":
-                    details.append(f"- 已做部分：{gap.get('completed_part') or '—'}")
-                    details.append(f"- 剩余缺口：{gap.get('remaining_gap') or '—'}")
+                    completed_part = citation_segments(
+                        gap.get("completed_part") or "—", declared, did, card_id,
+                        "completed_part")
+                    remaining_gap = citation_segments(
+                        gap.get("remaining_gap") or "—", declared, did, card_id,
+                        "remaining_gap")
+                    doc.add(("- 已做部分：", generator(did, card_id, "label")),
+                            *completed_part)
+                    doc.add(("- 剩余缺口：", generator(did, card_id, "label")),
+                            *remaining_gap)
                 if gap.get("status") == "unknown":
-                    details.append("- ⚠ 未查证是否已被后续工作实现（unknown 原因见后续论文依据）")
+                    doc.add_line(
+                        "- ⚠ 未查证是否已被后续工作实现（unknown 原因见后续论文依据）",
+                        generator(did, card_id, "warning"))
                 if explanation:
-                    details.append(f"- 大白话：{explanation}")
-                lines.append(f"   <details><summary>freshness 卡 — future work #{number}</summary>")
-                lines.append("")
-                lines.extend(details)
-                lines.append("")
-                lines.append("   </details>")
+                    doc.add(("- 大白话：", generator(did, card_id, "label")),
+                            (explanation, narrative(did, card_id, "explanation")))
+                doc.blank()
+                doc.add_line("   </details>", generator(did, card_id, "card_end"))
             if not d.get("gap_shortlist"):
-                lines.append("（本方向相关论文未明示可锚定的 future work，无可延伸点。）")
+                doc.add_line("（本方向相关论文未明示可锚定的 future work，无可延伸点。）",
+                             excluded(did))
             if d.get("gaps_excluded"):
-                lines.append("")
+                doc.blank()
                 names = "；".join(
-                    f"[{g['paper_title']}](zotero://select/library/items/{g['item_key']}) 的 1 条（{g['reason']}）"
+                    f"[{g['paper_title']}](zotero://select/library/items/{g['item_key']}) "
+                    f"的 1 条（{g['reason']}）"
                     for g in d["gaps_excluded"])
-                lines.append(f"> 另有 {len(d['gaps_excluded'])} 条本轮未选，不代表不重要：{names}。")
+                doc.add_line(
+                    f"> 另有 {len(d['gaps_excluded'])} 条本轮未选，不代表不重要：{names}。",
+                    excluded(did))
             if d.get("completed_gap_blacklist"):
-                lines.append("")
-                lines.append("**已被本人实现（禁锚）**")
-                lines.append("")
+                doc.blank()
+                doc.add_line("**已被本人实现（禁锚）**", excluded(did))
+                doc.blank()
                 for item in d["completed_gap_blacklist"]:
                     completed = item.get("completed_by_item_key")
-                    completed_render = (f"[{ctx.papers[completed].get('title')}](zotero://select/library/items/{completed})"
-                                        if completed and completed in ctx.papers else "（完成论文见证据）")
-                    lines.append(f"- {item['quote_trunc']}——《{item['paper_title']}》（{item.get('paper_year')}）→ 已被 {completed_render} 接住（依据：{item.get('evidence')}）。")
-            lines.append("")
-        return "\n".join(lines).rstrip() + "\n"
+                    blacklist_id = item.get("gap_id")
+                    declared = list(item.get("candidate_paper_ids") or [])
+                    if isinstance(completed, str) and completed:
+                        declared.append(completed)
+                    evidence = citation_segments(
+                        item.get("evidence") or "—", declared, did, blacklist_id,
+                        "blacklist_evidence")
+                    parts = [
+                        ("- ", generator(did, blacklist_id, "item")),
+                        (str(item.get("quote_trunc")),
+                         source(did, blacklist_id, "quote")),
+                        ("——《", generator(did, blacklist_id, "item")),
+                        (str(item.get("paper_title")),
+                         source(did, blacklist_id, "paper_title")),
+                        ("》（", generator(did, blacklist_id, "item")),
+                        (str(item.get("paper_year")),
+                         source(did, blacklist_id, "paper_year")),
+                        ("）→ 已被 ", generator(did, blacklist_id, "item")),
+                    ]
+                    if isinstance(completed, str) and completed:
+                        completed_title = stage2_trusted_citation_title(
+                            title_for, completed, direction=did,
+                            gap_id=blacklist_id, field="completed_paper")
+                        parts.extend([
+                            ("[", generator(did, blacklist_id, "completed_link")),
+                            (completed_title,
+                             source(did, blacklist_id, "completed_paper")),
+                            (f"]({STAGE2_ZOTERO_PREFIX}{completed})",
+                             generator(did, blacklist_id, "completed_link")),
+                        ])
+                    else:
+                        parts.append(("（完成论文见证据）",
+                                      generator(did, blacklist_id, "completed_paper")))
+                    parts.extend([
+                        (" 接住（依据：", generator(did, blacklist_id, "item")),
+                    ])
+                    parts.extend(evidence)
+                    parts.extend([
+                        ("）。", generator(did, blacklist_id, "item")),
+                    ])
+                    doc.add(*parts)
+            doc.blank()
+        return doc.build()
+
+    def render_analysis_md(ctx: Stage2Context, pack: dict,
+                           state_fingerprint: str) -> str:
+        body, _ownership = render_analysis_document(ctx, pack, state_fingerprint)
+        return body
 
     def stage2_trusted_paper_title(paper: dict | None, item_key: str) -> str | None:
         """Return a usable title only when a structured source contains one."""
@@ -661,7 +1023,10 @@ def build(*, fail,
                 citation_render=citation_render,
                 rendered_markdown_block_lines=rendered_markdown_block_lines,
                 render_positioning_block=render_positioning_block,
+                render_positioning_block_parts=render_positioning_block_parts,
                 redact_item_keys=redact_item_keys,
+                stage2_replace_declared_citations=stage2_replace_declared_citations,
                 build_direction_pack=build_direction_pack,
+                render_analysis_document=render_analysis_document,
                 render_analysis_md=render_analysis_md,
     )

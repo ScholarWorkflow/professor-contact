@@ -480,13 +480,21 @@ class Stage2ValidationHandoffTests(BaseEnv):
             meta["accepted_directions_sha256"] = contact_state.sha256_obj(pack["directions"])
         state_fingerprint = contact_state.stage2_pack_state_fingerprint(pack)
         ctx = contact_state.Stage2Context(Path(facts_path))
-        body = contact_state.render_analysis_md(ctx, pack, state_fingerprint)
+        body, ownership = contact_state.render_analysis_document(
+            ctx, pack, state_fingerprint)
         body_sha = contact_state.sha256_text(body)
+        ownership["body_sha256"] = body_sha
         (self.prof_dir / contact_state.ANALYSIS_MD).write_text(
             contact_state.render_frontmatter(state_fingerprint, body_sha) + body,
             encoding="utf-8")
+        render_entry = dict((pack.get("cache") or {}).get("render", {}).get(
+            contact_state.ANALYSIS_MD) or {})
+        render_entry.update({"sha256": body_sha, "ownership": ownership})
+        render_entry.setdefault(
+            "u1", {"display_version": contact_state.STAGE2_U1_DISPLAY_VERSION,
+                   "completed_at": contact_state.now_utc()})
         pack.setdefault("cache", {})["render"] = {
-            contact_state.ANALYSIS_MD: {"sha256": body_sha}}
+            contact_state.ANALYSIS_MD: render_entry}
         pack_path.write_text(json.dumps(pack, ensure_ascii=False, indent=1), encoding="utf-8")
         return meta
 
