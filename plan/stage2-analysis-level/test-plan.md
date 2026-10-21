@@ -91,7 +91,7 @@ U5 独立于 U1；若共享 owner 变化，只检查直接受影响的行为，�
 
 ### 4.2 现有 r4 测试资产、历史准备与执行 recipe
 
-- **准备状态**：测试资产已按 §2–3 改到 r4；准备时产品 r4 三个机制尚未入库（产品基线 `7c42a40`），当时预期 L1/L2 的矛盾 null、L4/L6 的锁内完整守卫、L5 的旧 header 绑定与 CRLF 字节检查失败。产品修复提交 `81c38d4`、`96a1b11` 已入库，r4／t5 结果见 §4.4／§4.5；不得为求绿改断言或预期。
+- **准备状态**：测试资产已按 §2–3 改到 r4；准备时产品 r4 三个机制尚未入库（产品基线 `7c42a40`），当时预期 L1/L2 的矛盾 null、L4/L6 的锁内完整守卫、L5 的旧 header 绑定与 CRLF 字节检查失败。产品修复提交 `81c38d4`、`96a1b11` 已入库（rebase 后等价 `33e49dc`、`4140b77`），r4／t5 结果见 §4.4／§4.5；不得为求绿改断言或预期。
 - **t4 历史准备预检（不是 t5 新执行）**：Python 3.14.7 下 `py_compile` 通过；测试模块可导入，`unittest.TestLoader` 统计 53 个测试；本 recipe 的类选择器与逐项方法选择器均可解析；`git diff --check` 通过。未运行任何目标测试方法、产品入口或正式业务请求。
 - **环境与工作目录**：仓库根目录下 `.apm/skills/professor-contact/tests`；Python 标准库 `unittest`；不加载模型、Zotero、网络或生产 PDF；每例沿用既有 `TemporaryDirectory`。本机 Python 3.14.7，CI 为 Python 3.12（`.github/workflows/ci.yml`）。
 - **准备顺序**：1）固定产品 r4 提交与测试提交，工作树干净；2）按 §3 建立合法正常接受基线，只有指定缺陷变体在调用前故意破坏对应层，header/cache/validator 初始自洽；3）运行下列选择器；4）只记录退出状态和业务结果，原始输出放仓库外。
@@ -166,7 +166,7 @@ U5 独立于 U1；若共享 owner 变化，只检查直接受影响的行为，�
 
 ### 4.4 r4 执行结果（2026-10-21）
 
-- **产品／测试提交**：`81c38d4fb0293051cc163d58e92672e4a0be4013`。在 `7c42a40` 的 r4 计划与 t4 测试基础上，补上矛盾 null 拒绝、锁内 artifact 守卫与写前复检、旧 header 绑定拒绝、CRLF 原始字节读取／摘要／比较／写入。
+- **产品／测试提交**：`81c38d4fb0293051cc163d58e92672e4a0be4013`（rebase 到 main `1d8f138` 后等价产品提交为 `33e49dc`；以下是 r4 当时执行结果，不追改）。在 `7c42a40` 的 r4 计划与 t4 测试基础上，补上矛盾 null 拒绝、锁内 artifact 守卫与写前复检、旧 header 绑定拒绝、CRLF 原始字节读取／摘要／比较／写入。
 - **测试夹具修正**：`TestManagedBodyBytes._write_managed` 原返回整个受管文件字节，`body_sha` 断言无法成立；按 §4.2 的“方法自身错误先停止受影响项、修正并复核”改为返回正文 SHA，未改变任何断言或预期。
 - **环境**：macOS、Python 3.14.7、标准库 unittest；工作树在执行前干净。`run_dir=/tmp/u5-r4-eX3zpI`，原始日志为 `module.log`、`preflight.log`、`lifecycle.log`，不提交。
 - **命令与结果**（三条命令退出码均为 0）：
@@ -179,12 +179,13 @@ U5 独立于 U1；若共享 owner 变化，只检查直接受影响的行为，�
 
 ### 4.5 t5 执行结果（2026-10-21）
 
-- **产品／测试提交**：`96a1b113722aaba3863b75fcf3b84c31a625639d`（在 t5 测试 `3c4cda1` 之上；修复普通 finalize 的消费后 artifact stat 守卫与旧 header 绑定、preflight／validation 的 CRLF 原始字节读取、refresh 的外部 pack 漂移拒绝）。执行前工作树干净。
-- **计划要求的定向选择器**：`test_normal_finalize_rejects_consumed_artifact_stat_drift`、`test_accepted_pack_drift_after_observation_returns_needs_refresh`、`test_crlf_body_without_a_matching_binding_is_not_accepted`；`Ran 3 tests in 1.365s`，`OK`。
-- **先前 CI 转红的入口额外复验**（不是新增测试义务）：`test_normal_acceptance_rejects_an_invalid_old_header_binding`、`test_preflight_reuses_a_legal_crlf_managed_file`、`test_validation_recording_accepts_a_legal_crlf_managed_file`、`test_normal_acceptance_rejects_an_invalid_old_validator_binding`；`Ran 4 tests in 1.569s`，`OK`。
-- **同提交的宽范围复验**：模块 `test_stage2_analysis_level` 为 `Ran 55 tests in 17.577s`、`OK`；§4.2 四个 preflight 选择器 `Ran 4 tests in 1.429s`、`OK`；L6 生命周期 `Ran 1 test in 5.985s`、`OK`。四分片 shard1 380、shard2 219、shard3 243、shard4 243（1 skipped），合计 1085 tests、无失败。
-- **环境与输出**：macOS、Python 3.14.7、标准库 unittest；`run_dir=/tmp/u5-t5-9qmYmP`，日志为 `t5.log`、`entries.log`、`module.log`、`preflight.log`、`lifecycle.log`、`shard1.log` 至 `shard4.log`；原始日志不提交。
-- **结论**：t5 定向三条及先前 CI 红入口在当前提交上均通过，未发现新增业务失败。宽范围复验只用于确认同提交回归；不把 55／1085 结果扩大为第二／第三关口或合并批准，独立审核者仍需在实际提交上给出关口结论。
+- **产品／测试提交**：在 main `1d8f138`（含 U1 r5）上 rebase 后，产品修复为 `4140b77`（t5 守卫与原始字节入口）＋`10430f5`（U1 ownership 与 U5 refine/legacy 重建边界）；测试为 `3120e19`、`1d3e612`、`bf09858`，夹具复核为 `1c0e370`。执行提交为 `1c0e370`，执行前工作树干净。
+- **计划要求的定向选择器**：`test_normal_finalize_rejects_consumed_artifact_stat_drift`、`test_accepted_pack_drift_after_observation_returns_needs_refresh`、`test_crlf_body_without_a_matching_binding_is_not_accepted`；`Ran 3 tests in 1.274s`，`OK`。
+- **先前 CI 转红的入口额外复验**（不是新增测试义务）：`test_normal_acceptance_rejects_an_invalid_old_header_binding`、`test_preflight_reuses_a_legal_crlf_managed_file`、`test_validation_recording_accepts_a_legal_crlf_managed_file`、`test_normal_acceptance_rejects_an_invalid_old_validator_binding`；`Ran 4 tests in 1.256s`，`OK`。
+- **同提交的宽范围复验**：模块 `test_stage2_analysis_level` 为 `Ran 55 tests in 14.333s`、`OK`；§4.2 四个 preflight 选择器 `Ran 4 tests in 1.052s`、`OK`；L6 生命周期 `Ran 1 test in 4.728s`、`OK`。四分片 shard1 380、shard2 219、shard3 243、shard4 249（1 skipped），合计 1091 tests、无失败。
+- **环境与输出**：macOS、Python 3.14.7、标准库 unittest；`run_dir=/tmp/u5-rebase-final-IklslU`，日志为 `t5.log`、`entries.log`、`module.log`、`preflight.log`、`lifecycle.log`、`shard1.log` 至 `shard4.log`；原始日志不提交。
+- **rebase 复核**：冲突集中在 U1 的 ownership/raw-byte 接受、refine 保留 preflight 与 U5 的清理/重建规则；最终由 `10430f5` 以 render ownership＋当前 validator 绑定区分“正常 refine 后”与“legacy pack”，`1c0e370` 只修 CRLF 夹具的 ownership 摘要和统计行替换，不改业务断言或预期。
+- **结论**：t5 定向三条及先前 CI 红入口在当前提交上均通过，未发现新增业务失败。宽范围复验只用于确认同提交回归；不把 55／1091 结果扩大为第二／第三关口或合并批准，独立审核者仍需在实际提交上给出关口结论。
 
 ## 5. 历史执行与公开审核记录（不是 r4 的通过结果）
 
