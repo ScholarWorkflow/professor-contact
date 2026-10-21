@@ -183,8 +183,26 @@ def build(*, Stage2Context,
         cache = pack.get("cache")
         meta = cache.get("preflight") if isinstance(cache, dict) else None
         if not isinstance(meta, dict):
-            return True
-        if meta.get("resolution_semantics_version") != STAGE2_RESOLUTION_SEMANTICS_VERSION:
+            # A normal U1 acceptance writes an ownership map and display marker
+            # into cache.render. A narrative refine deliberately clears the
+            # preflight proof, but that does not make the pack a legacy one:
+            # membership/reference scope was already persisted by the accepted
+            # pack and the render ownership still describes it.
+            render = cache.get("render") if isinstance(cache, dict) else None
+            entry = render.get(ANALYSIS_MD) if isinstance(render, dict) else None
+            if not (isinstance(entry, dict)
+                    and isinstance(entry.get("ownership"), dict)
+                    and isinstance(entry.get("u1"), dict)):
+                return True
+            validator = pack.get("validator")
+            if isinstance(validator, dict) \
+                    and validator.get("pack_sha256") != stage2_pack_content_fingerprint(pack):
+                # The pack content changed after the last validation (e.g. the
+                # already-recorded preflight block was removed), so this is a
+                # legacy slow-path acceptance even though a U1 ownership map is
+                # present.
+                return True
+        elif meta.get("resolution_semantics_version") != STAGE2_RESOLUTION_SEMANTICS_VERSION:
             return True
         for direction in pack.get("directions") or []:
             if not isinstance(direction, dict):
@@ -1140,7 +1158,9 @@ def build(*, Stage2Context,
             "professor": (old_pack or {}).get("professor"),
             "directions": {direction_machine_id(d): d.get("input_fingerprint")
                            for d in (old_pack or {}).get("directions") or []}})
-        if old_header is not None and old_header.get("state_fingerprint") != old_state_fingerprint:
+        if old_header is not None \
+                and isinstance((old_pack or {}).get("validator"), dict) \
+                and old_header.get("state_fingerprint") != old_state_fingerprint:
             fail("validation_render_stale",
                  "the managed Markdown header state fingerprint does not bind "
                  "the accepted pack; re-record the old evidence instead of rebinding it",
