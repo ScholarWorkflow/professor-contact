@@ -438,6 +438,12 @@ def build(*, atomic_json,
         selected = canonical_index_path(analysis_file)
         eligible = bool(current_path) and selected is not None and current_path == selected
         if declared is None:
+            # A missing/None facts declaration is honest only while the current
+            # analysis is unconfirmed. If the same eligible registration is
+            # already known, accepting null would create the split authority r4
+            # removes: the next preflight would revive the index value.
+            if eligible and recorded is not None:
+                return None, "analysis_level_conflict"
             return None, None
         if not eligible or recorded != declared:
             return None, "analysis_level_conflict"

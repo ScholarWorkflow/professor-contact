@@ -26,6 +26,7 @@ def build(*, Stage2Context,
           fail,
           soft_exit,
           now_utc,
+          sha256_text,
           sha256_bytes,
           sha256_obj,
           read_json_file,
@@ -33,6 +34,8 @@ def build(*, Stage2Context,
           pack_paper_index,
           pack_direction_relevant_keys,
           managed_snapshot,
+          split_frontmatter,
+          split_frontmatter_bytes,
           managed_conflict,
           managed_write,
           atomic_write,
@@ -53,6 +56,7 @@ def build(*, Stage2Context,
           stage2_refresh_preflight_metadata,
           observed_source_projection,
           observed_level_projection,
+          stage2_artifact_guard_reason,
           _pack_resolved_grouping,
           validate_freshness_results,
           validate_narrative,
@@ -507,12 +511,17 @@ def build(*, Stage2Context,
     def stage2_old_managed_render(md_path: Path) -> dict:
         """Read the current managed file: header, real body bytes and its binding."""
         try:
-            text = md_path.read_text(encoding="utf-8")
-        except (OSError, UnicodeDecodeError):
+            data = md_path.read_bytes()
+        except OSError:
             return {"readable": False, "header": None, "body": "", "body_sha256": None,
                     "binding_valid": False}
-        header, body = split_frontmatter(text)
-        body_sha = sha256_text(body)
+        header, body_bytes = split_frontmatter_bytes(data)
+        try:
+            body = body_bytes.decode("utf-8")
+        except UnicodeDecodeError:
+            return {"readable": False, "header": None, "body": "", "body_sha256": None,
+                    "binding_valid": False}
+        body_sha = sha256_bytes(body_bytes)
         binding_valid = (isinstance(header, dict)
                          and header.get("managed_by") == MANAGED_BY
                          and header.get("render_sha256") == body_sha)
@@ -1365,6 +1374,28 @@ def build(*, Stage2Context,
         return {"target": target, "snapshot": snapshot, "plan_inputs": plan_inputs}
 
 
+    def stage2_refresh_guard_drift(record: dict, direction_id: str) -> tuple[str | None, list]:
+        """Check the accepted per-direction artifact guards without re-reading PDFs."""
+        guards = record.get("artifact_guards")
+        if not isinstance(guards, dict):
+            return "refresh_requires_process", [f"artifact_guards_missing:{direction_id}"]
+        drift = []
+        for key, entries in guards.items():
+            if not isinstance(entries, dict):
+                drift.append(f"artifact_guards_invalid:{direction_id}:{key}")
+                continue
+            for kind, guard in entries.items():
+                if not isinstance(guard, dict):
+                    drift.append(f"artifact_guards_invalid:{direction_id}:{key}:{kind}")
+                    continue
+                reason = stage2_artifact_guard_reason(guard)
+                if reason:
+                    drift.append(f"{reason}:{direction_id}:{key}:{kind}")
+        if drift:
+            return "preflight_inputs_changed", drift
+        return None, []
+
+
     def stage2_refresh_evaluate(ctx: Stage2PackRefineContext, professor_dir: Path,
                                 plan: dict) -> dict:
         """The refresh gate: business sources equal and only levels/format change.
@@ -1417,6 +1448,9 @@ def build(*, Stage2Context,
                     professor_dir, keys):
                 soft_exit("needs_refresh", "preflight_inputs_changed",
                           drift=[f"source_changed:{direction_id}"])
+            guard_code, guard_drift = stage2_refresh_guard_drift(record, direction_id)
+            if guard_code:
+                soft_exit("needs_refresh", guard_code, drift=guard_drift)
             levels = observed_level_projection(professor_dir, keys)
             if not levels.get("valid"):
                 soft_exit("needs_refresh", "refresh_requires_process",
@@ -1501,11 +1535,26 @@ def build(*, Stage2Context,
                 "directions": {direction_machine_id(d): d.get("input_fingerprint")
                                for d in directions}})
             body = render_analysis_md(ctx, render_pack, state_fingerprint)
+            # Re-check the accepted source guards after rendering: a source can
+            # change after the gate but before the managed write. The render is
+            # still in memory here, so a drift exits with zero business writes.
+            for direction_id in sorted(gate["meta"].get("directions") or {}):
+                guard_code, guard_drift = stage2_refresh_guard_drift(
+                    gate["meta"]["directions"][direction_id], direction_id)
+                if guard_code:
+                    soft_exit("needs_refresh", guard_code, drift=guard_drift)
             md_path = professor_dir / ANALYSIS_MD
             old_render = (pack.get("cache") or {}).get("render") or {}
             previous_sha = ((old_render.get(ANALYSIS_MD) or {})
                             .get("sha256") if isinstance(old_render, dict) else None)
             old_render_file = stage2_old_managed_render(md_path)
+            if old_render_file.get("binding_valid"):
+                old_header = old_render_file.get("header") or {}
+                if old_header.get("state_fingerprint") != state_fingerprint:
+                    fail("validation_render_stale",
+                         "the managed Markdown header state fingerprint does not bind "
+                         "the current pack; re-record the old evidence instead of rebinding it",
+                         analysis_md=str(md_path))
             decision = None
             if getattr(args, "decision_file", None):
                 decision_data, error = read_json_file(Path(args.decision_file))

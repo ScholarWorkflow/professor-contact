@@ -1124,10 +1124,11 @@ class TestManagedBodyBytes(unittest.TestCase):
         ).encode("utf-8")
 
     def _write_managed(self, body, *, newline=b"\n", render_sha256=None):
+        body_sha = render_sha256 if render_sha256 is not None else sha256_bytes(body)
         data = managed_bytes(body, self.state_fingerprint, newline=newline,
-                             render_sha256=render_sha256)
+                             render_sha256=body_sha)
         self.path.write_bytes(data)
-        return data
+        return body_sha
 
     def _accept(self, candidate):
         return contact_state.stage2_accept_managed_body(
