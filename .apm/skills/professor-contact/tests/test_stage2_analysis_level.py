@@ -443,6 +443,8 @@ class TestConsumptionFreeze(AnalysisLevelBase):
         self.assertEqual(out["status"], "ok", out)
         pack = self._read_pack()
         meta = pack["cache"]["preflight"]
+        self.assertEqual(meta["resolution_evidence_projection"],
+                         companion["sources_projection"])
         self.assertEqual(set(meta["directions"]), {"DIR00001", "DIR00002"})
         expected_keys = {"DIR00001": {"AAAA1111", "BBBB2222", "CCCC3333"},
                          "DIR00002": {"BBBB2222"}}
@@ -989,12 +991,7 @@ class TestLevelRefresh(AnalysisLevelBase):
         plan = self.save_preflight("refresh-bad-pack-binding.json")
         payload = parse(self.refresh(plan))
         self.assertEqual(payload["status"], "error", payload)
-        self.assertTrue(payload.get("reason_code"), payload)
-        self.assertNotIn(payload.get("reason_code"),
-                         {"invalid_params", "invalid_facts",
-                          "preflight_inputs_changed", "refresh_requires_process",
-                          "stage2_writer_busy", "stage2_managed_write_failed",
-                          "stage2_pack_write_failed"}, payload)
+        self.assertEqual(payload["reason_code"], "validation_render_stale", payload)
         self.assertEqual(pack_path.read_bytes(), before_pack)
         self.assertEqual(md_path.read_bytes(), before_md)
         self.assertFalse(
