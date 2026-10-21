@@ -841,6 +841,29 @@ class TestLevelRefresh(AnalysisLevelBase):
         self.assertEqual(
             updated["cache"]["preflight"]["statistics_version"], 1)
 
+    def test_refresh_preserves_rendered_ownership_and_u1(self):
+        self.build_accepted_state()
+        pack = self._read_pack()
+        before = copy.deepcopy(pack["cache"]["render"][contact_state.ANALYSIS_MD])
+        self.assertIn("ownership", before)
+        self.assertIn("u1", before)
+        self.levels = {"AAAA1111": "abstract", "BBBB2222": "abstract"}
+        self.write_index()
+        plan = self.save_preflight("refresh-ownership.json")
+        self.assertEqual(read_json(plan)["action"], "refresh_level")
+        out = parse(self.refresh(plan))
+        self.assertEqual(out["status"], "ok", out)
+        after = self._read_pack()["cache"]["render"][contact_state.ANALYSIS_MD]
+        self.assertEqual(after.get("u1"), before["u1"])
+        ownership = after.get("ownership")
+        self.assertIsInstance(ownership, dict, after)
+        self.assertIn("version", ownership)
+        self.assertIn("line_count", ownership)
+        self.assertIn("fragments", ownership)
+        self.assertEqual(ownership.get("body_sha256"), after["sha256"])
+        _, body = split_managed_bytes(self.analysis_md().read_bytes())
+        self.assertEqual(after["sha256"], sha256_bytes(body))
+
     def test_refresh_with_an_illegal_index_level_returns_needs_refresh(self):
         self.build_accepted_state()
         self.levels = {"AAAA1111": "abstract", "BBBB2222": "abstract"}
