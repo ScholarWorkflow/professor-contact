@@ -27,7 +27,10 @@ STAGE2_PREFLIGHT_VERSION = "stage2-preflight-v1"
 # predates this marker (or a later version) must take the ordinary slow path
 # once so the display and its ownership map are accepted by the normal
 # finalize. The marker lives beside the body hash under cache.render.
-STAGE2_U1_DISPLAY_VERSION = 1
+# v2 (stage2-u1-r5): the marker also certifies the unified current/old paper
+# reference authority, the renderer map as the only direction authority, and
+# the lossless raw-byte acceptance/read contract.
+STAGE2_U1_DISPLAY_VERSION = 2
 
 # v2: issue #7 resolved directions become part of the Stage-2 contract the
 # preflight must prove — provisional→resolved set mapping in cache.preflight,
@@ -53,13 +56,13 @@ STAGE2_GUARD_KINDS = (("analysis", "analysis_file"), ("future_work", "sidecar_fi
                       ("facts", "facts_file"), ("pdf", "pdf_file"))
 
 def build(*, fail, soft_exit, emit, read_json_file, sha256_obj, sha256_bytes,
-          sha256_text, split_frontmatter, direction_machine_id, facts_direction_id,
-          direction_relevant_keys, gap_scope_keys, read_stage1_professor_entry,
-          stage1_state_path, _canonical_under, load_input_pack, load_freshness_cache,
-          _resolve_evidence, Stage2Context, filename_component, truncate,
-          INPUT_PACK, GAP_SCOPES, FRESHNESS_SCOPES, ANALYSIS_MD, MANAGED_BY,
-          SHORTLIST_MAX, ABSTRACT_INPUT_CHARS, QUOTE_INPUT_CHARS,
-          TRANSLATION_INPUT_CHARS):
+          managed_snapshot, direction_machine_id,
+          facts_direction_id, direction_relevant_keys, gap_scope_keys,
+          read_stage1_professor_entry, stage1_state_path, _canonical_under,
+          load_input_pack, load_freshness_cache, _resolve_evidence, Stage2Context,
+          filename_component, truncate, INPUT_PACK, GAP_SCOPES, FRESHNESS_SCOPES,
+          ANALYSIS_MD, MANAGED_BY, SHORTLIST_MAX, ABSTRACT_INPUT_CHARS,
+          QUOTE_INPUT_CHARS, TRANSLATION_INPUT_CHARS):
     def stage2_preflight_versions() -> dict:
         """Semantic identity of the Stage 2 resolution implementation.
 
@@ -566,12 +569,15 @@ def build(*, fail, soft_exit, emit, read_json_file, sha256_obj, sha256_bytes,
                 path = professor_dir / ANALYSIS_MD
                 if path.is_symlink():
                     return "validator_not_accepted"
-                try:
-                    content = path.read_text(encoding="utf-8")
-                except (OSError, UnicodeDecodeError):
+                # Stage-2 U1 r5 §3.4/§3.6: the reuse gate proves the actual
+                # managed body bytes on disk, not a universal-newline text view.
+                # A mere LF -> CRLF edit must miss the gate even when the marker
+                # is current and the validator is terminal.
+                snapshot = managed_snapshot(path)
+                if not isinstance(snapshot, dict) or snapshot.get("error"):
                     return "validator_not_accepted"
-                header, body = split_frontmatter(content)
-                body_sha = sha256_text(body)
+                header = snapshot.get("header")
+                body_sha = snapshot.get("body_sha256")
                 if not isinstance(header, dict) or header.get("managed_by") != MANAGED_BY \
                         or header.get("render_sha256") != body_sha or body_sha != render_sha \
                         or header.get("state_fingerprint") != stage2_pack_state_fingerprint(pack):
@@ -790,13 +796,20 @@ def build(*, fail, soft_exit, emit, read_json_file, sha256_obj, sha256_bytes,
                 all_reuse = False
         preflight_inputs = stage2_preflight_cheap_inputs(
             program_root, professor_dir, professor, target, snapshot_entry, params, current_year)
+        # The top-level receipt reports the union of the professor-wide and
+        # per-direction reasons, so a failure proven only by a direction's raw
+        # render/validator binding (e.g. validator_not_accepted) is visible
+        # without re-deriving it from the direction rows. Reuse stays empty.
+        reason_codes = sorted(set(professor_reasons).union(
+            *[row["reason_codes"] for row in direction_results])) if direction_results \
+            else sorted(set(professor_reasons))
         emit({
             "status": "ok",
             "professor": professor,
             "preflight_id": sha256_obj({"professor": professor,
                                         "preflight_inputs": preflight_inputs}),
             "action": "reuse_all" if all_reuse else "process",
-            "reason_codes": sorted(set(professor_reasons)),
+            "reason_codes": reason_codes,
             "pack_path": str(pack_path),
             "preflight_inputs": preflight_inputs,
             "directions": direction_results,

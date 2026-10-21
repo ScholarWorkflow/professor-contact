@@ -346,13 +346,70 @@ def build(*, atomic_write,
             body_start += 1
         return header, text[body_start:]
 
+    def managed_snapshot(path: Path) -> dict:
+        """Lossless byte view of one managed Markdown file (Stage-2 U1 r5).
+
+        Reads the file once as bytes, splits the frontmatter at the exact byte
+        separators the renderer writes, and keeps the original header/body bytes
+        next to the strict UTF-8 text view. Universal-newline text reads and
+        line-ending-dropping splitlines are never the proof of the original
+        file; callers that compare, hash or rewrite the managed body must use
+        this snapshot (plan stage2-u1-r5 §3.6).
+        """
+        try:
+            raw = Path(path).read_bytes()
+        except OSError as exc:
+            return {"error": f"unreadable: {exc}"}
+        if not raw.startswith(b"---\n"):
+            return {"error": "missing_frontmatter"}
+        end = raw.find(b"\n---\n", 4)
+        if end < 0:
+            return {"error": "unterminated_frontmatter"}
+        header_text_bytes = raw[4:end]
+        body_start = end + 5
+        if raw[body_start:body_start + 1] == b"\n":
+            body_start += 1
+        if body_start > len(raw):
+            return {"error": "invalid_body_boundary"}
+        body_bytes = raw[body_start:]
+        try:
+            header_text = header_text_bytes.decode("utf-8")
+            body_text = body_bytes.decode("utf-8")
+        except UnicodeDecodeError:
+            return {"error": "invalid_utf8"}
+        header = {}
+        for line in header_text.splitlines():
+            if ":" in line:
+                key, _, value = line.partition(":")
+                header[key.strip()] = value.strip()
+        header_bytes = raw[:body_start]
+        return {
+            "raw": raw,
+            "header_bytes": header_bytes,
+            "body_bytes": body_bytes,
+            "header": header,
+            "body": body_text,
+            "body_sha256": sha256_bytes(body_bytes),
+            "line_offset": header_bytes.count(b"\n"),
+        }
+
     def managed_conflict(path: Path, body: str, previous_sha: str | None,
                          decision: str | None) -> dict | None:
         body_sha = sha256_text(body)
         if path.is_file():
-            _, existing_body = split_frontmatter(path.read_text(encoding="utf-8"))
-            existing_sha = sha256_text(existing_body)
-            if existing_sha != body_sha and previous_sha and existing_sha != previous_sha:
+            snapshot = managed_snapshot(path)
+            existing_sha = snapshot.get("body_sha256") if isinstance(snapshot, dict) \
+                and not snapshot.get("error") else None
+            if existing_sha is None:
+                # An unreadable, unterminated or non-UTF-8 managed file cannot
+                # prove the accepted render; every write needs an explicit
+                # decision instead of silently replacing it.
+                if decision != "overwrite":
+                    return {"written": False, "needs_decision": True,
+                            "reason_code": "manual_markdown_changed",
+                            "target": str(path),
+                            "existing_sha256": None, "new_sha256": body_sha}
+            elif existing_sha != body_sha and previous_sha and existing_sha != previous_sha:
                 if decision != "overwrite":
                     return {"written": False, "needs_decision": True,
                             "reason_code": "manual_markdown_changed",
@@ -446,6 +503,7 @@ def build(*, atomic_write,
                 direction_fingerprint=direction_fingerprint,
                 render_frontmatter=render_frontmatter,
                 split_frontmatter=split_frontmatter,
+                managed_snapshot=managed_snapshot,
                 managed_conflict=managed_conflict,
                 managed_write=managed_write,
                 managed_write_raw=managed_write_raw,

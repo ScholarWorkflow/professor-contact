@@ -494,6 +494,7 @@ selected_candidate_union = _contact_base.selected_candidate_union
 direction_fingerprint = _contact_base.direction_fingerprint
 render_frontmatter = _contact_base.render_frontmatter
 split_frontmatter = _contact_base.split_frontmatter
+managed_snapshot = _contact_base.managed_snapshot
 managed_conflict = _contact_base.managed_conflict
 managed_write = _contact_base.managed_write
 managed_write_raw = _contact_base.managed_write_raw
@@ -715,8 +716,9 @@ def _canonical_under(program_root: Path, value) -> str | None:
 # never builds a second channel or a second copy of any helper.
 _stage2_preflight = _stage2_preflight_module.build(
     fail=fail, soft_exit=soft_exit, emit=emit, read_json_file=read_json_file,
-    sha256_obj=sha256_obj, sha256_bytes=sha256_bytes, sha256_text=sha256_text,
-    split_frontmatter=split_frontmatter, direction_machine_id=direction_machine_id,
+    sha256_obj=sha256_obj, sha256_bytes=sha256_bytes,
+    managed_snapshot=managed_snapshot,
+    direction_machine_id=direction_machine_id,
     facts_direction_id=facts_direction_id, direction_relevant_keys=direction_relevant_keys,
     gap_scope_keys=gap_scope_keys, read_stage1_professor_entry=read_stage1_professor_entry,
     stage1_state_path=stage1_state_path, _canonical_under=_canonical_under,
@@ -813,13 +815,13 @@ _stage2_finalize = _stage2_finalize_module.build(
     fail=fail,
     soft_exit=soft_exit,
     now_utc=now_utc,
-    sha256_text=sha256_text,
+    sha256_bytes=sha256_bytes,
     sha256_obj=sha256_obj,
     read_json_file=read_json_file,
     direction_machine_id=direction_machine_id,
     pack_paper_index=pack_paper_index,
     pack_direction_relevant_keys=pack_direction_relevant_keys,
-    split_frontmatter=split_frontmatter,
+    managed_snapshot=managed_snapshot,
     managed_conflict=managed_conflict,
     managed_write=managed_write,
     atomic_write=atomic_write,
@@ -4817,27 +4819,22 @@ _stage2_validation = _stage2_validation_module.build(
     _stage3_normalized_absolute_path=_stage3_normalized_absolute_path,
     now_utc=now_utc,
     sha256_bytes=sha256_bytes,
-    sha256_text=sha256_text,
     sha256_obj=sha256_obj,
     read_json_file=read_json_file,
     truncate=truncate,
     filename_component=filename_component,
     direction_machine_id=direction_machine_id,
     pack_paper_index=pack_paper_index,
-    direction_papers=direction_papers,
     load_input_pack=load_input_pack,
     pack_direction_relevant_keys=pack_direction_relevant_keys,
-    split_frontmatter=split_frontmatter,
+    managed_snapshot=managed_snapshot,
     managed_conflict=managed_conflict,
     managed_write=managed_write,
     _canonical_directory=_canonical_directory,
     stage2_pack_state_fingerprint=stage2_pack_state_fingerprint,
     stage2_pack_content_fingerprint=stage2_pack_content_fingerprint,
     validate_narrative_entry=validate_narrative_entry,
-    rendered_markdown_block_lines=rendered_markdown_block_lines,
-    render_positioning_block=render_positioning_block,
     render_analysis_document=render_analysis_document,
-    render_analysis_md=render_analysis_md,
     stage2_require_paper_reference_titles=stage2_require_paper_reference_titles,
     stage2_trusted_paper_title=stage2_trusted_paper_title,
     stage2_require_later_paper_titles=stage2_require_later_paper_titles,

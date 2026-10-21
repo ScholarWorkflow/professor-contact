@@ -272,7 +272,14 @@ def build(*, fail,
                                        professor_dir: Path, seen: dict,
                                        fallback_papers: dict | None = None,
                                        meta_for=None) -> list:
-        """Render one positioning block as ordered (text, ownership) segments."""
+        """Render one positioning block as ordered (text, ownership) segments.
+
+        A substituted citation is its own segment: a P-paper title is a trusted
+        paper fact the model may not rewrite, while a later-paper title keeps
+        the existing narrative permission and a G placeholder's generated text
+        is not user-owned wording. Literal narrative wording stays one editable
+        segment.
+        """
         text = block["text"]
         fallback_papers = fallback_papers or {}
 
@@ -285,13 +292,22 @@ def build(*, fail,
                 "title": None, "year": None, "analysis_file": None}
             return citation_render(value, paper, professor_dir, seen)
 
-        text = PLACEHOLDER_RE.sub(replace, text)
-
         def meta(field):
             return meta_for(field) if meta_for else None
 
         prefix = "- " if block.get("kind") == "bullet" else ""
-        parts = [(prefix, meta("template")), (text, meta("text"))]
+        parts = [(prefix, meta("template"))]
+        cursor = 0
+        for match in PLACEHOLDER_RE.finditer(text):
+            if match.start() > cursor:
+                parts.append((text[cursor:match.start()], meta("text")))
+            kind = match.group(1)
+            citation_type = "citation-g" if kind == "G" else (
+                "citation-l" if kind == "L" else "citation-p")
+            parts.append((replace(match), meta(citation_type)))
+            cursor = match.end()
+        if cursor < len(text):
+            parts.append((text[cursor:], meta("text")))
         for field, label in (("concrete_object", "；具体对象："),
                              ("input_example", "；输入："),
                              ("output_example", "；输出：")):
@@ -780,12 +796,22 @@ def build(*, fail,
             reference_lookup = pack_paper_index(pack)
             gap_no = {g["gap_id"]: g["no"] for g in d.get("gap_shortlist", [])}
             for block in narrative_data.get("positioning", []):
+                def narrative_meta(field, direction_id=did):
+                    if field == "template":
+                        return excluded(direction_id)
+                    # Only the model-authored narrative wording (and an allowed
+                    # expanded later-paper title) stays repairable. A P-paper
+                    # title is a trusted fact, and G placeholder text is
+                    # generated, so a blocking quote on them is not a rewrite
+                    # licence (the claim stays a source/generator finding).
+                    repairable = field in ("text", "concrete_object", "input_example",
+                                           "output_example", "citation-l")
+                    return meta("narrative", "narrative", direction_id, None,
+                                f"positioning.{field}", repairable)
                 doc.add(*render_positioning_block_parts(
                     block, paper_lookup, gap_no, ctx.professor_dir, seen,
                     {**ctx.papers, **reference_lookup},
-                    meta_for=lambda field, direction_id=did: (
-                        narrative(direction_id, None, f"positioning.{field}")
-                        if field != "template" else excluded(direction_id))))
+                    meta_for=narrative_meta))
             doc.blank()
             doc.add_line("### 论文一览", excluded())
             doc.blank()

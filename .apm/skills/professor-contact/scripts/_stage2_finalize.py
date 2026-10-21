@@ -24,13 +24,13 @@ def build(*, Stage2Context,
           fail,
           soft_exit,
           now_utc,
-          sha256_text,
+          sha256_bytes,
           sha256_obj,
           read_json_file,
           direction_machine_id,
           pack_paper_index,
           pack_direction_relevant_keys,
-          split_frontmatter,
+          managed_snapshot,
           managed_conflict,
           managed_write,
           atomic_write,
@@ -284,39 +284,58 @@ def build(*, Stage2Context,
     STAGE2_ZOTERO_LINK_RE = re.compile(
         r"zotero://select/library/items/([A-Za-z0-9]+)")
     STAGE2_GENERATED_TIMESTAMP_RE = re.compile(
-        r"^> \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z ｜ 数据来源：")
+        r"^> (\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z) ｜ 数据来源：")
+    STAGE2_GENERATED_TIME_PLACEHOLDER = "<generated-at>"
 
-    def stage2_strip_generated_timestamp(line: str) -> str:
+    def stage2_mask_generated_timestamp(line: str) -> str | None:
         match = STAGE2_GENERATED_TIMESTAMP_RE.match(line)
-        return line[match.end():] if match else line
+        if not match:
+            return None
+        return (line[:match.start(1)] + STAGE2_GENERATED_TIME_PLACEHOLDER
+                + line[match.end(1):])
 
-    def stage2_equivalent_managed_body(old_body: str, new_body: str) -> bool:
+    def stage2_equivalent_managed_body(old_body: bytes, new_body: bytes) -> bool:
         """Compare body bytes, ignoring only the top source line's generation time.
 
-        The exemption is limited to the generated source line before the first
-        section heading.  A user-note line can have the same ``> timestamp ｜
+        The exemption is limited to the fixed generated source line before the
+        first section heading, and then only to the timestamp value: prefix,
+        separator and every other byte (including each line ending) must be
+        identical.  A user-note line can have the same ``> timestamp ｜
         数据来源：`` shape; it is still compared verbatim.
         """
-        old_lines = old_body.splitlines()
-        new_lines = new_body.splitlines()
+        if old_body == new_body:
+            return True
+        try:
+            old_text = old_body.decode("utf-8")
+            new_text = new_body.decode("utf-8")
+        except UnicodeDecodeError:
+            return False
+        old_lines = old_text.splitlines(keepends=True)
+        new_lines = new_text.splitlines(keepends=True)
         if len(old_lines) != len(new_lines):
             return False
         first_section = next(
             (index for index, line in enumerate(old_lines)
              if line.startswith("## ")), len(old_lines))
-        source_index = next(
-            (index for index in range(first_section)
-             if STAGE2_GENERATED_TIMESTAMP_RE.match(old_lines[index])), None)
-        for index, (old_line, new_line) in enumerate(zip(old_lines, new_lines)):
-            if old_line == new_line:
-                continue
-            if (index == source_index
-                    and STAGE2_GENERATED_TIMESTAMP_RE.match(new_line)
-                    and stage2_strip_generated_timestamp(old_line)
-                    == stage2_strip_generated_timestamp(new_line)):
-                continue
+        source_index = None
+        for index in range(first_section):
+            if STAGE2_GENERATED_TIMESTAMP_RE.match(old_lines[index]):
+                if source_index is not None:
+                    # The fixed layout can only identify one generated source
+                    # line; anything else is not the renderer's fixed header.
+                    return False
+                source_index = index
+        if source_index is None:
             return False
-        return True
+        masked_old = list(old_lines)
+        masked_new = list(new_lines)
+        old_masked = stage2_mask_generated_timestamp(old_lines[source_index])
+        new_masked = stage2_mask_generated_timestamp(new_lines[source_index])
+        if old_masked is None or new_masked is None:
+            return False
+        masked_old[source_index] = old_masked
+        masked_new[source_index] = new_masked
+        return "".join(masked_old).encode("utf-8") == "".join(masked_new).encode("utf-8")
 
     def stage2_business_basis(pack: dict | None) -> dict:
         """Identity and licence sets that make the accepted Stage-2 result business state.
@@ -871,23 +890,22 @@ def build(*, Stage2Context,
         old_papers = pack_paper_index(old_pack or {})
 
         def _current_paper_record(key: str) -> dict | None:
-            """Current-facts record, filled from the old pack only where facts lack it.
+            """Whole current-facts record, or ``None`` when the key is absent.
 
-            Plan 3.1.3: the current facts are the trusted source for every
-            displayed/consumed paper field; the old cache may only fill values the
-            current facts do not state, and never overrides a current value.
+            Plan stage2-u1-r5 §3.1.4: existence decides the authority.  When the
+            current structured records contain the key, that whole record is the
+            reference authority — a null/empty/invalid title must fail instead of
+            being filled back from the old canonical pack (that would fabricate
+            a mixed "current" record).  Only a genuinely absent key may fall back
+            to an accepted old record, and the caller validates that old record's
+            title with the same trusted-title rule.
             """
             paper = ctx.papers.get(key)
             if paper is None:
                 return None
-            previous = old_papers.get(key)
-            record = dict(previous) if isinstance(previous, dict) else {}
-            record["item_key"] = key
-            for field, value in (("title", paper.get("title")), ("year", paper.get("year")),
-                                 ("authorship", paper.get("authorship")),
-                                 ("analysis_file", paper.get("analysis_file"))):
-                if value is not None:
-                    record[field] = value
+            record = {"item_key": key}
+            for field in ("title", "year", "authorship", "analysis_file"):
+                record[field] = paper.get(field)
             record["pdf_available"] = bool(paper.get("has_pdf"))
             facts_record, facts_state, facts_error = ctx.facts_for(key)
             record["facts_state"] = facts_state
@@ -934,25 +952,40 @@ def build(*, Stage2Context,
 
         # Always generate the actual candidate body and its ownership map: an
         # equal render-state projection is not proof that the bytes match.
+        # The old managed file is read once as bytes (r5 §3.6): body hashes,
+        # equivalence, header comparison and the write-back all use that one
+        # lossless snapshot, never a universal-newline text view.
         md_path = ctx.professor_dir / ANALYSIS_MD
-        old_body = None
+        old_body_bytes = None
+        old_body_text = None
         old_header = None
-        if md_path.is_file() and not md_path.is_symlink():
-            try:
-                document_text = md_path.read_text(encoding="utf-8")
-            except (OSError, UnicodeDecodeError):
-                document_text = ""
-            header, document_body = split_frontmatter(document_text)
-            if isinstance(header, dict) and header.get("managed_by") == MANAGED_BY:
-                old_header, old_body = header, document_body
-        old_body_sha = sha256_text(old_body) if old_body is not None else None
+        if md_path.is_symlink():
+            fail("validation_render_stale",
+                 "the managed analysis must not be a symlink", target=str(md_path))
+        if md_path.is_file():
+            snapshot = managed_snapshot(md_path)
+            if not isinstance(snapshot, dict) or snapshot.get("error"):
+                fail("validation_render_stale",
+                     "the managed analysis cannot be read losslessly as UTF-8 with a "
+                     "complete frontmatter/body split; restore the managed file before "
+                     "finalize may accept a new render", target=str(md_path),
+                     detail=snapshot.get("error") if isinstance(snapshot, dict) else None)
+            if isinstance(snapshot.get("header"), dict) \
+                    and snapshot["header"].get("managed_by") == MANAGED_BY:
+                old_header = snapshot["header"]
+                old_body_bytes = snapshot["body_bytes"]
+                old_body_text = snapshot["body"]
+        old_body_sha = sha256_bytes(old_body_bytes) if old_body_bytes is not None else None
         candidate_body, ownership = render_analysis_document(
             ctx, render_pack, state_fingerprint)
-        body_equivalent = (old_body is not None
-                           and stage2_equivalent_managed_body(old_body, candidate_body)
-                           and ownership.get("line_count") == len(old_body.splitlines()))
-        final_body = old_body if body_equivalent else candidate_body
-        final_sha = sha256_text(final_body)
+        candidate_body_bytes = candidate_body.encode("utf-8")
+        body_equivalent = (
+            old_body_bytes is not None
+            and stage2_equivalent_managed_body(old_body_bytes, candidate_body_bytes)
+            and ownership.get("line_count") == len(old_body_text.splitlines()))
+        final_body_bytes = old_body_bytes if body_equivalent else candidate_body_bytes
+        final_body = old_body_text if body_equivalent else candidate_body
+        final_sha = sha256_bytes(final_body_bytes)
 
         # Preserve accepted resolution provenance when this run applies no new
         # sidecar; dropping the rows would look like a business change and break
@@ -1052,7 +1085,8 @@ def build(*, Stage2Context,
               or old_header.get("render_sha256") != final_sha):
             # Equivalent body: keep its bytes, but the machine header still has to
             # describe the current pack.
-            atomic_write(md_path, render_frontmatter(state_fingerprint, final_sha) + final_body)
+            atomic_write(md_path,
+                         render_frontmatter(state_fingerprint, final_sha) + final_body)
             md_result = {"written": True, "needs_decision": False, "sha256": final_sha}
         ownership["body_sha256"] = final_sha
         render_entry = {

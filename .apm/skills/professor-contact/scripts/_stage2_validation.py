@@ -10,6 +10,7 @@ never builds a second failure channel.
 """
 from __future__ import annotations
 
+import copy
 import json
 import re
 from pathlib import Path
@@ -25,27 +26,22 @@ def build(*, Stage2Context,
           _stage3_normalized_absolute_path,
           now_utc,
           sha256_bytes,
-          sha256_text,
           sha256_obj,
           read_json_file,
           truncate,
           filename_component,
           direction_machine_id,
           pack_paper_index,
-          direction_papers,
           load_input_pack,
           pack_direction_relevant_keys,
-          split_frontmatter,
+          managed_snapshot,
           managed_conflict,
           managed_write,
           _canonical_directory,
           stage2_pack_state_fingerprint,
           stage2_pack_content_fingerprint,
           validate_narrative_entry,
-          rendered_markdown_block_lines,
-          render_positioning_block,
           render_analysis_document,
-          render_analysis_md,
           stage2_require_paper_reference_titles,
           stage2_trusted_paper_title,
           stage2_require_later_paper_titles,
@@ -76,8 +72,13 @@ def build(*, Stage2Context,
             }
         return {"papers": set(), "later": set(), "gaps": set()}
 
-    def stage2_bound_render(professor_dir: Path, pack: dict) -> tuple[str, str]:
-        """Return the managed analysis body only when pack and file prove the same render."""
+    def stage2_bound_snapshot(professor_dir: Path, pack: dict) -> dict:
+        """Return the lossless managed snapshot only when pack and file agree.
+
+        Stage-2 U1 r5 §3.6: the validator/report/refine chain proves the actual
+        bytes on disk.  A universal-newline text read would hide an LF -> CRLF
+        edit and let a stale report bind to a changed file.
+        """
         cache = pack.get("cache") if isinstance(pack, dict) else None
         render = cache.get("render") if isinstance(cache, dict) else None
         entry = render.get(ANALYSIS_MD) if isinstance(render, dict) else None
@@ -85,12 +86,17 @@ def build(*, Stage2Context,
         path = professor_dir / ANALYSIS_MD
         if path.is_symlink():
             fail("validation_render_stale", f"{path}: managed analysis must not be a symlink")
-        try:
-            content = path.read_text(encoding="utf-8")
-        except (OSError, UnicodeDecodeError) as exc:
-            fail("validation_render_missing", f"{path}: {exc}")
-        header, body = split_frontmatter(content)
-        current = sha256_text(body)
+        if not path.is_file():
+            fail("validation_render_missing", f"{path}: managed analysis is missing")
+        snapshot = managed_snapshot(path)
+        if not isinstance(snapshot, dict) or snapshot.get("error"):
+            fail("validation_render_stale",
+                 f"{path}: managed analysis cannot be read losslessly as UTF-8 with a "
+                 "complete frontmatter/body split",
+                 detail=snapshot.get("error") if isinstance(snapshot, dict) else None)
+        current = snapshot["body_sha256"]
+        body = snapshot["body"]
+        header = snapshot["header"]
         expected_title = f"# 套磁候选分析 — {pack.get('professor')}"
         if not isinstance(header, dict) or header.get("managed_by") != MANAGED_BY \
                 or header.get("render_sha256") != current or current != recorded \
@@ -98,7 +104,12 @@ def build(*, Stage2Context,
                 or not body.splitlines() or body.splitlines()[0] != expected_title:
             fail("validation_render_stale",
                  f"{path}: validator evidence must bind the current managed analysis render")
-        return current, body
+        return snapshot
+
+    def stage2_bound_render(professor_dir: Path, pack: dict) -> tuple[str, str]:
+        """Return the managed analysis body only when pack and file prove the same render."""
+        snapshot = stage2_bound_snapshot(professor_dir, pack)
+        return snapshot["body_sha256"], snapshot["body"]
 
     def stage2_merge_later_paper_source(target: dict, source: dict | None,
                                        item_key: str) -> None:
@@ -321,44 +332,60 @@ def build(*, Stage2Context,
                  f"validator output marks the managed analysis as another artifact: {target}")
 
         entry = matches[0]
-        render_sha, body = stage2_bound_render(professor_dir, pack)
-        try:
-            rendered_file = (professor_dir / ANALYSIS_MD).read_text(encoding="utf-8")
-        except (OSError, UnicodeDecodeError) as exc:
-            fail("validation_render_missing", f"{professor_dir / ANALYSIS_MD}: {exc}")
-        current_header, current_body = split_frontmatter(rendered_file)
-        body_start = rendered_file.find(current_body)
-        if not isinstance(current_header, dict) or current_header.get("managed_by") != MANAGED_BY \
-                or current_header.get("state_fingerprint") != stage2_pack_state_fingerprint(pack) \
-                or current_header.get("render_sha256") != render_sha \
-                or current_body != body or sha256_text(current_body) != render_sha:
-            fail("validation_render_stale",
-                 "managed analysis changed while the style-validator report was being read")
-        if body_start < 0:
-            fail("validation_render_stale", "managed analysis body could not be located in its file")
-        line_offset = rendered_file[:body_start].count("\n")
+        snapshot = stage2_bound_snapshot(professor_dir, pack)
+        render_sha = snapshot["body_sha256"]
+        body = snapshot["body"]
+        line_offset = snapshot["line_offset"]
         direction_rows = pack.get("directions")
         if not isinstance(direction_rows, list) or not direction_rows:
             fail("validation_direction_ambiguous", "input pack has no canonical directions")
-        lines = body.splitlines()
-        ownership = stage2_render_ownership(pack, render_sha, len(lines))
-        heading_indices = [i for i, line in enumerate(lines) if line.startswith("## 方向 ")]
-        if len(heading_indices) != len(direction_rows):
-            fail("validation_render_identity_mismatch",
-                 "managed analysis direction headings do not match the input pack")
-        sections = {}
-        for index, direction in enumerate(direction_rows):
-            expected = f"## 方向 {index + 1}：{direction.get('name_ja')}（{direction.get('name_zh') or ''}）"
-            line_index = heading_indices[index]
-            if lines[line_index] != expected:
-                fail("validation_render_identity_mismatch",
-                     "managed analysis direction order or names do not match the input pack")
-            end = heading_indices[index + 1] if index + 1 < len(heading_indices) else len(lines)
+        direction_ids = set()
+        for direction in direction_rows:
             did = direction_machine_id(direction)
-            if not isinstance(did, str) or not did or did in sections:
+            if not isinstance(did, str) or not did or did in direction_ids:
                 fail("validation_direction_ambiguous",
                      "input pack does not contain unique canonical direction IDs")
-            sections[did] = (line_index, end, direction)
+            direction_ids.add(did)
+        lines = body.splitlines()
+        ownership = stage2_render_ownership(pack, render_sha, len(lines))
+
+        def stage2_quote_mapping(hit: int, start: int, end: int):
+            """Resolve one quote interval through the renderer ownership map.
+
+            The map is the single direction/region authority (plan stage2-u1-r5
+            §3.2.2): Markdown headings, prefixes or the current text are never
+            scanned to rebuild it. A quote must be fully covered by mapped
+            fragments of one direction; a gap, an unknown direction or two
+            directions is not repairable.
+            """
+            overlaps = [fragment for fragment in ownership["fragments"]
+                        if isinstance(fragment, dict)
+                        and stage2_fragment_overlaps(fragment, hit, start, end)]
+            mapped = {fragment.get("direction") for fragment in overlaps
+                      if isinstance(fragment.get("direction"), str)}
+            if len(mapped) > 1:
+                fail("validation_direction_ambiguous",
+                     "the ownership map assigns one quote to several directions: "
+                     f"{sorted(mapped)}")
+            did = next(iter(mapped)) if mapped else None
+            spans = sorted(
+                (row[1], row[2])
+                for fragment in overlaps
+                if did is not None and fragment.get("direction") == did
+                for row in fragment.get("ranges") or []
+                if isinstance(row, list) and len(row) == 3 and row[0] == hit)
+            cursor = start
+            covered = False
+            for span_start, span_end in spans:
+                if span_end <= cursor:
+                    continue
+                if span_start > cursor:
+                    break
+                cursor = max(cursor, span_end)
+                if cursor >= end:
+                    covered = True
+                    break
+            return did, overlaps, covered
 
         blocking_by_direction: dict[str, list] = {}
         issues_by_direction: dict[str, list] = {}
@@ -384,38 +411,38 @@ def build(*, Stage2Context,
             if issue["severity"] == "blocking" and lines[hit].count(quote) != 1:
                 fail("validation_quote_ambiguous",
                      f"blocking quote appears more than once on its rendered line: {quote!r}")
-            owners = [(did, start, end, direction)
-                      for did, (start, end, direction) in sections.items()
-                      if start < hit < end]
-            if len(owners) != 1 and issue["severity"] != "blocking":
-                continue
-            if len(owners) != 1:
-                fail("validation_direction_ambiguous",
-                     f"blocking quote is not inside exactly one rendered direction: {quote!r}")
-            did, start, end, direction = owners[0]
-            issues_by_direction.setdefault(did, []).append(issue)
-            if issue["severity"] != "blocking":
-                continue
             quote_start = lines[hit].find(quote)
             quote_end = quote_start + len(quote)
-            overlaps = [fragment for fragment in ownership["fragments"]
-                        if isinstance(fragment, dict)
-                        and stage2_fragment_overlaps(fragment, hit, quote_start, quote_end)]
+            did, overlaps, covered = stage2_quote_mapping(hit, quote_start, quote_end)
             regions = {fragment.get("region") for fragment in overlaps}
             fixed_fragments = [fragment for fragment in overlaps
                                if fragment.get("region") == "fixed"]
             narrative_fragments = [fragment for fragment in overlaps
                                    if fragment.get("region") == "narrative"]
-            if fixed_fragments and "excluded" not in regions:
+            if did is not None and covered:
+                issues_by_direction.setdefault(did, []).append(issue)
+            if issue["severity"] != "blocking":
+                continue
+            if did is None or not covered:
+                if require_repairable:
+                    fail("validation_issue_not_repairable",
+                         "blocking quote is not fully covered by one direction's renderer "
+                         f"ownership map: {quote!r}")
+                if did is not None:
+                    blocking_by_direction.setdefault(did, []).append(issue)
+                continue
+            if "excluded" in regions:
+                # Existing excluded regions (user notes, paper lists, global red
+                # lines) keep their old boundary; they never become fixed cards.
+                if require_repairable:
+                    fail("validation_issue_not_repairable",
+                         f"blocking quote is outside repairable positioning or gap_notes prose: {quote!r}")
+                blocking_by_direction.setdefault(did, []).append(issue)
+                continue
+            if fixed_fragments:
                 # A real fixed-evidence blocker: record the source/generator
                 # owners so the finding can be handed to the actual data/renderer
                 # owner. It never grants the model a right to rewrite the fact.
-                mapped_directions = {fragment.get("direction") for fragment in overlaps
-                                     if isinstance(fragment.get("direction"), str)}
-                if mapped_directions and did not in mapped_directions:
-                    fail("validation_direction_ambiguous",
-                         "the ownership map and the rendered direction disagree for this "
-                         f"blocking quote: {quote!r}")
                 blockers, seen_owners = [], set()
                 for fragment in fixed_fragments:
                     owner_key = (fragment.get("owner"), fragment.get("gap_id"),
@@ -431,117 +458,13 @@ def build(*, Stage2Context,
                     "mixed_narrative": bool(narrative_fragments)})
                 blocking_by_direction.setdefault(did, []).append(issue)
                 continue
-            if "excluded" in regions or not narrative_fragments:
+            if not narrative_fragments or any(
+                    not fragment.get("repairable") for fragment in narrative_fragments):
                 if require_repairable:
                     fail("validation_issue_not_repairable",
                          f"blocking quote is outside repairable positioning or gap_notes prose: {quote!r}")
                 blocking_by_direction.setdefault(did, []).append(issue)
                 continue
-            repairable = False
-            narrative = direction.get("narrative") if isinstance(direction.get("narrative"), dict) else {}
-            section_lines = [i for i in range(start, end)]
-            paper_heading_lines = [i for i in section_lines if lines[i] == "### 论文一览"]
-            positioning_heading_lines = [i for i in section_lines
-                                         if lines[i] == "### 方向定位"]
-            positioning = narrative.get("positioning")
-            if not isinstance(positioning, list):
-                positioning = []
-            positioning_start = (positioning_heading_lines[0] + 6
-                                 if len(positioning_heading_lines) == 1 else -1)
-            positioning_block = None
-            positioning_rows_match = positioning_start >= 0
-            positioning_cursor = positioning_start
-            later_papers = {}
-            if positioning_rows_match:
-                projected = direction_papers(pack, direction)
-                paper_lookup = {paper["item_key"]: paper for paper in projected}
-                fallback_papers = dict(pack_paper_index(pack))
-                later_papers = stage2_rendered_later_papers(body, professor_dir, direction, pack)
-                for key, paper in later_papers.items():
-                    fallback_papers[key] = paper
-                gap_no = {gap["gap_id"]: gap["no"]
-                          for gap in direction.get("gap_shortlist", [])}
-                seen = {}
-                for block in positioning:
-                    if not isinstance(block, dict) or not isinstance(block.get("text"), str):
-                        positioning_rows_match = False
-                        break
-                    rendered_lines = render_positioning_block(
-                        block, paper_lookup, gap_no, professor_dir, seen,
-                        fallback_papers)
-                    rendered_lines = rendered_markdown_block_lines(rendered_lines)
-                    row_end = positioning_cursor + len(rendered_lines)
-                    if row_end > len(lines) or lines[positioning_cursor:row_end] != rendered_lines:
-                        positioning_rows_match = False
-                        break
-                    if positioning_cursor <= hit < row_end:
-                        positioning_block = block
-                    positioning_cursor = row_end
-            positioning_layout_matches = (
-                positioning_rows_match and len(paper_heading_lines) == 1
-                and positioning_cursor < len(lines)
-                and lines[positioning_cursor] == ""
-                and paper_heading_lines[0] == positioning_cursor + 1)
-            if positioning_layout_matches and positioning_block is not None:
-                for field in ("text", "concrete_object", "input_example", "output_example"):
-                    value = positioning_block.get(field)
-                    if isinstance(value, str) and quote in value:
-                        repairable = True
-                later_keys = {value for kind, value in PLACEHOLDER_RE.findall(
-                    positioning_block.get("text") or "") if kind == "L"}
-                repairable = repairable or any(
-                    isinstance(later_papers.get(key), dict)
-                    and isinstance(later_papers[key].get("title"), str)
-                    and quote in later_papers[key]["title"]
-                    for key in later_keys)
-
-            gap_heading_lines = [i for i in section_lines if lines[i] == "### 可延伸方向"]
-            if len(gap_heading_lines) == 1 and hit > gap_heading_lines[0]:
-                gap_notes = narrative.get("gap_notes") if isinstance(narrative.get("gap_notes"), dict) else {}
-                gap_rows = [i for i in section_lines
-                            if i > gap_heading_lines[0]
-                            and lines[i].startswith("1. 【作者 future work】")]
-                for gap_index, gap in enumerate(direction.get("gap_shortlist") or []):
-                    if gap_index >= len(gap_rows):
-                        break
-                    row_start = gap_rows[gap_index]
-                    row_end = gap_rows[gap_index + 1] if gap_index + 1 < len(gap_rows) else end
-                    note = gap_notes.get(gap.get("gap_id"), {})
-                    if not isinstance(note, dict):
-                        continue
-                    summary = note.get("summary")
-                    if isinstance(summary, str):
-                        quote_positions = []
-                        search_from = 0
-                        while True:
-                            quote_position = summary.find(quote, search_from)
-                            if quote_position < 0:
-                                break
-                            quote_positions.append(quote_position)
-                            search_from = quote_position + len(quote)
-                        if any(row_start + summary[:position].count("\n") == hit
-                               for position in quote_positions):
-                            repairable = True
-                    explanation = note.get("explanation")
-                    if isinstance(explanation, str):
-                        explanation_lines = [
-                            i for i in range(row_start, row_end)
-                            if lines[i].startswith("- 大白话：")]
-                        quote_positions = []
-                        search_from = 0
-                        while True:
-                            quote_position = explanation.find(quote, search_from)
-                            if quote_position < 0:
-                                break
-                            quote_positions.append(quote_position)
-                            search_from = quote_position + len(quote)
-                        if len(explanation_lines) == 1 and any(
-                                explanation_lines[0] + explanation[:position].count("\n") == hit
-                                for position in quote_positions):
-                            repairable = True
-            if not repairable and require_repairable:
-                fail("validation_issue_not_repairable",
-                     f"blocking quote is outside repairable positioning or gap_notes prose: {quote!r}")
             blocking_by_direction.setdefault(did, []).append(issue)
 
         return {"validation_sha256": sha256_bytes(raw), "render_sha256": render_sha,
@@ -928,9 +851,19 @@ def build(*, Stage2Context,
         updated_pack = dict(ctx.pack)
         updated_pack["generated_at"] = now_utc()
         updated_pack["directions"] = pack_directions
-        updated_pack["cache"] = {"render": {ANALYSIS_MD: {
+        # A refinement owns only cache.render; replacing the whole cache block
+        # would drop the recorded preflight proof (and force the next ordinary
+        # finalize into a membership rebuild) even though that proof is still
+        # the accepted one for this pack.
+        cache_block = copy.deepcopy(ctx.pack.get("cache")) \
+            if isinstance(ctx.pack.get("cache"), dict) else {}
+        render_block = dict(cache_block.get("render")) \
+            if isinstance(cache_block.get("render"), dict) else {}
+        render_block[ANALYSIS_MD] = {
             "sha256": md_result["sha256"], "ownership": ownership,
-            "u1": u1_marker}}}
+            "u1": u1_marker}
+        cache_block["render"] = render_block
+        updated_pack["cache"] = cache_block
         updated_validator = dict(validator)
         applied = set(updated_validator.get("correction_applied_direction_ids") or [])
         applied.update(rewrites)
