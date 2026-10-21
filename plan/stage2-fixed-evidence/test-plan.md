@@ -283,6 +283,6 @@ fi
 - 完整 shard4：按 `plan/test-grouping/shards.json` 的 shard4 25 个模块在 `9e843fb` 上运行：`Ran 249 tests in 78.654s`、`OK (skipped=1)`、退出码 0；日志 `/tmp/pr107-u1-shard4-final3.bziz5N/shard4-all.log`。
 - 受影响既有检查（`7b5dba9`）：`test_stage2_preflight` + `test_stage2_preflight_malformed` 40 项；`test_contact_state`/`test_stage2_facts_sidecar`/`test_stage2_chatgpt_handoff`/`test_resolved_direction_preflight_integration`/`test_stage2_resolved_direction` 160 项（`OK (skipped=1)`）。两处审核修正后的 U1/validation 路径已由上述 13 项与完整 shard4 重新覆盖。
 - 分片登记：`uv run --no-project python scripts/check_test_shards.py` -> `OK: 79 test modules across 4 shards, each with a stage`。
-- CI：head `71c7ead` 的 [run 39578155824](https://github.com/ScholarWorkflow/professor-contact/actions/runs/39578155824) shard1–shard4 与聚合 `test` 全部 success；最终修正 head 的 CI 结果在推送后另行记录。
+- CI：head `71c7ead` 的 [run 39578155824](https://github.com/ScholarWorkflow/professor-contact/actions/runs/39578155824) 与 head `3c1b846` 的 [run 39580929687](https://github.com/ScholarWorkflow/professor-contact/actions/runs/39580929687) 均 shard1–shard4 与聚合 `test` 全部 success。
 - 未执行：真实模型、Zotero 服务、PDF 下载、Codex/OpenCode runtime、安装交付；测试计划未要求全仓回归，本轮未跑。
 - 结果边界：本记录只报告实际执行结果，不批准 G1/G2/G3、计划或合并；测试计划关口与合并审核仍由各自负责人独立给出结论。
