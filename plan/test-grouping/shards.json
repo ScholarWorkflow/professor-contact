@@ -548,8 +548,8 @@
     {
      "name": "test_stage2_analysis_level",
      "stage": "stage2",
-     "seconds": 14.0,
-     "tests": 34,
+     "seconds": 16.0,
+     "tests": 65,
      "signals": {
       "stage2": 96
      }
