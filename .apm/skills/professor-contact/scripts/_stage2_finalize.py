@@ -1217,21 +1217,14 @@ def build(*, Stage2Context,
         # starts a new validation round (old raw report files stay untouched).
         # With neither change, an invalid old binding is an evidence error and is
         # rejected before writing, never silently re-bound.
-        old_validator = (old_pack or {}).get("validator")
+        old_validator, legality_error = stage2_validation_legality(old_pack)
         carried_validator = None
-        if isinstance(old_validator, dict) and old_validator.get("schema") == 2:
-            old_round = old_validator.get("round")
-            old_phase = old_validator.get("phase")
-            shape_valid = (
-                not isinstance(old_round, bool) and old_round in (1, 2)
-                and old_phase in ("needs_correction", "awaiting_second_validation",
-                                  "terminal")
-                and isinstance(old_validator.get("pending"), dict)
-                and isinstance(old_validator.get("results"), dict))
-            if not shape_valid and not business_changed:
+        if legality_error:
+            if not business_changed:
                 fail("validation_render_stale",
-                     "the recorded Stage-2 validation has a malformed round/phase state",
+                     f"the recorded Stage-2 validation state is malformed: {legality_error}",
                      target=str(md_path))
+        elif isinstance(old_validator, dict) and old_validator.get("schema") == 2:
             binding_valid = (
                 old_header is not None and old_body_sha is not None
                 and old_header.get("render_sha256") == old_body_sha
@@ -1241,7 +1234,7 @@ def build(*, Stage2Context,
                 and old_validator.get("pack_sha256")
                 == stage2_pack_content_fingerprint(old_pack))
             if not business_changed:
-                if not shape_valid or not binding_valid:
+                if not binding_valid:
                     fail("validation_render_stale",
                          "the recorded Stage-2 validation no longer binds the current managed "
                          "render/input pack and no business change explains it; re-record a "
