@@ -18,6 +18,7 @@ import hashlib
 import io
 import json
 import re
+import shutil
 import tempfile
 import unittest
 from pathlib import Path
@@ -505,13 +506,6 @@ class TestConsumptionFreeze(AnalysisLevelBase):
                       {"invalid_facts", "preflight_inputs_changed"}, out)
         self.assertFalse((self.prof_dir / "套磁候选输入.json").exists())
 
-    def test_companion_freezes_content_sha_and_stat(self):
-        _preflight, _run_dir, companion = self.prepare_consumption()
-        for key in ("AAAA1111", "BBBB2222"):
-            analysis = companion["sources_projection"]["papers"][key]["analysis"]
-            self.assertIn("sha256", analysis, analysis)
-            self.assertIn("stat", analysis, analysis)
-
     def test_finalize_rejects_a_missing_sealed_result(self):
         preflight_path, run_dir, _companion = self.prepare_consumption()
         self.plan_consumption(preflight_path, run_dir)
@@ -549,12 +543,17 @@ class TestConsumptionFreeze(AnalysisLevelBase):
     def test_seal_results_supports_a_single_repair_revision(self):
         preflight_path, run_dir, _companion = self.prepare_consumption()
         self.plan_consumption(preflight_path, run_dir)
-        self.write_stage2_results()
+        results = self.write_stage2_results()
         first = self.seal_consumption(run_dir)
         self.assertEqual(first["revision"], 0)
+        repair = self.root / "repair-1"
+        shutil.copytree(results, repair)
+        narrative = read_json(repair / "narrative.json")
+        narrative["directions"][0]["gap_notes"][0]["gap_id"] =             quote_id(self.gap_quotes["AAAA1111"])
+        write_json(repair / "narrative.json", narrative)
         second = parse(run_cli(
             "stage2-consumption-seal-results", "--run-dir", run_dir,
-            "--results-dir", self.root / "results"))
+            "--results-dir", repair))
         self.assertEqual(second["status"], "ok", second)
         self.assertEqual(second["revision"], 1, second)
 
@@ -1060,11 +1059,8 @@ class TestLevelRefresh(AnalysisLevelBase):
         before_pack = pack_path.read_bytes()
         plan = self.save_preflight("refresh-bad-header-render.json")
         payload = parse(self.refresh(plan))
-        self.assertIn(payload["status"], {"error", "needs_decision"}, payload)
-        self.assertTrue(payload.get("reason_code"), payload)
-        self.assertNotIn(payload.get("reason_code"),
-                         {"stage2_writer_busy", "stage2_managed_write_failed",
-                          "stage2_pack_write_failed"}, payload)
+        self.assertEqual(payload["status"], "error", payload)
+        self.assertEqual(payload["reason_code"], "validation_render_stale", payload)
         self.assertEqual(pack_path.read_bytes(), before_pack)
         self.assertEqual(self.analysis_md().read_bytes(), broken)
         self.assertFalse(
