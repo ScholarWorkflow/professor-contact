@@ -481,6 +481,8 @@ class FixedEvidenceBase(BaseEnv):
         self.assertEqual(null_snapshot["supporting"],
                          ["AAAA1111", "BBBB2222", "CCCC3333"])
         self.assertEqual(null_snapshot["relevant"], ["AAAA1111", "BBBB2222"])
+        self.assertEqual(
+            null_env.pack()["directions"][0]["narrative_later_papers"], {})
         null_gap_id = contact_state.quote_id(self.gap_quotes["AAAA1111"])
         self.assertEqual(
             [row["evidence"] for row in null_env.pack()["directions"][0]["gap_shortlist"]
@@ -620,27 +622,37 @@ class FixedEvidenceBase(BaseEnv):
         validator = pack["validator"]
         self.assertEqual(validator["fixed_blocking"], fixed)
         pending = validator["pending"]["DIR00001"]
-        self.assertEqual(len(pending), 6, pending)
-        # The raw report stays intact: original issues/notes/verdict are kept.
+        # The raw report stays intact: original issues/notes/verdict are kept and
+        # the pending rows are exactly those issues, not a rewritten summary.
         raw_report = json.loads(Path(report).read_text(encoding="utf-8"))
         original_issues = raw_report["files"][0]["issues"]
         self.assertEqual(len(original_issues), 6, original_issues)
+        self.assertEqual(pending, original_issues)
         self.assertEqual(validator["issues"], original_issues)
         self.assertEqual(validator["notes"], raw_report["notes"])
         self.assertEqual(validator["raw_verdict"], "fail")
 
         # Both refine entries stop before any job/body write, even when filtered.
+        pack_before = (env.prof_dir / contact_state.INPUT_PACK).read_bytes()
         for extra in ((), ("--direction-id", "DIR00001")):
             plan = env.refine_plan(report, *extra)
             self.assertEqual(plan["status"], "needs_owner_fix", plan)
             self.assertEqual(plan["reason_code"], "fixed_evidence_blocking", plan)
             self.assertEqual(plan["jobs"], [], plan)
             self.assertFalse(plan["write_needed"], plan)
+            self.assertEqual((env.prof_dir / contact_state.ANALYSIS_MD).read_bytes(),
+                             analysis_before)
+            self.assertEqual((env.prof_dir / contact_state.INPUT_PACK).read_bytes(),
+                             pack_before)
+            self.assertEqual(Path(report).read_bytes(), report_bytes)
             finalized = env.refine_finalize(results, report, *extra)
             self.assertEqual(finalized["status"], "needs_owner_fix", finalized)
             self.assertEqual(finalized["rewritten"], [], finalized)
-        self.assertEqual((env.prof_dir / contact_state.ANALYSIS_MD).read_bytes(),
-                         analysis_before)
+            self.assertEqual((env.prof_dir / contact_state.ANALYSIS_MD).read_bytes(),
+                             analysis_before)
+            self.assertEqual((env.prof_dir / contact_state.INPUT_PACK).read_bytes(),
+                             pack_before)
+            self.assertEqual(Path(report).read_bytes(), report_bytes)
 
         # The generated link punctuation and Zotero destination belong to the
         # generator, not to the source that supplied the paper facts.
@@ -824,6 +836,7 @@ class FixedEvidenceBase(BaseEnv):
         self.assertEqual(after_absent["supporting"], pending_snapshot["supporting"])
         self.assertEqual(after_absent["relevant"], pending_snapshot["relevant"])
         self.assertEqual(after_absent["narrative"], pending_snapshot["narrative"])
+        self.assertEqual(after_absent["gaps"], pending_snapshot["gaps"])
         self.assertEqual(after_absent["blacklist"], pending_snapshot["blacklist"])
         self.assertEqual(pending_env.cache_entries(), pending_cache)
 
@@ -874,6 +887,7 @@ class FixedEvidenceBase(BaseEnv):
         after_refine = pending_env.direction_snapshot()
         self.assertEqual(after_refine["supporting"], pending_snapshot["supporting"])
         self.assertEqual(after_refine["relevant"], pending_snapshot["relevant"])
+        self.assertEqual(after_refine["gaps"], pending_snapshot["gaps"])
         self.assertEqual(after_refine["blacklist"], pending_snapshot["blacklist"])
 
         # Restore the same facts bytes; ordinary acceptance must keep the pending
