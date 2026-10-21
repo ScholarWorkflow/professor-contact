@@ -1,8 +1,8 @@
 # U5：实际分析级别贯通与诚实统计测试计划
 
 - Test plan revision：`u5-analysis-level-t6`，2026-10-21。本正文 §1–4.3 整体取代 t5 的当前指令；§4.4–5（含 §4.6）保留历史原文，不并行执行历史 recipe。
-- 对象：[PR #106](https://github.com/ScholarWorkflow/professor-contact/pull/106)，分支 `plan/u5-analysis-level-redesign`；对齐同目录[执行计划 r6](implementation-plan.md)（本地当前测试提交 `5f3fe5d`；远端 `05bdbe1`；r6 正文基线 `8fa52a4`）。读取基线 head `d4e096f105805dfefbf2f4d883fc4919d49fce76`，r4 blob `38c71e8d4ec3105b639738086daccfdd360d9d6c`、t5 blob `6243873fb70d3c64e9db4773f04128f6878020be`。
-- 本轮已把 A/B/C/D/G/H 中可直接接线的 recipe 落到测试：A 的 malformed/empty index、B 的成功冻结提交、C 的缺失/未封存 companion、D 的 fresh process 漂移、G 的 cache/pack 旧态、H 的无 validator 刷新；模块 65 methods。B 的路径/状态绑定、C 的缺失/未封存、H 及 G 的 validator 分支预检通过；A 的 prepare 路径被产品接受、D 返回 `ok`、G 的 cache 返回 `needs_decision/manual_markdown_changed`，三处均为待产品修复的预期红。B 的内容 SHA/stat 冻结仍 pending，C 的错轮与 revision 1、D 的 resolved、E/F、B 的读边界及 A 的已有 F finalize/null 路径仍 pending；I 已于产品 `4d90c89`／测试 `223f5b4` 执行通过，见 §4.7。作者不自授 APPROVED/PASS。
+- 对象：[PR #106](https://github.com/ScholarWorkflow/professor-contact/pull/106)，分支 `plan/u5-analysis-level-redesign`；对齐同目录[执行计划 r6](implementation-plan.md)（本地当前测试提交 `6bb88bc`；远端 `05bdbe1`；r6 正文基线 `8fa52a4`）。读取基线 head `d4e096f105805dfefbf2f4d883fc4919d49fce76`，r4 blob `38c71e8d4ec3105b639738086daccfdd360d9d6c`、t5 blob `6243873fb70d3c64e9db4773f04128f6878020be`。
+- 本轮已落地 19 个方法，A–H 每个字母至少一条真实入口：A 的 prepare 坏 index 与 context-null、B 的成功冻结/冻结后变更/内容字段、C 的缺失/未封存/错轮/一次修复、D 的 fresh 漂移、E 的 freshness、F 的 missing facts、G 的 cache/header/validator/lifecycle、H 的无 validator。模块 75 methods。B 的 path/state、C 的缺失/未封存/错轮、E 的 freshness、H、G 的 validator/lifecycle 预检通过；A 的 prepare/context、B 的 post-freeze/content、C 的 revision 1、D 的 fresh、F 的 missing、G 的 cache/header 是待产品修复的预期红。B 的早期读/写后反采样、D 的 resolved、E 的候选全集仍 pending；I 已于产品 `4d90c89`／测试 `223f5b4` 执行通过，见 §4.7。作者不自授 APPROVED/PASS。
 - 历史正式状态：[2026-10-21 10:58:32Z 的 t5 G2/G3 审核](https://github.com/ScholarWorkflow/professor-contact/pull/106#issuecomment-6314274110) 已明确第二、第三关口通过，适用产品/测试 `96a1b113722aaba3863b75fcf3b84c31a625639d`、文档 `d4e096f`、执行计划 r4；原始结果见 §4.5。这一历史事实保留。早期 `3c4cda1` 阶段及 CI 失败已由后续修复/复验取代，不是当前仍失败清单；t6 依据新发现的独立错误路径重开直接受影响检查，不能把旧绿扩大为新机制通过。
 - **Rebase note（2026-10-21）**：分支已 rebase 到 main `1d8f138`（含 U1 r5）。t5 历史产品/文档提交等价为 `33e49dc`（r4）、`4140b77`（t5）＋`10430f5`（U1/U5 接受边界）、`78acaaf`（t5 记录）；t5 定向复验见 §4.6。t6 的新消费快照、完整比较及写前旧态机制仍未实现，本文的 pending 状态不因 rebase 改变。
 
@@ -27,12 +27,12 @@
 
 ## 3. 当前资产及有效结果边界
 
-已在 `d4e096f` 读取 `.apm/skills/professor-contact/tests/test_stage2_analysis_level.py`（t5 55 methods）；r6 字段测试在 `db63276`/`6022e98` 增补，本轮在 `5f3fe5d` 增补 A/B/C/D/G/H 的 9 个方法，当前为 65 methods。`test_stage2_preflight.py`、`stage2_upstream_fixture.py` 和相应产品源码继续沿用；现有资产不因更换文档 SHA 自动失效。
+已在 `d4e096f` 读取 `.apm/skills/professor-contact/tests/test_stage2_analysis_level.py`（t5 55 methods）；r6 字段测试在 `db63276`/`6022e98` 增补，本轮在 `6bb88bc` 增补 A/B/C/D/E/F/G/H 的 19 个方法，当前为 75 methods。`test_stage2_preflight.py`、`stage2_upstream_fixture.py` 和相应产品源码继续沿用；现有资产不因更换文档 SHA 自动失效。
 
 | 实际资产 | 保留/修订及明确局限 |
 |---|---|
-| TestFactsLevelContract / TestCanonicalMerge | known/null/路径冲突、合法 unknown、新成功、OCR-only 与 v1/schema2 兼容仍有效；`test_illegal_index_level...` 是合法 JSON 中 level=partial，不能替代 malformed JSON+null。A 的两个测试直接调用 `stage2-consumption-prepare`，预检为红产品缺口；已有 F 的 finalize/null 路径仍 pending。B 只证明 path/state，内容 SHA/stat 冻结 pending，不手造快照 |
-| TestConsumptionFreeze | 新资产：`test_process_commits_the_frozen_sources` 的路径/状态绑定已通过，内容 SHA/stat 冻结仍 pending；`test_finalize_rejects_a_missing_sealed_result`、`test_finalize_rejects_an_unsealed_companion` 已通过；`test_process_finalize_rejects_frozen_source_drift` 当前 `ok`，属产品缺口。B 的早期读/写后采样、C 的错轮与 revision 1、D 的 resolved 分支仍 pending |
+| TestFactsLevelContract / TestCanonicalMerge | known/null/路径冲突、合法 unknown、新成功、OCR-only 与 v1/schema2 兼容仍有效；A 的 prepare 两例与 context-null 两例均在 `6bb88bc` 预检为红产品缺口；已有 F 的 finalize/null 仍 pending。B 只证明 path/state，内容 SHA/stat 冻结 pending |
+| TestConsumptionFreeze | 新资产：路径/状态冻结、缺失/未封存/错轮、fresh 漂移、revision 1、post-freeze、content 字段均已落测试；路径/状态、缺失、未封存、错轮通过；fresh/post-freeze/content/revision 1 为产品缺口红。B 的早期读/写后反采样、D 的 resolved 仍 pending |
 | TestStatisticsRender | 两个统计/成员结果复用，既有 supporting 范围不扩大 |
 | TestPreflightBranches.test_normal_finalize_rejects_consumed_artifact_stat_drift | t5 真正 plan 是 reuse_all、jobs=[]、write_needed=false；保留其旧复用路径结果。它不能证明 fresh/resolved process，D 增加非空 jobs 的普通 finalize 输入 |
 | TestPreflightBranches 其他分流 / TestAnalyzerContract | unchanged、level-only、管理字段、固定 missing facts 出现、旧投影、illegal index 与 validator 复用仍有效；静态关键词不足以验证 freeze/准确读计划顺序，改读完整实际段落及 runner 注入接线 |
@@ -69,7 +69,7 @@ accepted 终态经现有 raw validation 报告与 `record_validation()` 建立�
 | preflight、普通 process、refresh 锁后/写前 | 实际调用同一 observe/compare，传 E/D/存在/源/guard/resolved/freshness/资格完整对象；普通比较 F→O、refresh B→O，元数据纯投影。D/E/F 业务结果加接线记录，不凭“其余共用”覆盖；当前 pending |
 | old-state 基础层→finalize/refresh/refine/preflight | 全部绑定和原 validator schema/lifecycle 检查早于首个 managed write；terminal 接受层只用于 reuse_all。G/H 支撑各层/独有入口；当前 pending |
 
-### 4.2 由最终机制推导的最小判别 recipe（A/B/C/D/G/H 部分已准备；E/F 及若干边界 pending；I 已执行通过）
+### 4.2 由最终机制推导的最小判别 recipe（A–H 每条至少一个真实入口已准备；11 个产品缺口红；B 早期/写后、D resolved、E 候选全集 pending；I 已执行通过）
 
 以下 A–H 是同一 L1–L6 内直接缺口。方法名为拟定落点，可等价合并现有方法但须保持每条独立错误路径的判别；不强求固定方法数。
 
@@ -78,7 +78,7 @@ accepted 终态经现有 raw validation 报告与 `record_validation()` 建立�
 - 在合法源/结果 fixture 上，准备两个最小输入：`_index.json` 原始 bytes 为 `b'{broken'`；合法 JSON 但 `papers=[]`。两个已知声明都置 null；先在合法 index 上保存合法 preflight，再破坏 index，直接调用 `stage2-consumption-prepare`。prepare 不读 facts，因此本测试只验坏 index 被 prepare 接受的产品缺口；null 声明的已有 F finalize 路径仍 pending，不能由本测试冒称覆盖。
 - 真实入口：`stage2-consumption-prepare` 在初次读坏 index 应按 invalid_facts 或既有来源输入错误拒绝；对已有 F 的 `stage2-plan`/`stage2-finalize --facts … --results … --preflight-file …` 应在源复核拒绝，不接受 null。若 plan/finalize 真正共用同一无条件 index 解析，只保留一个正常接受代表并核对另一路接线；不要把非法 level=partial 当本例。
 - 预期：零业务写入，不写新消费/统计基线，坏 index 保留；缺少坏 JSON/结构与 nullable 声明交叉的实际拒绝不能登记覆盖。拟定 `TestFactsLevelContract.test_malformed_index_cannot_be_accepted_as_null`。
-- **本轮准备状态**：已落地 `test_malformed_index_cannot_be_accepted_as_null` 与 `test_empty_papers_index_cannot_be_accepted_as_null`，直接调用 `stage2-consumption-prepare`。`5f3fe5d` 预检中产品返回 `ok` 并为坏 index 写 companion，未按 `invalid_facts` 拒绝，登记为产品缺口；已有 F 的 finalize 路径仍 pending。
+- **本轮准备状态**：prepare 坏 index 两例与 `Stage2Context` null 两例均已落地；`6bb88bc` 预检中 prepare 与 context 都接受坏 index/null，未按 `invalid_facts` 拒绝，登记为产品缺口红；已有 F 的 finalize 路径仍 pending。
 
 #### B. 真正冻结、成功只提交原消费值（L2/L4）
 
@@ -86,7 +86,7 @@ accepted 终态经现有 raw validation 报告与 `record_validation()` 建立�
 - 早期读边界反例：在 prepare 的真实读取 helper 完成读 bytes 后、其结束复核前只追加 A analysis 内容，使用已有同进程 wrapper/addCleanup 结构，在原读取后修改真实磁盘并返回原值。prepare 必须拒绝、不产出可用封存成功；不能把“读取前采样后返回新材料”当冻结。再一例在 prepare 已封存 F0 后、facts/plan 前修改 A，同轮不得重新读取并把 F1 当消费：plan 应拒绝；若先从 F0 组装 plan，则 finalize 必须拒绝且零接受写入。
 - 元数据反采样对照：合法未变例在首个正式 managed 写成功后的现有 wrapper 中才追加 A，返回原真实写结果，不 mock 比较/渲染。本次允许沿既有检查窗口完成或如实未完成；**无论成功或中断都不能持久化 F1 为本轮消费**。成功 pack 必须仍存 F0，下一次真实 preflight=process；若未完成，禁止成功标记、保留已发生真实写入，不能要求此 I/O 窗口零写入。此例独立区分写后 stat/source_projection 重采样，不能仅看无漂移成功。
 - 拟定 `TestConsumptionFreeze.test_process_commits_the_frozen_sources` 与同组边界 subTests；hook 精确落点由测试工程师在实现后记录，未具备入口时是准备 pending，不能伪称执行。
-- **本轮准备状态**：成功冻结提交已落在 `TestConsumptionFreeze.test_process_commits_the_frozen_sources`，`5f3fe5d` 预检通过；已断言 narrative/freshness 两类 job、方向键集合、磁盘 analysis bytes 不变、统计 header 与 level。测试仍以 companion 的 path/state 投影比对 cache；产品 companion 不保存内容 SHA/stat，因此内容冻结的独立 SHA/stat 仍标 pending，不把路径/状态自洽写成完整冻结通过。早期读边界、写后反采样两个反例仍 pending。
+- **本轮准备状态**：成功冻结提交已通过；post-freeze plan 与 content SHA/stat 两例已落地，`6bb88bc` 预检中 plan 返回 `ok`、companion 无 `sha256/stat`，均登记产品缺口红；早期读边界、写后反采样仍 pending。
 
 #### C. facts/plan/model/result 错轮和丢失（L4）
 
@@ -94,14 +94,14 @@ accepted 终态经现有 raw validation 报告与 `record_validation()` 建立�
 - 真实入口：相应 `stage2-plan`/`stage2-resolve-finalize`/`stage2-finalize`，以其当前阶段所需材料为准；错轮、缺源、job 输入/输出错配均 fail closed，零接受写入。不能补发 preflight、重建 companion/结果绑定求通过；先前相同 preflight_id 不足以通过。拟定 `test_consumption_binding_rejects_missing_or_other_run`。
 - 静态核对两个 analyzer 的 Step6.1.5/6.2 从 runner 保存的确切 plan 完整读取相关 model_input，自身判断并写完整聚合结果，再由 runner seal-results 绑定；没有这段接线时标产品缺口，不能只测自填关联 JSON 自洽就宣称实际模型阅读已被机器证明。resolve 现有 run_id/清空 results_dir 资产沿用，不再增加新公开 echo 字段或认证设施。
 - 同一两方向 fixture 内加原一次机械修复的最小对照：先仅把合法 narrative 中 DIR1 的一条 gap_notes[].gap_id 改错一个字符，其他 refs/占位符与方向内容全保持合法，seal revision=0 后真实 finalize 应 unknown_reference_id 且零接受写入；保留原 bytes/失败输出，重新读取同一 plan 的准确 ID，在 repair-1 子目录完整复制原集合后只纠正该 ID 及对应 refs/占位符。实际 seal-results 追加 revision=1，真实 finalize 在源未变时正常接受两方向聚合结果；原 revision=0 文件与失败记录仍在，sources/facts/plan 原摘要不变。再尝试 revision=2 应被原一次上限拒绝，不写接受产物；不增加一般结果重试或真实模型调用。拟定此为 `test_consumption_binding_preserves_the_single_reference_repair`，仅验证新封存机制直接影响的既有政策。
-- **本轮准备状态**：缺失封存结果、引用另一个未封存 companion 两个独立拒绝已落地（`test_finalize_rejects_a_missing_sealed_result`、`test_finalize_rejects_an_unsealed_companion`），`5f3fe5d` 预检通过；C 的“已封存结果/关联段错轮”仍 pending，revision 1 修复也 pending，因为当前 `stage2-consumption-seal-results` 只写 revision 0，没有追加一次修复的入口。
+- **本轮准备状态**：缺失封存结果、未封存 companion、已封存结果错轮三例通过；revision 1 单次修复已落测试但 `6bb88bc` 预检返回 `results already sealed`，登记产品缺口红。
 
 #### D. 非空 jobs 的普通 process 与 accepted resolved（L2/L4）
 
 - 保留 t5 reuse_all/jobs=[] 漂移例。新增 fresh process：在合法 accepted 后按既有 fixture 改 direction.user_note 并同步正式 target，使 preflight 真正 process；新 prepare/facts/plan 必须 process、narrative jobs 非空、write_needed=true，生成与本轮 plan 精确匹配的合法结果。不要靠缺 narrative/freshness 造成错误。freeze/plan 成功后、finalize 前只追加 B analysis bytes（路径/存在/level 不变）。调用真实普通 finalize，不走 `finalize_with_current_proof` 自动重建辅助；预期 needs_refresh/preflight_inputs_changed、零业务写入，源保留追加内容。
 - resolved 独立输入：复用 `test_stage2_resolved_direction.ResolvedPipelineMixin` 的 `make_paper`、`make_direction`、`write_facts`、`run_resolve`、`accept_resolved` 及 `CandidateUnionEvidenceTests` 的合法 facts-valid 输入构造，经过真实 resolve-plan→合法 result→resolve-finalize→用户 accepted 或 keep-provisional，保持原 proof/run_id/逐方向 fingerprint 全合法；沿 §4.1 E 外围构造把 C 固定在 E、D 外，resolution 使用完整 unchanged/keep-provisional 接受结果，不把 C 新增为成员；`make_paper` 为 A/B/C 建 sidecar/PDF/facts，A/B 沿原当前登记绑定 level。当前 `ResolvedPipelineMixin.write_facts()` 内部硬编码 selected_direction 并立即生成 proof，因此测试准备时给该 helper 增加可选 gap_scope 参数（默认仍 selected_direction），本例调用时传 relevant，使首次写 facts 与首次 prepare_stage2_proof 就使用相关参数；C year=2020 在 make_paper 时给定。不得先调用原 helper 再补字段/重建 proof，也不使用会重新生成 proof 的 finalize 便利包装。本轮 stage2 jobs 至少 narrative 非空。封存后仅变 `CCCC3333` 候选 analysis 或 facts 原文件，C 不在 relevant/gap，但在 E；不改 target/facts/结果/resolved sidecar。真实普通 finalize 同样应拒绝且 sidecar/pack/Markdown/cache/report 零改写，不能以 resolved_directions_stale 或 invalid_result_json 的先置坏夹具代替 E 漂移检查。
 - 为区分 finalize 入口复核与写前复核，fresh 例可将同一唯一源改动延迟到真实 render 完成后、首写前；用原 renderer wrapper 返回原 body，只做一次磁盘修改。普通 finalize 的初次 F→O 与写前 F→O 必须都实际接线；已有首轮与 resolved 例选前者、fresh 延迟例选后者，不做二者×所有载体。拟定 `test_process_finalize_rejects_frozen_source_drift`，resolved 分支接线/输入不可仅用 reuse 例替代。
-- **本轮准备状态**：fresh process 漂移已落在 `TestConsumptionFreeze.test_process_finalize_rejects_frozen_source_drift`；`5f3fe5d` 预检中产品返回 `ok`，未返回 `needs_refresh`，登记为产品缺口；resolved 分支仍 pending。
+- **本轮准备状态**：fresh process 漂移已落在 `TestConsumptionFreeze.test_process_finalize_rejects_frozen_source_drift`；`6bb88bc` 预检中产品返回 `ok`，未返回 `needs_refresh`，登记为产品缺口；resolved 分支仍 pending。
 
 #### E. refresh 锁后覆盖候选全集与 freshness（L4/L6）
 
@@ -127,7 +127,7 @@ accepted 终态经现有 raw validation 报告与 `record_validation()` 建立�
 | validator.schema=非法版本；round=True；phase=未知枚举；round2+needs_correction；needs_correction 却无未修 pending；pending 中未知方向；results 中未知方向或非法结果值 | 可用小型 subTest 表测 refresh 新正文变化入口，每次只改一项、沿原 validator owner 接受契约构造；pack 排除 validator 的摘要本来不受这些变更影响，故所有绑定 hash 保持合法。按 validation_evidence_not_recorded/validation_render_stale 的对应旧态类别拒绝，零业务写入，不能跳过非法 schema 当无 validator |
 
 保留现有真实 body CRLF 破坏、state/header/validator.render、报告摘要/范围例；表中非法 round/phase/pending/results 是实际独立判断，不扩问题字段穷举。合法 lifecycle 对照见 H，用以排除“遇 validator 一律拒绝”的错误实现。拟定 `test_refresh_rejects_invalid_old_state_before_body_write` 与普通 header-render/pack-binding 的对应方法。
-- **本轮准备状态**：已落地 `test_refresh_rejects_an_invalid_old_cache_render_binding` 与 `test_refresh_rejects_an_invalid_old_validator_pack_binding`。`validator.pack_sha256` 分支在 `5f3fe5d` 预检通过；cache.render 分支返回 `needs_decision/manual_markdown_changed`，未按 cache 证据拒绝，登记为产品缺口并保留红。header.render 与非法 lifecycle 的其余子项仍 pending；`manual_markdown_changed` 只应适用于真实手改正文，不适用于 cache-only 损坏。
+- **本轮准备状态**：cache 与 header.render 两例为产品缺口红；validator.pack_sha 与非法 lifecycle 两例通过；ordinary finalize 等价候选仍 pending。`manual_markdown_changed` 只应适用于真实手改正文，不适用于 cache-only 损坏。
 
 #### H. 合法无 validator、pending 及新业务覆盖（L5/L6）
 
@@ -135,7 +135,7 @@ accepted 终态经现有 raw validation 报告与 `record_validation()` 建立�
 - pending 对照：沿既有 raw validation 与 lifecycle fixture 建立 round1/needs_correction、非空 pending 的合法 pack（不直接伪造 PASS），普通 finalize 业务/正文等价应保留原 round/phase/pending/results；真实 refine 按原步骤转 awaiting_second_validation，下一 round2 正常，不被 terminal-only gate 挡住。新 old-state 层经过哪些实际入口就定向复验哪些现有步骤，不复制完整校验矩阵。合法 terminal 的 pass/skipped 可 reuse_all；合法 fail_after_2_rounds 仍 process，不冒称非法状态。
 - 真正新业务覆盖对照：在 G 的仅 header.render 损坏旧态上，按既有合法 user_note/target 同步改变建立**新** F、非空 jobs 与合法结果；普通 finalize 不带决策时按原受管保护拒绝零写入，显式 `decision_file={"decision":"overwrite"}` 才按原政策接受新结果，validator 不存在/未校验、旧 report bytes 保留，不继承旧 PASS。refresh 遇相同坏旧态即使带 overwrite 也仍零写入。此例区分显式新业务与刷级修复旧认证，不增加新的自动修复政策。
 - 成功 refresh 与旧 foreign_cache/sources 保持例合用：逐项断言 E/D business source/guards、resolved grouping/fingerprints、freshness 基线与 consumed_sources/pdf_sources 等于刷新前 B；只允许 level/statistics/render/合法 validator.pack 绑定必要变化。不能通过重采样后值恰相同来声称刷新建立了新业务基线，源码须核对纯投影。
-- **本轮准备状态**：无 validator 的 level-only refresh 已落在 `test_refresh_without_a_validator_stays_unvalidated`，`5f3fe5d` 预检通过，不生成 validator；pending/terminal 的既有 lifecycle 资产保留，非法 lifecycle 子项仍 pending。
+- **本轮准备状态**：无 validator 的 level-only refresh 已落在 `test_refresh_without_a_validator_stays_unvalidated`，`6bb88bc` 预检通过，不生成 validator；pending/terminal 的既有 lifecycle 资产保留，非法 lifecycle 子项仍 pending。
 
 #### I. r6 刷新正文归属与 U1 字段保留（L6）
 
@@ -146,11 +146,11 @@ accepted 终态经现有 raw validation 报告与 `record_validation()` 建立�
 ### 4.3 执行准备、历史复用与责任
 
 - 当前 t6 设计/步骤候选 pending 独立复核；第一关 L1–L6 业务范围沿用，本轮授权的直接缺口并入；t5 G2/G3 已通过的事实不撤销。I 字段测试已执行通过（§4.7）；A–H 的 G2（资产/步骤接线）、G3（执行结果）pending。
-- 执行计划 r6 已获批准；产品 `05bdbe1` 已加入 consumption prepare/plan/seal 和写前复核。本轮测试 `5f3fe5d` 已准备 A/B/C/D/G/H 的 9 个方法，模块 65 methods；B 的路径/状态绑定、C 的缺失/未封存、H 及 G 的 validator 分支预检通过；A 的 prepare 路径、D 的 fresh 漂移、G 的 cache 分支是待产品修复的预期红。B 的内容 SHA/stat 冻结、C 的错轮与 revision 1、D 的 resolved、E/F、B 的读边界及 A 的已有 F finalize/null 路径仍 pending。既有命令环境为 repo 的 `.apm/skills/professor-contact/tests`、Python 标准库 unittest、隔离 TemporaryDirectory；无需安装模型/服务。不得为通过断言修补产品返回或以自填关联冒充模型读取证明。
+- 执行计划 r6 已获批准；产品 `05bdbe1` 已加入 consumption prepare/plan/seal 和写前复核。本轮测试 `6bb88bc` 已准备 A/B/C/D/E/F/G/H 的 19 个方法，模块 75 methods；B 的路径/状态绑定、C 的缺失/未封存/错轮、E 的 freshness、H、G 的 validator/lifecycle 分支预检通过；A 的 prepare 与 context-null、B 的 post-freeze/content、C 的 revision 1、D 的 fresh、F 的 missing-facts、G 的 cache/header 分支是待产品修复的预期红。B 的早期读/写后反采样、D 的 resolved、E 的候选全集仍 pending；其余 A–H 字母均已有至少一条真实入口的测试，红的是产品缺口。既有命令环境为 repo 的 `.apm/skills/professor-contact/tests`、Python 标准库 unittest、隔离 TemporaryDirectory；无需安装模型/服务。不得为通过断言修补产品返回或以自填关联冒充模型读取证明。
 - 未来执行在步骤准备确认且另有运行授权后，仅用 `python3 -m unittest <实际填入的受影响完整选择器> -v` 定向运行。I 已执行；A–H 已实现的实际选择器为 `TestFactsLevelContract.test_malformed_index_cannot_be_accepted_as_null`、`TestFactsLevelContract.test_empty_papers_index_cannot_be_accepted_as_null`、`TestConsumptionFreeze.test_process_commits_the_frozen_sources`、`TestConsumptionFreeze.test_finalize_rejects_a_missing_sealed_result`、`TestConsumptionFreeze.test_finalize_rejects_an_unsealed_companion`、`TestConsumptionFreeze.test_process_finalize_rejects_frozen_source_drift`、`TestLevelRefresh.test_refresh_rejects_an_invalid_old_cache_render_binding`、`TestLevelRefresh.test_refresh_rejects_an_invalid_old_validator_pack_binding`、`TestLevelRefresh.test_refresh_without_a_validator_stays_unvalidated`。E/F 等未实现项仍不能把占位字符串当可执行命令。不恢复全模块/四分片/模型回归为门槛；如产品 diff 确实触及原 CRLF/refine 入口，只附相应现有方法选择器。
 - 临时目录沿 `mktemp -d /tmp/u5-t6-XXXXXX`，日志只记实际命令/产品与测试 SHA/Python 版本/退出码/必要业务输出，仓库外保存。原始历史日志直接引用 §4.4–4.6，不重新筛选。文档静态 diff/读回不是产品测试。
 - 失败按夹具准备、业务失败、环境无法判断、未执行区分；不因返回任意错误计通过，不放宽预期或重建 proof 求绿。业务失败即停止受影响项交产品 owner；fixture/步骤错误交测试工程师修正并复核，保留原尝试。无新信息的 provider/network 故障不重复采样；此确定性定向测试不需要外部调用或模型重试。
-- 完成条件：本轮独立计划设计意见已处理；后续实际接线/步骤经 G2 确认，受影响目标取得适用 G3 结果。I 已于 `223f5b4` 执行通过；A/B/C/D/G/H 的已准备方法在 `5f3fe5d` 有预检结果，E/F 及边界仍未完成；不声称 A–H 全部准备/执行完成，更不授予合并批准。
+- 完成条件：本轮独立计划设计意见已处理；后续实际接线/步骤经 G2 确认，受影响目标取得适用 G3 结果。I 已于 `223f5b4` 执行通过；本轮 19 个方法在 `6bb88bc` 有预检结果，11 个红均为产品缺口，B 早期/写后、D resolved、E 候选全集仍 pending；不声称 A–H 全部执行通过，更不授予合并批准。
 
 下列 §4.4–4.6 原文按历史版本保留；其中“当前”“本轮”“待审核/失败”等均是记录当时口吻，t5 最终正式 G2/G3 状态以本文件顶部所引 10:58 审核为准，不能用这些历史句子推翻该结论或要求重做旧轮。它们也不代表 r5/t6 已实现。
 
