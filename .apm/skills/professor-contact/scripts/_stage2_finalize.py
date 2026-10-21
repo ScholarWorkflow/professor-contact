@@ -155,6 +155,18 @@ def build(*, Stage2Context,
                 or binding.get("preflight_id") != preflight_id):
             soft_exit("needs_refresh", "preflight_inputs_changed",
                       drift=["preflight_proof_binding"])
+        # Reuse/refresh already claims the accepted sources are unchanged. The
+        # cheap inputs above do not include the consumed artifact stat guards, so
+        # check them before the normal acceptance path can write anything.
+        if plan.get("action") in ("reuse_all", "refresh_level"):
+            old_cache = ctx.pack.get("cache") if isinstance(ctx.pack, dict) else None
+            old_meta = old_cache.get("preflight") if isinstance(old_cache, dict) else None
+            if isinstance(old_meta, dict):
+                for direction_id in sorted(old_meta.get("directions") or {}):
+                    guard_code, guard_drift = stage2_refresh_guard_drift(
+                        old_meta["directions"][direction_id], direction_id)
+                    if guard_code:
+                        soft_exit("needs_refresh", guard_code, drift=guard_drift)
         return plan, target, snapshot_entry
 
     def stage2_pack_requires_membership_rebuild(pack: dict | None) -> bool:
@@ -1124,6 +1136,15 @@ def build(*, Stage2Context,
                 old_body_bytes = snapshot["body_bytes"]
                 old_body_text = snapshot["body"]
         old_body_sha = sha256_bytes(old_body_bytes) if old_body_bytes is not None else None
+        old_state_fingerprint = sha256_obj({
+            "professor": (old_pack or {}).get("professor"),
+            "directions": {direction_machine_id(d): d.get("input_fingerprint")
+                           for d in (old_pack or {}).get("directions") or []}})
+        if old_header is not None and old_header.get("state_fingerprint") != old_state_fingerprint:
+            fail("validation_render_stale",
+                 "the managed Markdown header state fingerprint does not bind "
+                 "the accepted pack; re-record the old evidence instead of rebinding it",
+                 target=str(md_path))
         candidate_body, ownership = render_analysis_document(
             ctx, render_pack, state_fingerprint)
         candidate_body_bytes = candidate_body.encode("utf-8")
@@ -1535,6 +1556,14 @@ def build(*, Stage2Context,
                 "directions": {direction_machine_id(d): d.get("input_fingerprint")
                                for d in directions}})
             body = render_analysis_md(ctx, render_pack, state_fingerprint)
+            current_pack, pack_error = read_json_file(ctx.pack_path)
+            if pack_error or not isinstance(current_pack, dict):
+                soft_exit("needs_refresh", "preflight_inputs_changed",
+                          drift=["accepted_pack_unreadable"])
+            if stage2_pack_content_fingerprint(current_pack) != \
+                    stage2_pack_content_fingerprint(pack):
+                soft_exit("needs_refresh", "preflight_inputs_changed",
+                          drift=["accepted_pack_changed"])
             # Re-check the accepted source guards after rendering: a source can
             # change after the gate but before the managed write. The render is
             # still in memory here, so a drift exits with zero business writes.

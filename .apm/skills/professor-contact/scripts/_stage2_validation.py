@@ -35,6 +35,8 @@ def build(*, Stage2Context,
           load_input_pack,
           pack_direction_relevant_keys,
           managed_snapshot,
+          split_frontmatter,
+          split_frontmatter_bytes,
           managed_conflict,
           managed_write,
           _canonical_directory,
@@ -85,17 +87,23 @@ def build(*, Stage2Context,
         path = professor_dir / ANALYSIS_MD
         if path.is_symlink():
             fail("validation_render_stale", f"{path}: managed analysis must not be a symlink")
-        if not path.is_file():
-            fail("validation_render_missing", f"{path}: managed analysis is missing")
-        snapshot = managed_snapshot(path)
-        if not isinstance(snapshot, dict) or snapshot.get("error"):
+        try:
+            data = path.read_bytes()
+        except OSError as exc:
+            fail("validation_render_missing", f"{path}: {exc}")
+        header, body_bytes = split_frontmatter_bytes(data)
+        try:
+            body = body_bytes.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            fail("validation_render_missing", f"{path}: {exc}")
+        body_start = data.find(body_bytes)
+        if body_start < 0:
             fail("validation_render_stale",
-                 f"{path}: managed analysis cannot be read losslessly as UTF-8 with a "
-                 "complete frontmatter/body split",
-                 detail=snapshot.get("error") if isinstance(snapshot, dict) else None)
-        current = snapshot["body_sha256"]
-        body = snapshot["body"]
-        header = snapshot["header"]
+                 f"{path}: managed analysis body could not be located in its file")
+        current = sha256_bytes(body_bytes)
+        snapshot = {"header": header, "body": body, "body_bytes": body_bytes,
+                    "body_sha256": current, "line_offset": data[:body_start].count(b"\n"),
+                    "raw": data}
         expected_title = f"# 套磁候选分析 — {pack.get('professor')}"
         if not isinstance(header, dict) or header.get("managed_by") != MANAGED_BY \
                 or header.get("render_sha256") != current or current != recorded \
@@ -331,10 +339,26 @@ def build(*, Stage2Context,
                  f"validator output marks the managed analysis as another artifact: {target}")
 
         entry = matches[0]
-        snapshot = stage2_bound_snapshot(professor_dir, pack)
-        render_sha = snapshot["body_sha256"]
-        body = snapshot["body"]
-        line_offset = snapshot["line_offset"]
+        render_sha, body = stage2_bound_render(professor_dir, pack)
+        try:
+            rendered_data = (professor_dir / ANALYSIS_MD).read_bytes()
+        except OSError as exc:
+            fail("validation_render_missing", f"{professor_dir / ANALYSIS_MD}: {exc}")
+        current_header, current_body_bytes = split_frontmatter_bytes(rendered_data)
+        try:
+            current_body = current_body_bytes.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            fail("validation_render_missing", f"{professor_dir / ANALYSIS_MD}: {exc}")
+        body_start = rendered_data.find(current_body_bytes)
+        if not isinstance(current_header, dict) or current_header.get("managed_by") != MANAGED_BY \
+                or current_header.get("state_fingerprint") != stage2_pack_state_fingerprint(pack) \
+                or current_header.get("render_sha256") != render_sha \
+                or current_body != body or sha256_bytes(current_body_bytes) != render_sha:
+            fail("validation_render_stale",
+                 "managed analysis changed while the style-validator report was being read")
+        if body_start < 0:
+            fail("validation_render_stale", "managed analysis body could not be located in its file")
+        line_offset = rendered_data[:body_start].count(b"\n")
         direction_rows = pack.get("directions")
         if not isinstance(direction_rows, list) or not direction_rows:
             fail("validation_direction_ambiguous", "input pack has no canonical directions")

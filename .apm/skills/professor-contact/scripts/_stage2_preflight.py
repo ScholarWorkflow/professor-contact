@@ -62,7 +62,7 @@ STAGE2_GUARD_KINDS = (("analysis", "analysis_file"), ("future_work", "sidecar_fi
                       ("facts", "facts_file"), ("pdf", "pdf_file"))
 
 def build(*, fail, soft_exit, emit, read_json_file, sha256_obj, sha256_bytes,
-          sha256_text, split_frontmatter,
+          sha256_text, split_frontmatter, split_frontmatter_bytes,
           managed_snapshot, direction_machine_id, facts_direction_id,
           direction_relevant_keys, gap_scope_keys, read_stage1_professor_entry,
           stage1_state_path, _canonical_under, load_input_pack, load_freshness_cache,
@@ -671,15 +671,15 @@ def build(*, fail, soft_exit, emit, read_json_file, sha256_obj, sha256_bytes,
                 path = professor_dir / ANALYSIS_MD
                 if path.is_symlink():
                     return "validator_not_accepted"
-                # Stage-2 U1 r5 §3.4/§3.6: the reuse gate proves the actual
-                # managed body bytes on disk, not a universal-newline text view.
-                # A mere LF -> CRLF edit must miss the gate even when the marker
-                # is current and the validator is terminal.
-                snapshot = managed_snapshot(path)
-                if not isinstance(snapshot, dict) or snapshot.get("error"):
+                # Prove the actual managed body bytes on disk, including a
+                # legal CRLF header; the validator gate must not depend on a
+                # universal-newline text view.
+                try:
+                    data = path.read_bytes()
+                except OSError:
                     return "validator_not_accepted"
-                header = snapshot.get("header")
-                body_sha = snapshot.get("body_sha256")
+                header, body = split_frontmatter_bytes(data)
+                body_sha = sha256_bytes(body)
                 if not isinstance(header, dict) or header.get("managed_by") != MANAGED_BY \
                         or header.get("render_sha256") != body_sha or body_sha != render_sha \
                         or header.get("state_fingerprint") != stage2_pack_state_fingerprint(pack):
