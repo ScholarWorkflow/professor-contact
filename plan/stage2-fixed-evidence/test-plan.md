@@ -274,3 +274,15 @@ fi
 - t3 修改唯一正式测试计划及同一 U1-F 方法的两个场景输入，未改产品、配置或环境；后续 `eebbb87` 只修 `_stage2_finalize.py` 与 U1-F 回归场景，`56486a8` 只修 `_stage2_render.py` 与 U1-C 回归场景。§7 的 2026-10-20 原始尝试、并发临时目录错误、复验与全仓回归记录保持原样，不用后续结论覆盖历史记录；正式第二、第三关及合并仍独立审核。
 
 
+
+## 9. t5 执行记录（2026-10-21，本地执行工程师）
+
+- 产品/测试版本：产品实现 `7b5dba9`，实现符合性审核修正 `52757d7`、`9e843fb`；测试资产修正 `71c7ead`。工作树 `/Users/rekidunois/code/skill-repos-dev/worktree/pr107-u1-local-execution-20261020`，分支 `plan/stage2-fixed-evidence-20261019`。
+- 环境：仓库现有 `uv run --no-project python`（CPython 3.14.6）；沿用既有合成 Stage 2 夹具；无安装、真实模型、Zotero 或 PDF 请求。
+- U1-A–F：最终产品代码上随受影响既有检查定向运行 `test_stage2_fixed_evidence.FixedEvidenceBase` 与 `test_stage2_style_validation_handoff`：`Ran 13 tests in 26.481s`、`OK`、退出码 0；日志 `/tmp/pr107-u1-irfix.blDmz2/irfix.log`。六项 U1 全部执行；A 因 renderer 位置块按片段输出 owner 而实际重跑。
+- 完整 shard4：按 `plan/test-grouping/shards.json` 的 shard4 25 个模块在 `9e843fb` 上运行：`Ran 249 tests in 78.654s`、`OK (skipped=1)`、退出码 0；日志 `/tmp/pr107-u1-shard4-final3.bziz5N/shard4-all.log`。
+- 受影响既有检查（`7b5dba9`）：`test_stage2_preflight` + `test_stage2_preflight_malformed` 40 项；`test_contact_state`/`test_stage2_facts_sidecar`/`test_stage2_chatgpt_handoff`/`test_resolved_direction_preflight_integration`/`test_stage2_resolved_direction` 160 项（`OK (skipped=1)`）。两处审核修正后的 U1/validation 路径已由上述 13 项与完整 shard4 重新覆盖。
+- 分片登记：`uv run --no-project python scripts/check_test_shards.py` -> `OK: 79 test modules across 4 shards, each with a stage`。
+- CI：head `71c7ead` 的 [run 39578155824](https://github.com/ScholarWorkflow/professor-contact/actions/runs/39578155824) shard1–shard4 与聚合 `test` 全部 success；最终修正 head 的 CI 结果在推送后另行记录。
+- 未执行：真实模型、Zotero 服务、PDF 下载、Codex/OpenCode runtime、安装交付；测试计划未要求全仓回归，本轮未跑。
+- 结果边界：本记录只报告实际执行结果，不批准 G1/G2/G3、计划或合并；测试计划关口与合并审核仍由各自负责人独立给出结论。
