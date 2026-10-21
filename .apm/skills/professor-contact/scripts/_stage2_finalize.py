@@ -64,6 +64,8 @@ def build(*, Stage2Context,
           render_analysis_document,
           render_analysis_md,
           stage2_validation_legality,
+          stage2_freshness_view_fingerprint,
+          load_freshness_cache,
           MANAGED_BY,
           INPUT_PACK_SCHEMA,
           DIRECTION_IDENTITY_VERSION,
@@ -1477,6 +1479,7 @@ def build(*, Stage2Context,
                            for entry in pack.get("directions") or []
                            if isinstance(entry, dict)}
         grouping = _pack_resolved_grouping(list(accepted_by_key.values()))
+        cache_entries = load_freshness_cache(professor_dir)
         observed_levels = {}
         changed_levels = {}
         level_changed = False
@@ -1485,6 +1488,19 @@ def build(*, Stage2Context,
             if not isinstance(record, dict):
                 soft_exit("needs_refresh", "refresh_requires_process",
                           drift=[f"preflight_record_missing:{direction_id}"])
+            accepted = accepted_by_key.get(direction_id)
+            if accepted is not None \
+                    and record.get("freshness_view_fingerprint") != \
+                    stage2_freshness_view_fingerprint(accepted, cache_entries):
+                soft_exit("needs_refresh", "preflight_inputs_changed",
+                          drift=[f"freshness_changed:{direction_id}"])
+            for resolved_id, resolved_record in (record.get("resolved_entries") or {}).items():
+                resolved = accepted_by_key.get(resolved_id)
+                if isinstance(resolved, dict) and isinstance(resolved_record, dict) \
+                        and resolved_record.get("freshness_view_fingerprint") != \
+                        stage2_freshness_view_fingerprint(resolved, cache_entries):
+                    soft_exit("needs_refresh", "preflight_inputs_changed",
+                              drift=[f"freshness_changed:{direction_id}:{resolved_id}"])
             keys = stage2_group_consumed_keys(accepted_by_key, grouping, direction_id)
             if record.get("source_projection") != observed_source_projection(
                     professor_dir, keys):
