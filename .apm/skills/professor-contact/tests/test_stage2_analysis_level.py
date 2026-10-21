@@ -396,54 +396,76 @@ class TestFactsLevelContract(AnalysisLevelBase):
         self.assertFalse(papers["EEEE5555"]["pdf_available"])
 
     def _assert_malformed_index_rejected(self, raw: bytes):
-        preflight_path, _run_dir, _companion = self.prepare_consumption()
-        self.facts["papers"][0]["analysis_level"] = None
+        # Isolate the nullable declaration: both known registrations are null,
+        # so a rejection cannot come from the other paper's level conflict.
+        for paper in self.facts["papers"]:
+            if paper["item_key"] in ("AAAA1111", "BBBB2222"):
+                paper["analysis_level"] = None
         write_json(self.facts_path, self.facts)
+        preflight_path = self.save_preflight("malformed-index-preflight.json")
         index_path = self.prof_dir / "论文分析" / "_index.json"
         index_path.write_bytes(raw)
-        pack_path = self.prof_dir / "套磁候选输入.json"
-        before_pack = pack_path.read_bytes() if pack_path.exists() else None
-        analysis_path = self.analysis_md()
-        before_md = analysis_path.read_bytes() if analysis_path.exists() else None
+        run_dir = self.root / "run"
+        run_dir.mkdir()
         out = parse(run_cli(
-            "stage2-finalize", "--facts", self.facts_path,
-            "--results", self.root / "results",
-            "--preflight-file", preflight_path))
+            "stage2-consumption-prepare", "--program-root", self.root,
+            "--professor", PROFESSOR, "--target-file", self.target_file,
+            "--preflight-file", preflight_path, "--run-dir", run_dir))
         self.assertEqual(out["status"], "error", out)
         self.assertEqual(out["reason_code"], "invalid_facts", out)
-        self.assertEqual(pack_path.read_bytes() if pack_path.exists() else None, before_pack)
-        self.assertEqual(analysis_path.read_bytes() if analysis_path.exists() else None,
-                         before_md)
+        self.assertEqual(index_path.read_bytes(), raw)
+        self.assertFalse((run_dir / "stage2-consumption.json").exists())
 
     def test_malformed_index_cannot_be_accepted_as_null(self):
         self._assert_malformed_index_rejected(b"{broken")
 
     def test_empty_papers_index_cannot_be_accepted_as_null(self):
-        self._assert_malformed_index_rejected(
-            b'{"schema": 2, "papers": {}, "professor": "x"}')
+        self._assert_malformed_index_rejected(json.dumps({
+            "schema": 2, "future_work_schema": 1, "professor": PROFESSOR,
+            "generated_at": "2026-01-01T00:00:00Z", "papers": {}},
+            ensure_ascii=False).encode("utf-8"))
 
 class TestConsumptionFreeze(AnalysisLevelBase):
     """L2/L4: a consumed run commits the sources frozen before facts."""
 
     def test_process_commits_the_frozen_sources(self):
+        analysis_hashes = {
+            key: sha256_bytes((self.prof_dir / "论文分析" / f"{key}.md").read_bytes())
+            for key in ("AAAA1111", "BBBB2222")}
         preflight_path, run_dir, companion = self.prepare_consumption()
         plan = self.plan_consumption(preflight_path, run_dir)
         self.assertTrue(plan["jobs"], plan)
+        self.assertEqual({job["kind"] for job in plan["jobs"]},
+                         {"narrative", "freshness"})
         self.write_stage2_results()
         self.seal_consumption(run_dir)
         out = self.finalize_consumption(preflight_path)
         self.assertEqual(out["status"], "ok", out)
         pack = self._read_pack()
         meta = pack["cache"]["preflight"]
-        self.assertEqual(meta["resolution_evidence_projection"],
-                         companion["sources_projection"])
-        for record in meta["directions"].values():
+        self.assertEqual(set(meta["directions"]), {"DIR00001", "DIR00002"})
+        expected_keys = {"DIR00001": {"AAAA1111", "BBBB2222", "CCCC3333"},
+                         "DIR00002": {"BBBB2222"}}
+        for did, record in meta["directions"].items():
             self.assertEqual(record["source_projection"]["index"],
                              companion["sources_projection"]["index"])
+            self.assertEqual(set(record["source_projection"]["papers"]),
+                             expected_keys[did])
             for key, value in record["source_projection"]["papers"].items():
                 self.assertEqual(companion["sources_projection"]["papers"][key], value)
+        for key, digest in analysis_hashes.items():
+            self.assertEqual(
+                sha256_bytes((self.prof_dir / "论文分析" / f"{key}.md").read_bytes()),
+                digest)
         self.assertEqual(pack["papers"]["AAAA1111"]["analysis_level"], "fulltext")
         self.assertEqual(pack["papers"]["BBBB2222"]["analysis_level"], "abstract")
+        header = self.header_line()
+        self.assertIn("全文级 1 篇", header)
+        self.assertIn("摘要级 2 篇", header)
+        self.assertIn("未确认 1 篇", header)
+        # The current companion records path/state only; content SHA/stat
+        # freezing remains a separate product requirement and is not claimed
+        # by this path/state binding check.
 
     def test_finalize_rejects_a_missing_sealed_result(self):
         preflight_path, run_dir, _companion = self.prepare_consumption()
@@ -456,7 +478,7 @@ class TestConsumptionFreeze(AnalysisLevelBase):
         self.assertEqual(out["reason_code"], "invalid_result_json", out)
         self.assertFalse((self.prof_dir / "套磁候选输入.json").exists())
 
-    def test_finalize_rejects_a_companion_from_another_run(self):
+    def test_finalize_rejects_an_unsealed_companion(self):
         preflight_path, run_dir, _companion = self.prepare_consumption()
         self.plan_consumption(preflight_path, run_dir)
         self.write_stage2_results()
@@ -948,12 +970,7 @@ class TestLevelRefresh(AnalysisLevelBase):
         plan = self.save_preflight("refresh-bad-cache.json")
         payload = parse(self.refresh(plan))
         self.assertEqual(payload["status"], "error", payload)
-        self.assertTrue(payload.get("reason_code"), payload)
-        self.assertNotIn(payload.get("reason_code"),
-                         {"invalid_params", "invalid_facts",
-                          "preflight_inputs_changed", "refresh_requires_process",
-                          "stage2_writer_busy", "stage2_managed_write_failed",
-                          "stage2_pack_write_failed"}, payload)
+        self.assertEqual(payload["reason_code"], "validation_render_stale", payload)
         self.assertEqual(pack_path.read_bytes(), before_pack)
         self.assertEqual(md_path.read_bytes(), before_md)
         self.assertFalse(
@@ -1079,8 +1096,10 @@ class TestLevelRefresh(AnalysisLevelBase):
         self.assertEqual(read_json(plan)["action"], "refresh_level")
         out = parse(self.refresh(plan))
         self.assertEqual(out["status"], "ok", out)
+        self.assertTrue(out["md_written"], out)
         pack = self._read_pack()
         self.assertNotIn("validator", pack)
+        self.assertEqual(pack["papers"]["AAAA1111"]["analysis_level"], "abstract")
         _, body = split_managed_bytes(self.analysis_md().read_bytes())
         self.assertEqual(pack["cache"]["render"][contact_state.ANALYSIS_MD]["sha256"],
                          sha256_bytes(body))
