@@ -913,6 +913,7 @@ _stage2_finalize = _stage2_finalize_module.build(
     stage2_group_consumed_keys=stage2_group_consumed_keys,
     stage2_refresh_preflight_metadata=stage2_refresh_preflight_metadata,
     observed_source_projection=observed_source_projection,
+    stage2_candidate_universe=stage2_candidate_universe,
     observed_level_projection=observed_level_projection,
     stage2_artifact_guard_reason=stage2_artifact_guard_reason,
     _pack_resolved_grouping=_pack_resolved_grouping,

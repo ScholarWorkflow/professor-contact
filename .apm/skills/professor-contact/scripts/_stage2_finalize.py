@@ -55,6 +55,7 @@ def build(*, Stage2Context,
           stage2_group_consumed_keys,
           stage2_refresh_preflight_metadata,
           observed_source_projection,
+          stage2_candidate_universe,
           observed_level_projection,
           stage2_artifact_guard_reason,
           _pack_resolved_grouping,
@@ -1434,7 +1435,7 @@ def build(*, Stage2Context,
 
 
     def stage2_refresh_evaluate(ctx: Stage2PackRefineContext, professor_dir: Path,
-                                plan: dict) -> dict:
+                                plan: dict, program_root: Path) -> dict:
         """The refresh gate: business sources equal and only levels/format change.
 
         Any unprovable or changed business source returns the caller to a fresh
@@ -1465,9 +1466,36 @@ def build(*, Stage2Context,
             soft_exit("needs_refresh", "refresh_requires_process",
                       drift=["pack_integrity_mismatch"])
         recorded = meta.get("directions")
-        if not isinstance(recorded, dict) or not recorded:
+        target = read_stage2_target(stage2_target_path(professor_dir), program_root,
+                                    ctx.professor)
+        snapshot = read_stage1_professor_entry(program_root, professor_dir,
+                                               ctx.professor, target)
+        if target is None or snapshot is None:
+            soft_exit("needs_refresh", "preflight_inputs_changed",
+                      drift=["target_or_snapshot_missing"])
+        candidate_keys = stage2_candidate_universe(target, snapshot)
+        recorded_projection = meta.get("resolution_evidence_projection")
+        if not isinstance(recorded_projection, dict):
             soft_exit("needs_refresh", "refresh_requires_process",
-                      drift=["preflight_record_missing"])
+                      drift=["resolution_evidence_projection_missing"])
+        if observed_source_projection(professor_dir, candidate_keys) != recorded_projection:
+            soft_exit("needs_refresh", "preflight_inputs_changed",
+                      drift=["resolution_evidence_changed"])
+        union_drift = []
+        for key, entries in (meta.get("resolution_evidence_guards") or {}).items():
+            if not isinstance(entries, dict):
+                union_drift.append(f"artifact_guards_invalid:{key}")
+                continue
+            for kind, guard in entries.items():
+                if not isinstance(guard, dict):
+                    union_drift.append(f"artifact_guards_invalid:{key}:{kind}")
+                    continue
+                reason = stage2_artifact_guard_reason(guard)
+                if reason:
+                    union_drift.append(f"{reason}:{key}:{kind}")
+        if union_drift:
+            soft_exit("needs_refresh", "preflight_inputs_changed",
+                      drift=union_drift)
         accepted_by_key = {direction_machine_id(entry): entry
                            for entry in pack.get("directions") or []
                            if isinstance(entry, dict)}
@@ -1560,7 +1588,7 @@ def build(*, Stage2Context,
             if ctx.professor != professor:
                 soft_exit("needs_refresh", "preflight_inputs_changed",
                           drift=["professor_mismatch"])
-            gate = stage2_refresh_evaluate(ctx, professor_dir, plan)
+            gate = stage2_refresh_evaluate(ctx, professor_dir, plan, program_root)
             pack = copy.deepcopy(ctx.pack)
             papers = pack_paper_index(pack)
             updated_papers = {}

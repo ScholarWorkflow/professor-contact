@@ -21,7 +21,7 @@ SIDECAR_EXTRACTOR_VERSIONS = ("future-work-v1", "legacy-markdown-v0")
 
 FACTS_GENERATOR_VERSIONS = ("facts-v1",)
 
-STAGE2_PREFLIGHT_VERSION = "stage2-preflight-v2"
+STAGE2_PREFLIGHT_VERSION = "stage2-preflight-v3"
 
 # Private cache.format of the managed analysis statistics. A pack only records
 # this after the current three-class statistics were actually accepted with the
@@ -627,6 +627,9 @@ def build(*, fail, soft_exit, emit, read_json_file, sha256_obj, sha256_bytes,
             # is the professor-level candidate union, wider than any single
             # direction's relevant/gap scope — guard it as one block.
             "resolution_evidence_guards": stage2_resolution_evidence_guards(ctx),
+            "resolution_evidence_projection": observed_source_projection(
+                professor_dir,
+                stage2_candidate_universe(target, snapshot_entry)),
             "directions": directions,
         }
 
