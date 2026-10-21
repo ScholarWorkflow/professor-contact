@@ -13,6 +13,7 @@ r6/t6 round adds the refresh ownership/u1 field-preservation check.
 """
 
 import contextlib
+import builtins
 import copy
 import hashlib
 import io
@@ -833,18 +834,77 @@ class TestConsumptionBoundaries(AnalysisLevelBase):
         run_dir = self.root / "early-run"
         run_dir.mkdir()
         analysis = self.prof_dir / "论文分析" / "AAAA1111.md"
-        original_read = Path.read_bytes
+        original_open = builtins.open
+        original_io_open = io.open
         state = {"read": False}
 
-        def read_then_drift(path):
-            raw = original_read(path)
-            if path == analysis and not state["read"]:
-                state["read"] = True
-                path.write_bytes(raw + b"\n<!-- after actual read -->\n")
-            return raw
+        class SourceReader:
+            # Observe the real stream, after it supplied all original bytes.
+            # Both Path.read_text/read_bytes and normal open use these APIs.
+            def __init__(reader, stream):
+                reader.stream = stream
+                reader.frozen_eof = False
+                reader.empty = b"" if "b" in stream.mode else ""
+
+            def __getattr__(reader, name):
+                return getattr(reader.stream, name)
+
+            def __enter__(reader):
+                reader.stream.__enter__()
+                return reader
+
+            def __exit__(reader, *args):
+                return reader.stream.__exit__(*args)
+
+            def after_read(reader):
+                if not state["read"] and reader.stream.tell() >= analysis.stat().st_size:
+                    reader.frozen_eof = True
+                    state["read"] = True
+                    with original_open(analysis, "ab") as changed:
+                        changed.write(b"\n<!-- after actual read -->\n")
+
+            def read(reader, *args, **kwargs):
+                if reader.frozen_eof:
+                    return reader.empty
+                value = reader.stream.read(*args, **kwargs)
+                reader.after_read()
+                return value
+
+            def readline(reader, *args, **kwargs):
+                if reader.frozen_eof:
+                    return reader.empty
+                value = reader.stream.readline(*args, **kwargs)
+                reader.after_read()
+                return value
+
+            def readlines(reader, *args, **kwargs):
+                if reader.frozen_eof:
+                    return []
+                value = reader.stream.readlines(*args, **kwargs)
+                reader.after_read()
+                return value
+
+            def __iter__(reader):
+                return reader
+
+            def __next__(reader):
+                value = reader.readline()
+                if not value:
+                    raise StopIteration
+                return value
+
+        def observed_open(opener, file, *args, **kwargs):
+            stream = opener(file, *args, **kwargs)
+            mode = args[0] if args else kwargs.get("mode", "r")
+            if (isinstance(file, (str, Path)) and Path(file) == analysis
+                    and not any(flag in mode for flag in "wa+")):
+                return SourceReader(stream)
+            return stream
 
         before = self.business_snapshot()
-        with patch.object(Path, "read_bytes", read_then_drift):
+        with patch.object(builtins, "open", lambda *a, **k: observed_open(
+                original_open, *a, **k)), patch.object(io, "open", lambda *a, **k:
+                observed_open(original_io_open, *a, **k)):
             out = self.call_handler(
                 "cmd_stage2_consumption_prepare", program_root=str(self.root),
                 professor=PROFESSOR, target_file=str(self.target_file),
