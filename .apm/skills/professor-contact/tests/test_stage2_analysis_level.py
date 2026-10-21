@@ -606,7 +606,7 @@ class TestConsumptionFreeze(AnalysisLevelBase):
             source = self.prof_dir / "论文分析" / f"{key}.md"
             stat = source.stat()
             frozen_guards[key] = dict(
-                path=str(source), size=stat.st_size, mtime_ns=stat.st_mtime_ns,
+                path=str(source.resolve()), size=stat.st_size, mtime_ns=stat.st_mtime_ns,
                 ctime_ns=stat.st_ctime_ns, accepted_digest=analysis_hashes[key])
         preflight_path, run_dir, companion = self.prepare_consumption()
         plan = self.plan_consumption(preflight_path, run_dir)
@@ -676,11 +676,13 @@ class TestConsumptionFreeze(AnalysisLevelBase):
         self.seal_consumption(run_dir)
         run2 = self.root / "run2"
         run2.mkdir()
+        sources_path = run2 / "sources.json"
+        write_json(sources_path, {"papers": read_json(self.facts_path)["papers"]})
         second = parse(run_cli(
             "stage2-consumption-prepare",
             "--program-root", self.root, "--professor", PROFESSOR,
             "--target-file", self.target_file, "--preflight-file", preflight_path,
-            "--run-dir", run2))
+            "--run-dir", run2, "--sources-file", sources_path))
         self.assertEqual(second["status"], "ok", second)
         facts = read_json(self.facts_path)
         facts["stage2_preflight"]["consumption"] = {
@@ -746,11 +748,13 @@ class TestConsumptionFreeze(AnalysisLevelBase):
         r1_narrative = (results / "narrative.json").read_bytes()
         run2 = self.root / "run2"
         run2.mkdir()
+        sources_path = run2 / "sources.json"
+        write_json(sources_path, {"papers": read_json(self.facts_path)["papers"]})
         second = parse(run_cli(
             "stage2-consumption-prepare",
             "--program-root", self.root, "--professor", PROFESSOR,
             "--target-file", self.target_file, "--preflight-file", preflight_path,
-            "--run-dir", run2))
+            "--run-dir", run2, "--sources-file", sources_path))
         self.assertEqual(second["status"], "ok", second)
         facts = read_json(self.facts_path)
         facts["stage2_preflight"]["consumption"] = {
@@ -898,7 +902,7 @@ class TestConsumptionBoundaries(AnalysisLevelBase):
         def observed_open(opener, file, *args, **kwargs):
             stream = opener(file, *args, **kwargs)
             mode = args[0] if args else kwargs.get("mode", "r")
-            if (isinstance(file, (str, Path)) and Path(file) == analysis
+            if (isinstance(file, (str, Path)) and Path(file).resolve() == analysis.resolve()
                     and not any(flag in mode for flag in "wa+")):
                 return SourceReader(stream)
             return stream
@@ -921,7 +925,7 @@ class TestConsumptionBoundaries(AnalysisLevelBase):
         analysis = self.prof_dir / "论文分析" / "AAAA1111.md"
         raw = analysis.read_bytes()
         stat = analysis.stat()
-        frozen_guard = dict(path=str(analysis), size=stat.st_size,
+        frozen_guard = dict(path=str(analysis.resolve()), size=stat.st_size,
                             mtime_ns=stat.st_mtime_ns, ctime_ns=stat.st_ctime_ns,
                             accepted_digest=sha256_bytes(raw))
         proof, _run_dir, _companion = self.ready_run()

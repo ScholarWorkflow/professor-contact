@@ -1300,6 +1300,7 @@ def build(*, fail, soft_exit, emit, read_json_file, atomic_json, sha256_obj, sha
 
     def cmd_stage2_plan(args) -> None:
         ctx = Stage2Context(Path(args.facts))
+        ctx.validate_consumption_current()
         identity, proof_id = stage2_plan_bind_preflight(ctx, getattr(args, "preflight_file", None))
         jobs, reuse_list, process_list = [], [], []
         for plan in ctx.direction_plans:

@@ -631,6 +631,7 @@ def build(*, AUTHORSHIP_RANK,
             fail("invalid_params",
                  f"--results-dir must be an existing directory: {raw_results_dir!r}")
         ctx = Stage2Context(Path(args.facts))
+        ctx.validate_consumption_current()
         # The resolution evidence universe is the professor-level candidate union:
         # reuse fingerprints must hash the same universe the resolve jobs score.
         evidence = _resolve_evidence(ctx)
@@ -1263,6 +1264,7 @@ def build(*, AUTHORSHIP_RANK,
         reused without re-prompting until its resolve fingerprint actually changes.
         """
         ctx = Stage2Context(Path(args.facts))
+        ctx.validate_consumption_current()
         results_dir = Path(args.results)
         _validate_resolve_plan(ctx, results_dir)
         # The sidecar is stamped with the facts run's preflight proof (issue #7 ×
@@ -1414,6 +1416,7 @@ def build(*, AUTHORSHIP_RANK,
         current facts (a stale proposal fails closed and must be re-resolved).
         """
         ctx = Stage2Context(Path(args.facts))
+        ctx.validate_consumption_current()
         ckeys = [k.strip() for k in (args.ckeys or "").split(",") if k.strip()]
         if not ckeys:
             fail("invalid_accept_keys",

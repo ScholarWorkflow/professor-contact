@@ -946,6 +946,11 @@ def build(*, atomic_json,
             _index_papers, index_state = read_analysis_index(self.professor_dir)
             if index_state == "malformed":
                 fail("invalid_facts", "论文分析/_index.json is unreadable or malformed")
+            for paper in self.facts.get("papers", []):
+                key = paper.get("item_key")
+                if key in _index_papers and (not isinstance(_index_papers[key], dict)
+                                             or not index_entry_level(_index_papers[key])[1]):
+                    fail("invalid_facts", f"paper {key}: invalid analysis registration")
             preflight_block = self.facts.get("stage2_preflight")
             if isinstance(preflight_block, dict):
                 reference = preflight_block.get("consumption")
@@ -973,13 +978,14 @@ def build(*, atomic_json,
                     if not isinstance(sources, dict) or sources.get("version") != 1 \
                             or not isinstance(sources.get("materials"), dict) \
                             or not isinstance(sources.get("index_papers"), dict) \
+                            or not isinstance(companion.get("sources_projection"), dict) \
+                            or companion["sources_projection"] != sources.get("projection") \
                             or _object_sha(sources) != companion.get("sources_sha256"):
                         fail("invalid_facts",
                              "consumption companion has no valid frozen source material")
                     self.consumption = companion
                     self.consumption_file = companion_path
                     self.sources = copy.deepcopy(sources)
-                    self.validate_consumption_current()
                     candidate_keys = set(sources.get("candidate_keys") or [])
                     facts_papers = self.facts.get("papers", [])
                     facts_keys = {paper.get("item_key") for paper in facts_papers}

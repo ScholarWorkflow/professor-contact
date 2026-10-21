@@ -372,7 +372,7 @@ for key in ("AAAA1111", "BBBB2222"):
     path = source_dir / f"{key}.md"
     raw, digest, stat = frozen[path]
     c.assertEqual(meta["resolution_evidence_guards"][key]["analysis"], dict(
-        path=str(path), size=stat.st_size, mtime_ns=stat.st_mtime_ns,
+        path=str(path.resolve()), size=stat.st_size, mtime_ns=stat.st_mtime_ns,
         ctime_ns=stat.st_ctime_ns, accepted_digest=digest))
     c.assertEqual(path.read_bytes(), raw)
 print(json.dumps(out, ensure_ascii=False))

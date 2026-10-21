@@ -689,9 +689,9 @@ def build(*, Stage2Context,
                 or sealed.get("plan_sha256") != plan.get("plan_sha256")
                 or sealed.get("results_dir") != str(results_dir.resolve())):
             fail("invalid_result_json", "sealed result set belongs to different inputs or directory")
-        actual = {path.name for path in results_dir.glob("*.json")}
-        if actual != expected:
-            fail("invalid_result_json", "actual result file set differs from the sealed jobs")
+        # Only the plan's named files are inputs to this acceptance. Reused
+        # directions may leave earlier outputs in the same results directory;
+        # those files are neither sealed nor consumed by this run.
         for filename, entry in files.items():
             if (not isinstance(filename, str) or Path(filename).name != filename
                     or not isinstance(entry, dict)):
@@ -717,6 +717,7 @@ def build(*, Stage2Context,
 
     def cmd_stage2_finalize(args) -> None:
         ctx = Stage2Context(Path(args.facts))
+        ctx.validate_consumption_current()
         if not isinstance(ctx.consumption, dict):
             fail("invalid_facts", "finalize requires this run's frozen consumption companion")
         acceptance_snapshot = stage2_acceptance_snapshot(ctx.pack_path, ctx.professor_dir)
