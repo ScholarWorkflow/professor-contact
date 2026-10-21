@@ -236,6 +236,7 @@ fi
 - 推送后的 head `9aec535`（测试代码同 `9735d42`）的 [CI 运行 39571768807](https://github.com/ScholarWorkflow/professor-contact/actions/runs/39571768807)：shard1–shard3 success，shard4 `Ran 249 tests`、`FAILED (failures=5, skipped=1)`；失败行为第 501（U1-B）、594（U1-C）、814（U1-D）、1027（U1-E）、1202（U1-F）行，原因与初版相同。该次运行确认修正没有改变前置产品缺口，也没有引入新的失败项。
 - CI 未到达的分支：B-null 后半段零写入、C 的 map 归属、D 的 B-absent/pending 生命周期、E-v1 的保留断言、F 的六条字节入口，都因上述前置门槛先失败而没有执行，不能记为通过。产品按 r5 实现后，由执行工程师按 §6.6 命令定向运行；本次交接不构成 G2 或 G3 通过。
 - 下一负责人：产品 owner 完成 r5 的 §3.1/§3.2/§3.4/§3.6 实现；独立 reviewer 依据 `9735d42` 与上述 CI 证据评估 G2；有执行授权后执行工程师运行受影响 selector，G3 审核采用其记录。
+- 2026-10-21 测试资产修正（本地测试工程师）：U1-D 方法 `test_u1_d_narrative_two_rounds_and_fixed_stop` 在纯包 refine 成功后，第 884 行原用 `self.assert_ownership_matches_body(body_refined)`；`body_refined` 取自 `pending_env`（由 `self._fresh_env()` 建立的隔离环境），外层测试实例 `self` 没有生成任何 pack，`self.pack()` 会抛 `FileNotFoundError`，与 §6.4 的同一隔离环境要求及 §6.1(2) 的独立分支起点不符。现只把接收者改为 `pending_env.assert_ownership_matches_body(body_refined)`，断言语义、数据、其它测试与产品代码均未改；修正作为本轮测试资产随测试提交落地。预检：`uv run --no-project python -m py_compile test_stage2_fixed_evidence.py`（CPython 3.14.6）退出码 0、无输出；未运行 unittest 或任何正式用例。下一负责人：本地执行工程师按 §6.6 定向运行受影响 selector。
 
 ## 7. 执行结果（2026-10-20）
 

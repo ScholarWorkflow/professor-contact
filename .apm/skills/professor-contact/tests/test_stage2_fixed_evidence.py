@@ -881,7 +881,7 @@ class FixedEvidenceBase(BaseEnv):
         body_refined = pending_env.managed_parts()[1]
         self.assertIn("纯叙事已改文字".encode("utf-8"), body_refined)
         self.assertNotIn("纯叙事待改文字".encode("utf-8"), body_refined)
-        self.assert_ownership_matches_body(body_refined)
+        pending_env.assert_ownership_matches_body(body_refined)
         self.assertEqual(pack["papers"][DISPLAY_ONLY_KEY]["title"], DISPLAY_ONLY_TITLE)
         self.assertEqual(pending_env.display_reference_line(), DISPLAY_ONLY_RENDERED)
         after_refine = pending_env.direction_snapshot()
