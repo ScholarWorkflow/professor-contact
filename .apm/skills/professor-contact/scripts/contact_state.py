@@ -774,6 +774,7 @@ _stage2_preflight = _stage2_preflight_module.build(
     sha256_obj=sha256_obj, sha256_bytes=sha256_bytes,
     sha256_text=sha256_text, split_frontmatter=split_frontmatter,
     split_frontmatter_bytes=split_frontmatter_bytes,
+    stage2_validation_legality=lambda pack: _stage2_validation.stage2_validation_legality(pack),
     managed_snapshot=managed_snapshot,
     direction_machine_id=direction_machine_id,
     facts_direction_id=facts_direction_id, direction_relevant_keys=direction_relevant_keys,

@@ -63,6 +63,7 @@ STAGE2_GUARD_KINDS = (("analysis", "analysis_file"), ("future_work", "sidecar_fi
 
 def build(*, fail, soft_exit, emit, read_json_file, sha256_obj, sha256_bytes,
           sha256_text, split_frontmatter, split_frontmatter_bytes,
+          stage2_validation_legality,
           managed_snapshot, direction_machine_id, facts_direction_id,
           direction_relevant_keys, gap_scope_keys, read_stage1_professor_entry,
           stage1_state_path, _canonical_under, load_input_pack, load_freshness_cache,
@@ -650,7 +651,9 @@ def build(*, fail, soft_exit, emit, read_json_file, sha256_obj, sha256_bytes,
         (`pass`/`skipped`) count as accepted; missing results, malformed state and
         `fail_after_2_rounds` force the slow path without redefining policy here.
         """
-        validator = (pack or {}).get("validator")
+        validator, legality_error = stage2_validation_legality(pack)
+        if legality_error:
+            return "validator_not_accepted"
         results = validator.get("results") if isinstance(validator, dict) else None
         if not isinstance(results, dict):
             return "validator_not_accepted"

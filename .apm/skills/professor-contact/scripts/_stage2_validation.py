@@ -514,7 +514,13 @@ def build(*, Stage2Context,
             validator = pack.get("validator") if isinstance(pack, dict) else None
         if validator is None:
             return None, None
-        if not isinstance(validator, dict) or validator.get("schema") != 2:
+        if not isinstance(validator, dict):
+            return None, "validator_container"
+        if validator.get("schema") != 2:
+            # Legacy accepted records kept only the per-direction results and
+            # are still honoured by preflight's terminal pass/skipped policy.
+            if isinstance(validator.get("results"), dict) and set(validator) <= {"results"}:
+                return validator, None
             return None, "validator_schema"
         recorded_round = validator.get("round")
         if isinstance(recorded_round, bool) or recorded_round not in (1, 2):
@@ -571,6 +577,13 @@ def build(*, Stage2Context,
         """Authorize refinement only from the exact raw report and open recorded findings."""
         pack = ctx.pack if isinstance(ctx.pack, dict) else {}
         validator = pack.get("validator") if isinstance(pack.get("validator"), dict) else {}
+        validator, legality_error = stage2_validation_legality(pack, validator)
+        if legality_error:
+            fail("validation_evidence_not_recorded",
+                 f"recorded Stage-2 validation state is malformed: {legality_error}")
+        if validator is None:
+            fail("validation_evidence_not_recorded",
+                 "record the raw style-validator report with stage2-record-validation first")
         if validator.get("schema") != 2:
             fail("validation_evidence_not_recorded",
                  "record the raw style-validator report with stage2-record-validation first")
