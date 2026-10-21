@@ -544,18 +544,30 @@ class TestConsumptionFreeze(AnalysisLevelBase):
         preflight_path, run_dir, _companion = self.prepare_consumption()
         self.plan_consumption(preflight_path, run_dir)
         results = self.write_stage2_results()
+        correct_gap = quote_id(self.gap_quotes["AAAA1111"])
+        narrative = read_json(results / "narrative.json")
+        narrative["directions"][0]["gap_notes"][0]["gap_id"] = "broken-gap-id"
+        write_json(results / "narrative.json", narrative)
         first = self.seal_consumption(run_dir)
         self.assertEqual(first["revision"], 0)
+        failed = self.finalize_consumption(preflight_path)
+        self.assertEqual(failed["status"], "error", failed)
+        self.assertEqual(failed["reason_code"], "unknown_reference_id", failed)
+        self.assertFalse((self.prof_dir / "套磁候选输入.json").exists())
         repair = self.root / "repair-1"
         shutil.copytree(results, repair)
-        narrative = read_json(repair / "narrative.json")
-        narrative["directions"][0]["gap_notes"][0]["gap_id"] =             quote_id(self.gap_quotes["AAAA1111"])
-        write_json(repair / "narrative.json", narrative)
+        repaired = read_json(repair / "narrative.json")
+        repaired["directions"][0]["gap_notes"][0]["gap_id"] = correct_gap
+        write_json(repair / "narrative.json", repaired)
         second = parse(run_cli(
             "stage2-consumption-seal-results", "--run-dir", run_dir,
             "--results-dir", repair))
         self.assertEqual(second["status"], "ok", second)
         self.assertEqual(second["revision"], 1, second)
+        third = parse(run_cli(
+            "stage2-consumption-seal-results", "--run-dir", run_dir,
+            "--results-dir", repair))
+        self.assertEqual(third["status"], "error", third)
 
     def test_finalize_rejects_sealed_results_from_another_run(self):
         preflight_path, run1, _companion = self.prepare_consumption()
