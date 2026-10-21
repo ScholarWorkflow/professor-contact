@@ -423,13 +423,18 @@ def build(*, Stage2Context,
                 issues_by_direction.setdefault(did, []).append(issue)
             if issue["severity"] != "blocking":
                 continue
-            if did is None or not covered:
+            if did is None:
+                # A blocking quote with no mapped direction (global preamble,
+                # unowned template text, missing map fragment) keeps the old
+                # refusal boundary; round 2 must not turn it into a silent pass.
+                fail("validation_direction_ambiguous",
+                     f"blocking quote has no renderer ownership direction: {quote!r}")
+            if not covered:
                 if require_repairable:
                     fail("validation_issue_not_repairable",
                          "blocking quote is not fully covered by one direction's renderer "
                          f"ownership map: {quote!r}")
-                if did is not None:
-                    blocking_by_direction.setdefault(did, []).append(issue)
+                blocking_by_direction.setdefault(did, []).append(issue)
                 continue
             if "excluded" in regions:
                 # Existing excluded regions (user notes, paper lists, global red
