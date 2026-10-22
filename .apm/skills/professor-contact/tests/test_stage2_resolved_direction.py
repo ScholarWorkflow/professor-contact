@@ -620,9 +620,22 @@ class ResolvedPipelineMixin:
         return parse(run_cli("stage2-resolve-accept", "--facts", str(facts_path),
                              "--ckeys", ",".join(ckeys)))
 
+    def seal_stage2_plan(self, facts_path):
+        """Seal the Stage-2 plan before mutating a resolved sidecar."""
+        payload = parse(run_bound_stage2_plan(run_cli, facts_path))
+        self.assertEqual(payload["status"], "ok", payload)
+        return payload
+
     def run_stage2_finalize(self, facts_path):
         """stage2-plan → freshness/narrative results → stage2-finalize with the sidecar."""
         consumption_run = getattr(self, "consumption_run", None)
+        facts = json.loads(Path(facts_path).read_text(encoding="utf-8"))
+        reference = (facts.get("stage2_preflight") or {}).get("consumption")
+        if isinstance(reference, dict) and reference.get("file") \
+                and getattr(self, "consumption_proof", None) is not None:
+            consumption_run = Path(reference["file"]).parent
+        elif getattr(self, "consumption_proof", None) is None:
+            consumption_run = None
         if consumption_run is None:
             plan_payload = parse(run_bound_stage2_plan(run_cli, facts_path))
         else:
@@ -757,6 +770,7 @@ class Stage2FinalizeWithResolvedTests(ResolvedPipelineMixin, unittest.TestCase):
         ]
         facts_path = self.write_facts(papers, [self.make_direction("dir_A", ["P1"])])
         self.run_resolve(facts_path, {})
+        self.seal_stage2_plan(facts_path)
 
         sidecar_path = self.prof_dir / "论文分析" / "_resolved_directions.json"
         sidecar = json.loads(sidecar_path.read_text(encoding="utf-8"))
@@ -776,6 +790,7 @@ class Stage2FinalizeWithResolvedTests(ResolvedPipelineMixin, unittest.TestCase):
         ]
         facts_path = self.write_facts(papers, [self.make_direction("dir_A", ["P1"])])
         self.run_resolve(facts_path, {})
+        self.seal_stage2_plan(facts_path)
 
         sidecar_path = self.prof_dir / "论文分析" / "_resolved_directions.json"
         sidecar = json.loads(sidecar_path.read_text(encoding="utf-8"))
@@ -794,6 +809,7 @@ class Stage2FinalizeWithResolvedTests(ResolvedPipelineMixin, unittest.TestCase):
         ]
         facts_path = self.write_facts(papers, [self.make_direction("dir_A", ["P1"])])
         self.run_resolve(facts_path, {})
+        self.seal_stage2_plan(facts_path)
 
         sidecar_path = self.prof_dir / "论文分析" / "_resolved_directions.json"
         sidecar = json.loads(sidecar_path.read_text(encoding="utf-8"))
@@ -1468,7 +1484,7 @@ class UserKeptProvisionalTests(ResolvedPipelineMixin, unittest.TestCase):
 
         self._prepare_consumption(facts_path)
         results_dir = new_resolve_results_dir(self.root)
-        plan = plan_resolve(facts_path, results_dir)
+        plan = plan_resolve(facts_path, results_dir, reuse_companion=True)
         self.assertEqual(plan["status"], "ok", msg=json.dumps(plan, ensure_ascii=False))
         actions = {row["direction_id"]: row["action"] for row in plan["directions"]}
         self.assertEqual(
@@ -1489,7 +1505,8 @@ class UserKeptProvisionalTests(ResolvedPipelineMixin, unittest.TestCase):
         # A changed source starts a new freeze; the old accepted decision is
         # compared with this round's current resolve input.
         self._prepare_consumption(facts_path)
-        changed = plan_resolve(facts_path, new_resolve_results_dir(self.root))
+        changed = plan_resolve(facts_path, new_resolve_results_dir(self.root),
+                               reuse_companion=True)
         self.assertEqual(changed["status"], "ok", msg=json.dumps(changed, ensure_ascii=False))
         actions = {row["direction_id"]: row["action"] for row in changed["directions"]}
         self.assertEqual(

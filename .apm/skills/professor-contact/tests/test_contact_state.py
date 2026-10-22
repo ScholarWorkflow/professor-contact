@@ -3114,6 +3114,13 @@ class Issue65Stage2BindingEnv(unittest.TestCase):
 
     def plan_raw(self, preflight_file):
         """Run the formal plan against an explicit preflight file (no ok assert)."""
+        facts = json.loads(self.facts_path.read_text(encoding="utf-8"))
+        reference = (facts.get("stage2_preflight") or {}).get("consumption")
+        if not isinstance(reference, dict):
+            try:
+                prepare_consumption(run_cli, self.facts_path, preflight_file)
+            except (AssertionError, OSError, ValueError):
+                pass
         args = argparse.Namespace(facts=str(self.facts_path),
                                   preflight_file=str(preflight_file))
         return self._run_formal(contact_state.cmd_stage2_plan, args, scenario="plan")
