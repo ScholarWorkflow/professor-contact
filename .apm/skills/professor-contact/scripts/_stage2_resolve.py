@@ -1375,7 +1375,10 @@ def build(*, AUTHORSHIP_RANK,
         # (reused) resolutions must NOT re-prompt the user on every re-run.
         material_changes = []
         for ckey, r in resolved.items():
-            already_accepted = (existing_by_ckey.get(ckey) or {}).get("acceptance") == "accepted"
+            previous = existing_by_ckey.get(ckey) or {}
+            already_accepted = (previous.get("acceptance") == "accepted"
+                                and previous.get("input_fingerprint")
+                                == r.get("input_fingerprint"))
             if r["resolution_type"] != "unchanged" and not r.get("reused") \
                     and not already_accepted:
                 material_changes.append({
