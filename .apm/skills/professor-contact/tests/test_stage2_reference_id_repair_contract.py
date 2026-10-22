@@ -46,11 +46,12 @@ class ReferenceIdRepairContractTests(unittest.TestCase):
                 body = _body(path)
                 self.assertIn("`unknown_reference_id` 修复轮", body)
                 # The repair round is bounded: exactly one retry, then partial.
-                self.assertRegex(
-                    body, r"修复轮至多一次，仍被拒才返回 `partial/error`")
+                self.assertIn("没有修复资格", body)
+                self.assertIn("第三版结果均停止", body)
                 # The repair round stays inside the model's own result file;
                 # runner-owned artifacts are never hand-written.
-                self.assertRegex(body, r"仍只由 runner 写，不构成手写兜底")
+                self.assertIn("只由 runner 写", body)
+                self.assertIn("绝不手写或手改", body)
 
     def test_runner_division_rule_points_at_the_repair_round(self):
         for path in PROJECTIONS:

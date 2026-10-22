@@ -28,7 +28,7 @@ from test_contact_state import (
     run_cli,
     stage2_style_validation_report,
 )
-from stage2_upstream_fixture import run_bound_stage2_finalize
+from stage2_upstream_fixture import run_bound_stage2_finalize, prepare_consumption
 
 CITATION_KEY = "CCCC3333"
 CITATION_TITLE = "Unrelated synthetic example"
@@ -141,12 +141,16 @@ class FixedEvidenceBase(BaseEnv):
         facts["stage2_preflight"] = {"preflight_id": payload["preflight_id"]}
         Path(facts_path).write_text(
             json.dumps(facts, ensure_ascii=False, indent=1), encoding="utf-8")
+        prepared = prepare_consumption(run_cli, facts_path)
+        if prepared.returncode != 0:
+            raise AssertionError(f"consumption fixture failed: {prepared.stdout} {prepared.stderr}")
+        result = json.loads(prepared.stdout)
+        if result.get("status") != "ok":
+            raise AssertionError(f"consumption fixture not ready: {result}")
 
     def finalize(self, facts_path, proof, results, *extra):
         return parse(run_bound_stage2_finalize(
-            run_cli, facts_path, "--results", results, *extra)) if proof is None \
-            else parse(run_cli("stage2-finalize", "--facts", facts_path,
-                               "--preflight-file", proof, "--results", results, *extra))
+            run_cli, facts_path, "--results", results, *extra))
 
     def blocking_issue(self, quote, location):
         return {"rule": "A1", "severity": "blocking", "location": location,

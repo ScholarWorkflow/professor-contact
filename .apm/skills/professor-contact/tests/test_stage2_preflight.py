@@ -1,4 +1,4 @@
-from stage2_upstream_fixture import run_bound_stage2_finalize
+from stage2_upstream_fixture import run_bound_stage2_finalize, run_bound_stage2_plan
 """Stage 2 early preflight cache gate regression tests (issue #11).
 
 The preflight must decide from persisted state alone whether an accepted
@@ -320,11 +320,27 @@ class PreflightBase(unittest.TestCase):
         return meta
 
     def bind_facts_to_plan(self, plan_path):
-        """Record the preflight proof id in facts the way analyzer Step 6.1 does."""
+        """Record the proof, freeze sources and seal the plan the way analyzer Step 6 does."""
         plan = json.loads(Path(plan_path).read_text(encoding="utf-8"))
         self.facts["stage2_preflight"] = {"preflight_id": plan.get("preflight_id")}
         self.facts_path.write_text(json.dumps(self.facts, ensure_ascii=False, indent=1),
                                    encoding="utf-8")
+        proof_path = self.facts_path.with_name(self.facts_path.stem + "-preflight.json")
+        proof_path.write_bytes(Path(plan_path).read_bytes())
+        planned = run_bound_stage2_plan(run_cli, self.facts_path)
+        if planned.returncode != 0:
+            raise AssertionError(f'plan fixture failed: {planned.stdout} {planned.stderr}')
+        payload = json.loads(planned.stdout)
+        if payload.get('status') != 'ok':
+            raise AssertionError(f'plan fixture not ready: {payload}')
+        self.facts = json.loads(self.facts_path.read_text(encoding='utf-8'))
+        results_dir = self.root / "results"
+        if results_dir.is_dir():
+            reference = (self.facts.get("stage2_preflight") or {}).get("consumption")
+            if isinstance(reference, dict) and reference.get("file"):
+                run_cli("stage2-consumption-seal-results",
+                        "--run-dir", Path(reference["file"]).parent,
+                        "--results-dir", results_dir)
 
     def build_accepted_state(self):
         self.stage2_finalize()
@@ -551,9 +567,10 @@ class TestPreflightDecision(PreflightBase):
         self.assertEqual(plan_payload["action"], "reuse_all")
         plan = self.root / "preflight.json"
         plan.write_text(json.dumps(plan_payload, ensure_ascii=False), encoding="utf-8")
+        results = self.write_stage2_results()
         self.bind_facts_to_plan(plan)
         out = parse(run_cli("stage2-finalize", "--facts", self.facts_path,
-                            "--results", self.write_stage2_results(),
+                            "--results", results,
                             "--preflight-file", plan))
         self.assertEqual(out["status"], "ok", out)
         # finalize seeds the same candidate-view fingerprint preflight computed

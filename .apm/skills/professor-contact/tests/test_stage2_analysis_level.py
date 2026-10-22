@@ -30,6 +30,7 @@ from test_stage2_preflight import (  # noqa: E402
     PROFESSOR, PreflightBase, parse, quote_id, run_cli,
 )
 import contact_state  # noqa: E402
+from stage2_upstream_fixture import run_bound_stage2_plan  # noqa: E402
 
 ROOT = Path(__file__).parents[1]
 REPO = Path(__file__).parents[4]
@@ -109,9 +110,12 @@ class AnalysisLevelBase(PreflightBase):
         write_json(self.facts_path, self.facts)
 
     def patch_facts(self, mutator):
-        """Change the on-disk facts while preserving their preflight binding."""
+        """Change the on-disk facts and drop the now-stale consumption reference."""
         facts = read_json(self.facts_path)
         mutator(facts)
+        block = facts.get("stage2_preflight")
+        if isinstance(block, dict):
+            block.pop("consumption", None)
         write_json(self.facts_path, facts)
         self.facts = facts
 
@@ -230,6 +234,7 @@ class AnalysisLevelBase(PreflightBase):
             "sources_sha256": out["sources_sha256"]}
         write_json(self.facts_path, facts)
         self.facts = facts
+        self.reuse_consumption = True
         return preflight_path, run_dir, read_json(companion_path)
 
     def stage2_finalize(self):
@@ -378,10 +383,8 @@ class TestFactsLevelContract(AnalysisLevelBase):
     def test_facts_level_conflicting_with_the_current_registration_is_invalid(self):
         self.facts["papers"][0]["analysis_level"] = "abstract"
         write_json(self.facts_path, self.facts)
-        result = run_cli("stage2-finalize", "--facts", self.facts_path,
-                         "--results", self.root / "results",
-                         "--preflight-file", self.save_preflight())
-        payload = parse(result)
+        self.save_preflight()
+        payload = parse(self.finalize_with_current_proof())
         self.assertEqual(payload["status"], "error")
         self.assertEqual(payload["reason_code"], "invalid_facts")
         self.assertIn("analysis_level_conflict", payload["message"])
@@ -511,10 +514,8 @@ class TestFactsLevelContract(AnalysisLevelBase):
                     paper["analysis_file"] = str(alternative)
                     paper["analysis_level"] = None
         self.patch_facts(mutate)
-        result = run_cli("stage2-finalize", "--facts", self.facts_path,
-                         "--results", self.root / "results",
-                         "--preflight-file", self.save_preflight())
-        payload = parse(result)
+        self.save_preflight()
+        payload = parse(self.finalize_with_current_proof())
         self.assertEqual(payload["status"], "error")
         self.assertEqual(payload["reason_code"], "invalid_facts")
         self.assertIn("analysis_file", payload["message"])
@@ -528,6 +529,13 @@ class TestFactsLevelContract(AnalysisLevelBase):
             "authors": ["Example Professor"], "has_pdf": False,
             "analysis_file": str(analysis), "analysis_level": "fulltext"})
         self.facts["directions"][0]["member_keys"].append("EEEE5555")
+        self.target["directions"][0]["members"].append(
+            {"item_key": "EEEE5555", "preview_confidence": "high"})
+        self.snapshot_entry["directions"][0]["candidate_keys"].append("EEEE5555")
+        self.snapshot_entry["directions"][0]["expansion_reasons"]["EEEE5555"] = [
+            "provisional_member"]
+        self._write_target()
+        self._write_snapshot()
         index = read_json(self.prof_dir / "论文分析" / "_index.json")
         index["papers"]["EEEE5555"] = {"file": str(analysis), "level": "fulltext"}
         write_json(self.prof_dir / "论文分析" / "_index.json", index)
@@ -1077,9 +1085,8 @@ class TestCanonicalMerge(AnalysisLevelBase):
         def rename(facts):
             facts["directions"][0]["collection_key"] = "DIR00001-renamed"
         self.patch_facts(rename)
-        out = parse(run_cli("stage2-finalize", "--facts", self.facts_path,
-                            "--results", self.root / "results",
-                            "--preflight-file", self.save_preflight("reuse-preflight.json")))
+        self.save_preflight("reuse-preflight.json")
+        out = parse(self.finalize_with_current_proof())
         self.assertEqual(out["status"], "ok", out)
         pack = self._read_pack()
         self.assertIn("validator", pack)
@@ -1188,6 +1195,10 @@ class TestStatisticsRender(AnalysisLevelBase):
             "analysis_file": str(analysis), "analysis_level": "fulltext"})
         self.facts["directions"][0]["relevant_keys"] = [
             "AAAA1111", "BBBB2222", "DDDD4444"]
+        self.snapshot_entry["directions"][0]["candidate_keys"].append("DDDD4444")
+        self.snapshot_entry["directions"][0]["expansion_reasons"]["DDDD4444"] = [
+            "topic_expansion"]
+        self._write_snapshot()
         write_json(self.facts_path, self.facts)
         self.write_stage2_results()
         self.levels["DDDD4444"] = "fulltext"
@@ -1466,9 +1477,8 @@ class TestLevelRefresh(AnalysisLevelBase):
         plan = self.save_preflight("finalize-bad-header.json")
         pack_path = self.prof_dir / "套磁候选输入.json"
         pack_before = pack_path.read_bytes()
-        payload = parse(run_cli("stage2-finalize", "--facts", self.facts_path,
-                                "--results", self.root / "results",
-                                "--preflight-file", plan))
+        self.save_preflight("finalize-bad-header.json")
+        payload = parse(self.finalize_with_current_proof())
         self.assertEqual(payload["status"], "error", payload)
         self.assertIn("validation", payload.get("reason_code", ""), payload)
         self.assertEqual(pack_path.read_bytes(), pack_before)
@@ -1487,9 +1497,8 @@ class TestLevelRefresh(AnalysisLevelBase):
         pack_path = self.prof_dir / "套磁候选输入.json"
         md_path = self.analysis_md()
         pack_before, md_before = pack_path.read_bytes(), md_path.read_bytes()
-        payload = parse(run_cli("stage2-finalize", "--facts", self.facts_path,
-                                "--results", self.root / "results",
-                                "--preflight-file", plan))
+        self.save_preflight("finalize-bad-validator.json")
+        payload = parse(self.finalize_with_current_proof())
         self.assertEqual(payload["status"], "error", payload)
         self.assertIn("validation", payload.get("reason_code", ""), payload)
         self.assertEqual(pack_path.read_bytes(), pack_before)
@@ -2316,6 +2325,9 @@ class TestRefreshProtection(AnalysisLevelBase):
         record["level_projection"]["CCCC3333"] = None
         pack["cache"]["preflight"]["directions"]["DIR00002"]["level_projection"] = {
             "BBBB2222": "abstract"}
+        if isinstance(pack.get("validator"), dict):
+            pack["validator"]["pack_sha256"] = \
+                contact_state.stage2_pack_content_fingerprint(pack)
         self._write_pack(pack)
         lease = self._fail_lease_unlink()
         arguments = type("Args", (), {
@@ -2680,7 +2692,7 @@ class TestAnalyzerContract(unittest.TestCase):
             # registration, and a conflicting known value must be rejected
             # instead of silently rewritten.
             self.assertIn("按与 runner 相同的资格规则", document)
-            self.assertIn("没有成功登记、文件缺失、路径不符或无法确认时一律传",
+            self.assertIn("没有成功登记、登记源缺失或合法未确认时传",
                           document)
             self.assertIn("已知值与当前登记冲突会被 runner 按输入错误拒绝", document)
             self.assertIn("不得静默改传另一个已知值", document)

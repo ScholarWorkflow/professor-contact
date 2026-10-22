@@ -1,4 +1,5 @@
-from stage2_upstream_fixture import run_bound_stage2_finalize, prepare_stage2_proof
+from stage2_upstream_fixture import (run_bound_stage2_finalize, prepare_stage2_proof,
+                                     prepare_consumption)
 """Tests for Stage 2 resolved_direction functionality (issue #7).
 
 Verifies that Stage 2 can resolve provisional directions against full-text
@@ -92,8 +93,16 @@ def new_resolve_results_dir(root, prefix: str = "resolve-run") -> Path:
     raise AssertionError(f"no free {prefix} directory under {root}")
 
 
-def plan_resolve(facts_path, results_dir, *extra_arguments):
+def plan_resolve(facts_path, results_dir, *extra_arguments, reuse_companion=False):
     """Formal `stage2-resolve-plan` bound to this round's results directory."""
+    if not reuse_companion:
+        facts = json.loads(Path(facts_path).read_text(encoding="utf-8"))
+        block = facts.get("stage2_preflight")
+        if isinstance(block, dict):
+            block.pop("consumption", None)
+            Path(facts_path).write_text(json.dumps(facts, ensure_ascii=False, indent=1),
+                                        encoding="utf-8")
+    prepare_consumption(run_cli, facts_path)
     return parse(run_cli("stage2-resolve-plan", "--facts", str(facts_path),
                          "--results-dir", str(results_dir), *map(str, extra_arguments)))
 
@@ -393,8 +402,10 @@ class ResolvedDirectionFinalizeTests(unittest.TestCase):
         # directory stays empty: no file may be invented into an accepted
         # "unchanged" resolution.
         results_dir = new_resolve_results_dir(self.root)
-        plan_payload = plan_resolve(facts_path, results_dir)
-        self.assertEqual(plan_payload["status"], "ok")
+        plan_payload = plan_resolve(
+            facts_path, results_dir,
+            reuse_companion=getattr(self, "reuse_consumption", False))
+        self.assertEqual(plan_payload["status"], "ok", plan_payload)
         self.assertEqual([job["direction_id"] for job in plan_payload["jobs"]], ["dir_A"])
         payload = finalize_resolve(facts_path, results_dir)
         self.assertEqual(payload["status"], "error")
@@ -575,6 +586,7 @@ class ResolvedPipelineMixin:
             "papers": papers,
             "directions": directions,
         })
+        self.reuse_consumption = False
         prepare_stage2_proof(run_cli, facts_path)
         return facts_path
 
@@ -590,8 +602,10 @@ class ResolvedPipelineMixin:
         `results_dir` / `resolve_run_id` let a test re-enter or forge a round.
         """
         results_dir = results_dir or new_resolve_results_dir(self.root)
-        plan_payload = plan_resolve(facts_path, results_dir)
-        self.assertEqual(plan_payload["status"], "ok")
+        plan_payload = plan_resolve(
+            facts_path, results_dir,
+            reuse_companion=getattr(self, "reuse_consumption", False))
+        self.assertEqual(plan_payload["status"], "ok", plan_payload)
         write_resolve_results(results_dir, plan_payload, resolve_results, facts_path,
                               skip=missing, resolve_run_id=resolve_run_id)
         finalize_payload = finalize_resolve(facts_path, results_dir)

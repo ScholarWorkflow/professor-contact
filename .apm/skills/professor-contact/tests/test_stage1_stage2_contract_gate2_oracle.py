@@ -7,7 +7,7 @@ class Issue64Gate2T7OracleTests(unittest.TestCase):
     """Supplement G64-T7-b with an exact plan/finalize proof-path check."""
 
     def test_issue64_t7_plan_and_finalize_consume_same_transaction_preflight_file(self):
-        expected = "--preflight-file <本教授事务临时目录>/stage2_preflight.json"
+        expected = '--preflight-file "$stage2_run_dir/stage2_preflight.json"'
         retired = "--preflight-file /tmp/<教授名>_stage2_preflight.json"
 
         for target in ("professor-contact-codex", "professor-contact-opencode"):
@@ -31,6 +31,7 @@ class Issue64Gate2T7OracleTests(unittest.TestCase):
                 for command in (plan[0], finalize[0]):
                     self.assertIn(expected, command, msg=command)
                     self.assertNotIn(retired, command, msg=command)
+                self.assertIn('--run-dir "$stage2_run_dir"', plan[0], msg=plan[0])
 
 
 if __name__ == "__main__":
