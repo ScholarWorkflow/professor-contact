@@ -5,7 +5,7 @@
     nixpkgs.url = "github:NixOS/nixpkgs/6510408d147d8c5e6d76043e899e9251756f6a75";
 
     agent-env-nix = {
-      url = "github:RekiDunois/agent-env-nix/91861b4f028eda1dbeb41481dcc48cd7c4a60874";
+      url = "github:RekiDunois/agent-env-nix/main";
       inputs.nixpkgs.follows = "nixpkgs";
     };
 
