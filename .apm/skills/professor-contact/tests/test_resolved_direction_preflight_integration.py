@@ -23,6 +23,7 @@ import json
 import sys
 import unittest
 from pathlib import Path
+from stage2_upstream_fixture import run_bound_stage2_finalize
 
 ROOT = Path(__file__).parents[1]
 SCRIPT = ROOT / "scripts" / "contact_state.py"
@@ -162,6 +163,8 @@ class ResolvedPreflightBase(PreflightBase):
                               self._resolve_results, self.facts_path)
 
     def resolve_finalize(self):
+        if getattr(self, "_resolve_plan", None) is None:
+            self.resolve_plan()
         out = finalize_resolve(self.facts_path, self.results_dir)
         self.assertEqual(out["status"], "ok", out)
         return out
@@ -173,10 +176,9 @@ class ResolvedPreflightBase(PreflightBase):
         return out
 
     def finalize(self, plan_path):
-        out = parse(run_cli(
-            "stage2-finalize", "--facts", self.facts_path,
+        out = parse(run_bound_stage2_finalize(
+            run_cli, self.facts_path,
             "--results", self.write_stage2_results(),
-            "--preflight-file", plan_path,
             "--resolved-directions",
             str(self.prof_dir / "论文分析" / "_resolved_directions.json")))
         self.assertEqual(out["status"], "ok", out)
@@ -205,9 +207,8 @@ class TestSemanticsVersionBump(ResolvedPreflightBase):
         # One full new-semantics Stage-2 run (finalize with the preflight file
         # re-seeds cache.preflight) re-arms the early gate for the next run.
         plan_path = self.start_round()
-        out = parse(run_cli("stage2-finalize", "--facts", self.facts_path,
-                            "--results", self.write_stage2_results(),
-                            "--preflight-file", plan_path))
+        out = parse(run_bound_stage2_finalize(
+            run_cli, self.facts_path, "--results", self.write_stage2_results()))
         self.assertEqual(out["status"], "ok", out)
         self.assertEqual(self._read_meta()["resolution_semantics_version"],
                          contact_state.STAGE2_RESOLUTION_SEMANTICS_VERSION)

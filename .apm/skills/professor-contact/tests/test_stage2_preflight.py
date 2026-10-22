@@ -1,4 +1,5 @@
-from stage2_upstream_fixture import run_bound_stage2_finalize
+from stage2_upstream_fixture import (prepare_consumption, run_bound_stage2_finalize,
+                                    run_bound_stage2_plan)
 """Stage 2 early preflight cache gate regression tests (issue #11).
 
 The preflight must decide from persisted state alone whether an accepted
@@ -289,11 +290,26 @@ class PreflightBase(unittest.TestCase):
         self.assertEqual(out["status"], "ok", out)
 
     def seed_validator_results(self, result, rounds, keys=("DIR00001", "DIR00002")):
-        """Prepare persisted historical results without posing them as a new report."""
+        """Prepare a legal persisted terminal validator for reuse checks."""
         pack = self._read_pack()
-        pack["validator"] = {"results": {
-            key: {"result": result, "rounds": rounds, "issues": []} for key in keys
-        }}
+        direction_ids = [contact_state.direction_machine_id(direction)
+                         for direction in pack.get("directions") or []
+                         if isinstance(direction, dict)]
+        selected = [key for key in keys if key in direction_ids] or direction_ids
+        recorded_round = 2 if result == "fail_after_2_rounds" else max(1, rounds)
+        render = ((pack.get("cache") or {}).get("render") or {}).get(
+            contact_state.ANALYSIS_MD) or {}
+        validator = {
+            "schema": 2, "round": recorded_round, "phase": "terminal",
+            "pending": {}, "correction_applied_direction_ids": [],
+            "results": {
+                key: {"result": result, "rounds": recorded_round, "issues": []}
+                for key in selected
+            },
+            "render_sha256": render.get("sha256"),
+        }
+        pack["validator"] = validator
+        validator["pack_sha256"] = contact_state.stage2_pack_content_fingerprint(pack)
         self._write_pack(pack)
 
     def seed_preflight_meta(self, current_year=None, **param_overrides):
@@ -313,17 +329,34 @@ class PreflightBase(unittest.TestCase):
                 self.root, self.prof_dir, PROFESSOR, target),
             pack_directions=pack["directions"], params=params,
             current_year=current_year if current_year is not None else YEAR,
-            ctx=ctx, cache_entries=contact_state.load_freshness_cache(self.prof_dir))
+            ctx=ctx, cache_entries=contact_state.load_freshness_cache(self.prof_dir),
+            statistics_version=contact_state.STAGE2_LEVEL_STATISTICS_VERSION)
         pack.setdefault("cache", {})["preflight"] = meta
         self._write_pack(pack)
         return meta
 
     def bind_facts_to_plan(self, plan_path):
-        """Record the preflight proof id in facts the way analyzer Step 6.1 does."""
+        """Record the proof, freeze sources and seal the plan the way analyzer Step 6 does."""
         plan = json.loads(Path(plan_path).read_text(encoding="utf-8"))
         self.facts["stage2_preflight"] = {"preflight_id": plan.get("preflight_id")}
         self.facts_path.write_text(json.dumps(self.facts, ensure_ascii=False, indent=1),
                                    encoding="utf-8")
+        proof_path = self.facts_path.with_name(self.facts_path.stem + "-preflight.json")
+        proof_path.write_bytes(Path(plan_path).read_bytes())
+        planned = run_bound_stage2_plan(run_cli, self.facts_path)
+        if planned.returncode != 0:
+            raise AssertionError(f'plan fixture failed: {planned.stdout} {planned.stderr}')
+        payload = json.loads(planned.stdout)
+        if payload.get('status') != 'ok':
+            raise AssertionError(f'plan fixture not ready: {payload}')
+        self.facts = json.loads(self.facts_path.read_text(encoding='utf-8'))
+        results_dir = self.root / "results"
+        if results_dir.is_dir():
+            reference = (self.facts.get("stage2_preflight") or {}).get("consumption")
+            if isinstance(reference, dict) and reference.get("file"):
+                run_cli("stage2-consumption-seal-results",
+                        "--run-dir", Path(reference["file"]).parent,
+                        "--results-dir", results_dir)
 
     def build_accepted_state(self):
         self.stage2_finalize()
@@ -550,9 +583,10 @@ class TestPreflightDecision(PreflightBase):
         self.assertEqual(plan_payload["action"], "reuse_all")
         plan = self.root / "preflight.json"
         plan.write_text(json.dumps(plan_payload, ensure_ascii=False), encoding="utf-8")
+        results = self.write_stage2_results()
         self.bind_facts_to_plan(plan)
         out = parse(run_cli("stage2-finalize", "--facts", self.facts_path,
-                            "--results", self.write_stage2_results(),
+                            "--results", results,
                             "--preflight-file", plan))
         self.assertEqual(out["status"], "ok", out)
         # finalize seeds the same candidate-view fingerprint preflight computed
@@ -663,6 +697,12 @@ class TestPreflightDecision(PreflightBase):
         self.snapshot_entry["directions"][1]["candidate_keys"].append("EEEE5555")
         self.snapshot_entry["input_fingerprint"] = "stage1-fp-2"
         self._write_snapshot()
+        self.facts["papers"].append({
+            "item_key": "EEEE5555", "title": "New synthetic candidate", "year": 2020,
+            "month": 1, "authorship": "middle", "abstract": "A new candidate.",
+            "has_pdf": False, "authors": []})
+        self.facts_path.write_text(json.dumps(self.facts, ensure_ascii=False, indent=1),
+                                   encoding="utf-8")
         payload = self.preflight()
         self.assertEqual(payload["action"], "process")
         self.assertIn("stage1_professor_changed", payload["reason_codes"])
@@ -672,9 +712,14 @@ class TestPreflightDecision(PreflightBase):
         self.assertIn("candidate_set_changed", changed["reason_codes"])
         proof_path = self.root / "partial-invalidation-preflight.json"
         proof_path.write_text(json.dumps(payload, ensure_ascii=False, indent=1), encoding="utf-8")
+        facts = json.loads(self.facts_path.read_text(encoding="utf-8"))
+        facts["stage2_preflight"] = {"preflight_id": payload["preflight_id"]}
+        self.facts_path.write_text(json.dumps(facts, ensure_ascii=False, indent=1),
+                                   encoding="utf-8")
+        prepare_consumption(run_cli, self.facts_path, proof_path)
         plan = parse(run_cli("stage2-plan", "--facts", self.facts_path,
                              "--preflight-file", proof_path))
-        self.assertEqual(plan["status"], "ok")
+        self.assertEqual(plan["status"], "ok", plan)
         by_key = {entry["direction_id"]: entry for entry in plan["directions"]}
         self.assertEqual(by_key["DIR00001"]["action"], "reuse")
         self.assertEqual(by_key["DIR00002"]["action"], "reuse")

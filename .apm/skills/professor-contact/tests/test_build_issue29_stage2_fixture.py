@@ -33,6 +33,7 @@ _spec.loader.exec_module(builder)
 PROFESSOR = "試験 教授"
 TS_RE = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z")
 HEX64_RE = re.compile(r"\b[0-9a-f]{64}\b")
+RUN_RE = re.compile(r"\b[0-9a-f]{32}\b")
 STAT_KEYS = ("mtime_ns", "ctime_ns")
 
 
@@ -46,12 +47,13 @@ def _normalize(value, root: Path):
     """
     if isinstance(value, dict):
         return {key: ("<stat-ns>" if key in STAT_KEYS else
-                      "<sha>" if key == "sha256" else _normalize(value[key], root))
+                      "<sha>" if key == "sha256" else
+                      "<run>" if key == "run_id" else _normalize(value[key], root))
                 for key in value}
     if isinstance(value, list):
         return [_normalize(item, root) for item in value]
     if isinstance(value, str):
-        replaced = HEX64_RE.sub("<FP64>", TS_RE.sub("<UTC-TS>", value.replace(str(root), "<ROOT>")))
+        replaced = HEX64_RE.sub("<FP64>", RUN_RE.sub("<RUN>", TS_RE.sub("<UTC-TS>", value.replace(str(root), "<ROOT>"))))
         return replaced
     return value
 

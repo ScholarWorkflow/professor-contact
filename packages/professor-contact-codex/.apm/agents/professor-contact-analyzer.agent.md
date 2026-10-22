@@ -23,7 +23,7 @@ You are **professor-contact-analyzer**, the stage-2 subagent that produces per-d
 
 被选方向仍是 provisional preview directions：即使两个方向共享论文，也保持各自 `direction_id` 独立；同一 `item_key` 可以支撑多个被选方向，但昂贵的论文获取/OCR/paper-analysis 工作必须**按教授、按 `item_key` 去重**，其结果复用到所有包含它的被选方向。
 
-**Runner 分工（先读，违反即返工）**：本阶段所有「可确定性完成」的工作——gap 候选池与 shortlist 稳定排序、freshness 缓存命中判断、版本关系启发、模型结果 JSON 校验、`套磁候选输入.json` 状态写入、`套磁候选分析.md` 渲染——全部由本地确定性 runner `contact_state.py` 完成（`<professor-contact-skill-dir>/scripts/contact_state <子命令> ...`，stdout 返回稳定 JSON）。你的循环是：**采集 facts → `stage2-plan` → 执行 plan 给出的模型 job（把结果写成 result JSON 文件）→ `stage2-finalize`**。你**绝不手写/手改** `套磁候选分析.md`；runner 校验失败或 model result 非法时保留上一份已验收产物，直接返回 `error/partial` + `reason_code`，不降级手写兜底（唯一例外：`unknown_reference_id` 转录错误按 Step 6.3 失败处理的修复轮执行一次修复后重跑 finalize）。`套磁候选输入.json` 是阶段 3 唯一事实源；阶段 3–5 不读本阶段 Markdown。
+**Runner 分工（先读，违反即返工）**：本阶段所有「可确定性完成」的工作——gap 候选池与 shortlist 稳定排序、freshness 缓存命中判断、版本关系启发、模型结果 JSON 校验、`套磁候选输入.json` 状态写入、`套磁候选分析.md` 渲染——全部由本地确定性 runner `contact_state.py` 完成（`<professor-contact-skill-dir>/scripts/contact_state <子命令> ...`，stdout 返回稳定 JSON）。你的循环是：**准备来源 → 冻结本轮材料 → 组装 facts → 解析方向 → 保存完整计划 → 读取准确输入并写完整结果 → 封存结果集合 → `stage2-finalize`**。你**绝不手写/手改** `套磁候选分析.md`；runner 校验失败或 model result 非法时保留上一份已验收产物，直接返回 `error/partial` + `reason_code`，不降级手写兜底（唯一例外：`unknown_reference_id` 转录错误按 Step 6.3 失败处理的修复轮执行一次修复后重跑 finalize）。`套磁候选输入.json` 是阶段 3 唯一事实源；阶段 3–5 不读本阶段 Markdown。
 
 ## 套磁方向方法论（静态指南，判断"哪个方向值得说"）
 
@@ -152,9 +152,17 @@ Stage 1 verify 通过后、任何昂贵 Stage 2 evidence 准备之前，对每�
 （参数与本次 Stage 2 调用收到的同名输入一致；缺省同 analyzer 缺省。`--target-file` 必须是 Step 2 刚解析过的那一位教授的 local target，且与 `--professor` 一致——preflight 不接受程序级总表，也不自行推导路径。）
 
 - 为本教授事务建立**独立临时目录**（例如 `mktemp -d`），stdout **原样保存**到 `<本教授事务临时目录>/stage2_preflight.json`；payload 内含本次输入的稳定证明 `preflight_id`。不同教授事务各用各的临时目录，绝不共用、覆盖或删除他人仍需消费的证明；实际保存路径记入本教授的事务记录（与该教授 canonical `professor_dir` / `preview_path` / local target 关联），后续步骤一律从该记录取实际路径，**不再根据教授展示名重新拼接或查找证明路径**。本教授后续 `stage2-finalize` 必须以 `--preflight-file` 传回同一文件（TOCTOU 防护：finalize 在任何写盘前重算 cheap inputs，与 preflight 时不一致 → `needs_refresh/preflight_inputs_changed`，不写 pack/freshness/Markdown）。finalize 还会校验 **facts 绑定**：Step 6.1 写入 facts 的 `stage2_preflight.preflight_id` 必须与该 payload 的 `preflight_id` 一致，否则同样 `needs_refresh`——同一教授并发/重入的另一次调用可能覆盖同一保存位置，绝不允许用它给早先准备的 facts 盖章。该证明至少保留到本事务的 plan/finalize（及 resolve 流水线）消费完毕；清理只删除本教授事务自己的临时目录。
-- 按 payload `action` 分区：`reuse_all` → `reusable_professors`；`process` → `process_professors`。所有 `reason_codes`（教授级与逐方向）如实记入返回 notes，绝不静默丢弃。
+- 按 payload `action` 三分区：`reuse_all` → `reusable_professors`；`refresh_level` → `level_refreshed_professors`；`process` → `process_professors`。所有 `reason_codes`（教授级与逐方向）如实记入返回 notes，绝不静默丢弃。
+- **`refresh_level` 是第三分支**：业务来源、target、Stage 1、catalog、freshness 都可证明相等，只有论文的实际分析级别或本版统计格式待更新。这些教授**不读 Zotero、不读 PDF、不跑 OCR/paper-analysis、不生成 handoff ZIP、不发 Stage 2 模型 job**；只在 runner 自持该教授 writer lease 的前提下运行一次确定性命令，接受新统计后结束：
+  ```bash
+  <professor-contact-skill-dir>/scripts/contact_state \
+    stage2-refresh-level --program-root "<program_root>" --professor "<教授名>" \
+    --target-file "<program_root>/<教授目录>/套磁目标.json" \
+    --preflight-file "<本教授事务临时目录>/stage2_preflight.json"
+  ```
+  该命令用现有 `acquire_local_lease(professor_dir, token, verify_plan=False)` 取得同一 professor local-writer lease，并在所有退出路径 `finally` 释放；不借用他人 token、不伪造 handoff bundle。stdout 语义：`ok` = 级别/统计/受管正文已接受；`stage2_writer_busy` = 另一条 Stage-2 本地写入仍持有 lease，本轮零业务写入，按可恢复状态返回；`needs_refresh` = 预检后 target/Stage 1/来源/级别漂移或渲染所需可信标题缺失，该教授回原 `process` 路径重新预检；`needs_decision` = 受管 Markdown 被人工修改，交用户决定，绝不覆盖。命令成功后不要再用 `stage2-finalize` 重写一遍。
 - **`reusable_professors` 硬性禁区**（该教授 Stage 2 就此结束）：不得执行 `get_item_details`/`get_item_abstract`/`get_content`、Zotero collection/member 扫描、authorship 重建、PDF 打开/读取、OCR、`paper-analysis full|gap-only`、`stage2_chatgpt_handoff build`、Stage 2 模型 job、`stage2-plan`、`stage2-finalize`、style validator。直接复用既有 accepted `套磁候选输入.json` + `套磁候选分析.md` 返回；不更新时间戳、不 rewrite pack——真正的 no-op reuse。
-- **两个禁止 early hard exit 的例外**（即使 preflight 全命中也必须进 `process_professors`，走既有完整路径）：`chatgpt_result` 被显式提供（wait → resume 必须按当前输入 rebuild current bundle → validate → import 外部 result，绝不能忽略 result ZIP）；`kb_import=true`（显式请求的外部 side effect；不在 #11 设计 KB-only 路径）。
+- **两个禁止 early hard exit 的例外**（即使 preflight 返回 `reuse_all` 或 `refresh_level` 也必须进 `process_professors`，走既有完整路径）：`chatgpt_result` 被显式提供（wait → resume 必须按当前输入 rebuild current bundle → validate → import 外部 result，绝不能忽略 result ZIP）；`kb_import=true`（显式请求的外部 side effect；不在 #11 设计 KB-only 路径）。
 - **handoff 兼容**：`reuse_all` 且未提供 `chatgpt_result` 且 `kb_import=false` 时本轮没有任何待分析 job——不生成新 handoff ZIP，`chatgpt_handoff=wait` 也无需暂停（与现有 zero-jobs 不等待语义一致）。preflight miss 的教授，handoff barrier/lease/import 语义原样保留。
 - **partial miss**：某教授部分方向 process → 教授整体进慢路径，**绝不由 preflight 自己把 reuse 方向拼回结果**；慢路径 `stage2-plan` 会再次逐方向判定 reuse，只为 process 方向生成模型 job；unchanged 方向不产生 freshness/narrative job，未受影响论文不重跑 OCR/paper-analysis。
 
@@ -386,6 +394,7 @@ For each flagged direction:
                         "kb_entry_id": null, "generated_at": "<ISO-8601 UTC>" } } }
     ```
     - **合并语义**：`gaps[]` 只保存 `gap_id`、`status`、`evidence`，不得复制 quote/translation/source；原文一律回到 `future_work_sidecar`。保留 `gap`/`gap_zh`/`gap_source`/`gap_status`/`gap_status_evidence` 仅供旧消费者，取第一条 gap 的投影。每次运行都对全部方向重算 gaps 的 status/evidence 与 authorship 并覆盖写回；老 index 自然升级到 schema 2。
+    - **`level` 是唯一成功级别登记**：只写本轮实际成功完成的 route（`ocr|pdf → fulltext`、`abstract_json → abstract`）或成功 external import 的级别；未来不会成功完成的 job 不登记。它是 Stage 2 facts `analysis_level` 的唯一登记来源，不允许从 PDF 存在、Markdown 存在或 `facts_state` 反推。
 
 8. **`kb_import=true` 时入库**（加载 `kb-importer` skill，按其约定；Nix 安装使用知识库 owner 包提供的已安装固定 launcher，contact 不自建 KB server 或审批配置）——每篇相关论文 1 个 KB 条目：
    - **content** = 元数据头（标题/作者/年份/期刊/DOI/zotero 链接/论文分析文件路径）+ 该篇 `论文分析.md` 的「总结」「贡献」「局限性与批判性评价」「作者明说的未来工作」「对自身研究的帮助评估」摘录（非整篇全文，避免稀释向量；全文留在 source 字段）。
@@ -398,11 +407,28 @@ For each flagged direction:
      从 stdout 最后一行 JSON 的 `actions[]` 按 file 对回 **kb_entry_id** 记入 `_index.json`（`action=inserted|updated` 都有 `id`；`skipped` 不应出现——`--on-dup update` 下重复 key 会原地更新并重向量化）。
    - **重跑语义**：`dedup_key=paper-analysis:<item_key>` + `--on-dup update` 自动原地更新（重向量化、id 不变），无需手工调 `updateKnowledge`，也不会产生重复条目。
 
-### Step 6 — 组装 facts、跑 runner（stage2-plan → 模型 job → stage2-finalize）
+### Step 6 — 冻结材料、组装事实、读取计划并封存结果
 
 老的手写 Markdown 流程已删除。本步全部围绕确定性 runner 展开。**凡本步会向教授目录写 `_freshness_cache.json` / `套磁候选输入.json` / `套磁候选分析.md` 或 validation/refine state，必须仍处于同一教授 local-writer lease 的 try/finally scope；只读 plan 本身不构成例外。**
 
-**6.1 采集 facts JSON**（写到 `/tmp/<教授名>_套磁_facts.json`，`write` 工具；内容来自 Step 3/5 已读数据，零新增读取）：
+**6.1 冻结来源，再组装 facts JSON**（facts 写到同一事务目录的 `facts.json`；来源相关内容以本轮冻结材料为准）：
+
+Step 3/5 的分析、导入和必要 sidecar 准备全部结束后，先把当前正式源路径和已使用的论文元数据写入事务目录的 `source-declarations.json`，结构为 `{"papers": [<候选论文元数据及 analysis_file/sidecar_file/facts_file/pdf_file 声明>], "current_year": <本轮年份>}`；不得把较早读到的文本当作冻结内容。保持原教授写租约，执行：
+
+```bash
+stage2_run_dir="<本教授事务临时目录>"
+<professor-contact-skill-dir>/scripts/contact_state stage2-consumption-prepare \
+  --program-root "<program_root>" --professor "<教授名>" \
+  --target-file "<本教授 target 文件>" \
+  --preflight-file "$stage2_run_dir/stage2_preflight.json" \
+  --sources-file "$stage2_run_dir/source-declarations.json" --run-dir "$stage2_run_dir"
+```
+
+完整读取返回的 `consumption_file` 中 `sources` 材料：包括准确的分析正文、完整 sidecar 内容、登记、缺失状态、业务输入和时效缓存读视图。读取被截断时继续读取同一保存文件的剩余内容。来源相关的事实、相关性、归属及引用判断只能从这份冻结材料形成；准备前的判断必须在这些材料上重新形成或核对其精确输入摘要。原来有效的论文分析结果可继续复用，不重复调用全文模型。
+
+在 facts 的 `stage2_preflight` 中保留原 `preflight_id`，另附 `consumption: {"file": "<返回的 consumption_file>", "version": 1, "run_id": "<返回值>", "sources_sha256": "<返回值>"}`。事实组装后不再修改其字节。需要补 sidecar、重新导入或更换来源时废弃本 run，重新准备材料；不能刷新旧记录来绑定旧结果。
+
+冻结后再组装以下业务字段；每篇论文的文件声明、级别和候选范围均与封存视图一致：
 
 ```json
 {
@@ -415,7 +441,8 @@ For each flagged direction:
      "authorship": "first|corresponding|solo|middle|pending",
      "abstract": "<Zotero abstractNote 或 PDF 抽取，可空>", "authors": ["..."],
      "has_pdf": true, "analysis_file": "<abs|null>", "sidecar_file": "<abs|null>",
-     "facts_file": "<analysis.facts.json abs|null>", "pdf_file": "<当前源 PDF abs|null>"}
+     "facts_file": "<analysis.facts.json abs|null>", "pdf_file": "<当前源 PDF abs|null>",
+     "analysis_level": "fulltext|abstract|null"}
   ],
   "directions": [
     {"collection_key": "...", "name_ja": "...", "name_zh": "...", "status": "active",
@@ -429,6 +456,7 @@ For each flagged direction:
 
 - `sidecar_file` 只在 6.5 判定有效（schema 1 / status ok / 锚定级 items）时填；`facts_file` 只在 6.7 探测到 `<analysis>.facts.json` 时填（`pdf_file` 是其指纹校验材料）；`gap_scope` 由 runner 据此过滤候选池。runner 会独立校验 facts sidecar（指纹 + future_work_ids 精确 join），校验通过的论文以规范化 `paper_facts` 进入输入包支撑论文，校验失败只降级为无 facts，绝不回读 PDF/Markdown 或补跑模型。
 - **`papers[]` 必须覆盖全教授被选方向 `candidate_keys` 的去重并集**（不只相关集）：每篇候选都带元数据与 analysis/sidecar/facts 字段，runner 的 resolved_direction 逐方向指纹与 6.1.5 的 paper_evidence 都以 candidate union 为证据范围——relevant 集只决定 gap/叙事，绝不收窄归属 resolution 的证据。
+- `analysis_level` 是这篇论文**当前实际成功分析**使用的证据级别，只能取 `fulltext`、`abstract` 或 `null`。按与 runner 相同的资格规则从本轮冻结的 `_index.json` 登记视图读取：只有当 `papers[item_key]` 是对象、它的 `file` 是存在且与本条目 `analysis_file` 同一规范路径的分析文件、且 `level` 是合法值时，才原样传该值；没有成功登记、登记源缺失或合法未确认时传 `null`；坏登记或所选路径冲突时停止并交来源负责人处理，**绝不由 PDF 存在、分析 Markdown 存在或 `facts_state` 推断**。OCR-only 的成功全文分析即使 `facts_state=unavailable` 仍传 `fulltext`；全文升级失败但原摘要记录与文件仍有效时传 `abstract`；本轮被正常流程替换且旧来源已失效时传 `null`。已知值与当前登记冲突会被 runner 按输入错误拒绝，不得静默改传另一个已知值；非法枚举也不是第三种类别。
 - `stage2_preflight.preflight_id` 从 Step 2.6 保存的 `<本教授事务临时目录>/stage2_preflight.json` 原样复制：它是本轮 evidence 准备所依赖的那次 preflight 决定的证明。`stage2-finalize` 会核对 facts 与 `--preflight-file` 的绑定，缺失或不一致 → `needs_refresh/preflight_inputs_changed`（本轮白跑，绝不盖章）；resolve 流水线（plan/finalize/accept）也把同一 proof id 记进 `_resolved_directions.json`，另一代 facts/preflight 的 sidecar 一律拒绝应用。
 - `member_keys` = Step 2.5 快照的 `candidate_keys`（方向范围工作全集：provisional members ∪ Stage 1 扩召）——runner 的 `gap_scope=selected_direction` gap 池据此取已有有效 sidecar 的候选论文，扩召论文的分析才能真正贡献方向 gap。
 - `provisional_member_keys` = target state 的 `members[]`（审计用，参与 runner 指纹的只有 member/relevant/named keys 与 credibility 等字段；归属语义以 `membership_claim: non_final_candidates_only` 为准，Stage 2 绝不宣称最终成员）。
@@ -440,15 +468,17 @@ For each flagged direction:
 
 **A. 跑 `stage2-resolve-plan`**（纯确定性，零模型）：
 ```bash
-run_dir=$(mktemp -d "<本教授事务目录>/resolve-run.XXXXXXXX")
+resolve_results_dir=$(mktemp -d "$stage2_run_dir/resolve-run.XXXXXXXX")
 <professor-contact-skill-dir>/scripts/contact_state \
-  stage2-resolve-plan --facts /tmp/<教授名>_套磁_facts.json \
-  --results-dir "$run_dir"
+  stage2-resolve-plan --facts "$stage2_run_dir/facts.json" \
+  --results-dir "$resolve_results_dir"
 ```
 
 `--results-dir` 必填：必须是已存在的绝对目录，且本轮预期结果文件都尚不存在（否则 `invalid_params`）；每次重新 plan 都新开一个 `resolve-run.XXXXXXXX` 目录，换轮必须换目录。回执返回本轮 `resolve_run_id`，并在每个 job 的 `result_schema.resolve_run_id` 里给出必须原样回填的值；本轮所有模型结果只能写进这个目录，`stage2-resolve-finalize` 也只读它。
 
 返回 `candidates.{additions,removals,splits,merges}` 列表与每个方向一个 `resolve:<教授>:<方向>` job；job 的 `model_input` 含该方向逐篇的 `paper_evidence`（含 `facts_state`/`topic_terms`/`affinity_scores`）、`gap_evidence`、自动检测到的 `removal/addition/split/merge` 候选，以及规则。**注意**：方向是**逐个独立 resolve**的——同一篇论文可在多个被选方向被同时分析，runner 不因共享论文合并方向。
+
+先沿回执的保存路径完整读取 runner 保存的本轮 resolve 计划，逐个完整读取其中准确的 `model_input`。输出截断时继续读取保存文件，不能从当前磁盘重新拼装输入。由当前分析代理自身依据这些材料判断，不引入另一次模型调用或自填阅读回执。全部复用时也保留本轮空任务集合及复用身份。
 
 **B. 写每个方向的 resolve result**（一个 `resolve-<方向>.json`）：
 ```json
@@ -486,13 +516,13 @@ run_dir=$(mktemp -d "<本教授事务目录>/resolve-run.XXXXXXXX")
 **C. 跑 `stage2-resolve-finalize`**（纯确定性，校验结果并写 `<教授目录>/论文分析/_resolved_directions.json`）：
 ```bash
 <professor-contact-skill-dir>/scripts/contact_state \
-  stage2-resolve-finalize --facts /tmp/<教授名>_套磁_facts.json \
-  --results "$run_dir"
+  stage2-resolve-finalize --facts "$stage2_run_dir/facts.json" \
+  --results "$resolve_results_dir"
 ```
 
 本轮 plan 发过 job 的方向必须有完整结果文件：缺完整预期文件（包括只写了 `resolve-<短名>.json`）返回 `result_missing` 并附完整预期路径；复制上一轮同名文件、他教授或旧目录的结果返回 `invalid_result_json`；失败时整批 `_resolved_directions.json`、输入包和新 accepted 缓存都零写入，绝不构造默认 `unchanged/accepted`。显式 `--keep-provisional` 点名的方向不受本轮文件要求约束，其余方向仍逐一检查。
 
-runner 校验：result schema/kind 正确、**`collection_key`/`provisional_direction_id` 与 job 方向一致、非 split 的 `resolved_direction_id` == collection_key（identity 绑定，见 B）**、`resolution_type` 合法、`papers_to_remove` 全是 provisional member、`papers_to_add` 全在教授级 candidate union、membership 变更论文 `facts_state=valid`、split/merge 结构约束（见 B）、**结构性 material change 的全文证据 gate**——`merged_into` 需要通过 `_authoritative_merge_basis`（双方都有 facts-valid 论文且 topic terms 收敛，阈值独立于 detector hint），`renamed` 与无 membership 变更的 `refined` 要求方向内至少一篇当前 `facts_state=valid` 的论文；零全文证据时的 authoritative 重构一律 `invalid_result_json` fail closed（unchanged/provisional 不需要证据）；每个条目写逐方向 `input_fingerprint`（version 4 = 该方向 resolve job **规范化 model_input 的 SHA**：教授级 candidate union 每篇论文的 metadata + **有效** facts_state/facts_error/topic terms + 对全部方向的 affinity 分数 + 跨方向候选证据 + 本方向画像/gap evidence + resolve 规则文本——发 job 与算指纹用同一个 `_build_resolve_model_input`，按构造一致，因此任何真正改变 job 输入的变化——包括**其他方向**的 profile 或 facts 有效性变化——都会失效本方向缓存；**不 hash** analysis Markdown 正文、abstract/month 等摘要级字段——编辑性改动不烧 resolve job）。**acceptance 生命周期**：条目带 `acceptance` 字段——`unchanged` 直接 `accepted`；material change（renamed/split_from/merged_into/refined）写为 `proposed`，在用户做出 Stage-2 选择**之前**只是提案：`stage2-resolve-plan` 对 proposed 方向总是 `action=process`（重新 resolve、再次提示），resolve-finalize 无新 result 时原样保留提案并继续报 `needs_user_choice`——未接受的提案**绝不**被当成已接受缓存。**acceptance 是 runner 强制的机器边界**：把条目变为 accepted 只有两条 deterministic 路径——`stage2-resolve-accept --ckeys <dir,...>`（用户采纳提案，见 D）与 `stage2-resolve-finalize --keep-provisional`（沿用 provisional，见 D）；`stage2-finalize` 只应用**全部条目都已 accepted** 的 sidecar（任何 proposed 条目 → `resolved_directions_not_accepted` fail closed），且 finalize 自己**绝不**翻转 acceptance（用户「沿用 provisional」的决定用 `--keep-provisional` 持久化为 accepted，见 D）。返回 `material_changes` 清单与 `needs_user_choice=true` 仅当存在未接受的 material change（已 accepted 的 resolution 重跑不再重复提示）。**preflight proof 盖章**：resolve-finalize 把 facts 记录的 `stage2_preflight.preflight_id` 原样写入 sidecar 的 `stage2_preflight` 字段（emit 回显 `stage2_preflight_id`）；facts 带该块但 malformed → `resolved_directions_proof_mismatch` fail closed——`stage2-finalize` 与 `stage2-resolve-accept` 靠这个字段拒绝另一代 facts/preflight 的 sidecar。`write_needed=false`（全部方向 reuse）时可直接跳过 B/C，把现有 `_resolved_directions.json` 原样传给 stage2-finalize。
+runner 校验：result schema/kind 正确、**`collection_key`/`provisional_direction_id` 与 job 方向一致、非 split 的 `resolved_direction_id` == collection_key（identity 绑定，见 B）**、`resolution_type` 合法、`papers_to_remove` 全是 provisional member、`papers_to_add` 全在教授级 candidate union、membership 变更论文 `facts_state=valid`、split/merge 结构约束（见 B）、**结构性 material change 的全文证据 gate**——`merged_into` 需要通过 `_authoritative_merge_basis`（双方都有 facts-valid 论文且 topic terms 收敛，阈值独立于 detector hint），`renamed` 与无 membership 变更的 `refined` 要求方向内至少一篇当前 `facts_state=valid` 的论文；零全文证据时的 authoritative 重构一律 `invalid_result_json` fail closed（unchanged/provisional 不需要证据）；每个条目写逐方向 `input_fingerprint`（version 4 = 该方向 resolve job **规范化 model_input 的 SHA**：教授级 candidate union 每篇论文的 metadata + **有效** facts_state/facts_error/topic terms + 对全部方向的 affinity 分数 + 跨方向候选证据 + 本方向画像/gap evidence + resolve 规则文本——发 job 与算指纹用同一个 `_build_resolve_model_input`，按构造一致，因此任何真正改变 job 输入的变化——包括**其他方向**的 profile 或 facts 有效性变化——都会失效本方向缓存；**不 hash** analysis Markdown 正文、abstract/month 等摘要级字段——编辑性改动不烧 resolve job）。**acceptance 生命周期**：条目带 `acceptance` 字段——`unchanged` 直接 `accepted`；material change（renamed/split_from/merged_into/refined）写为 `proposed`，在用户做出 Stage-2 选择**之前**只是提案：`stage2-resolve-plan` 对 proposed 方向总是 `action=process`（重新 resolve、再次提示），resolve-finalize 无新 result 时原样保留提案并继续报 `needs_user_choice`——未接受的提案**绝不**被当成已接受缓存。**acceptance 是 runner 强制的机器边界**：把条目变为 accepted 只有两条 deterministic 路径——`stage2-resolve-accept --ckeys <dir,...>`（用户采纳提案，见 D）与 `stage2-resolve-finalize --keep-provisional`（沿用 provisional，见 D）；`stage2-finalize` 只应用**全部条目都已 accepted** 的 sidecar（任何 proposed 条目 → `resolved_directions_not_accepted` fail closed），且 finalize 自己**绝不**翻转 acceptance（用户「沿用 provisional」的决定用 `--keep-provisional` 持久化为 accepted，见 D）。返回 `material_changes` 清单与 `needs_user_choice=true` 仅当存在未接受的 material change（已 accepted 的 resolution 重跑不再重复提示）。**preflight proof 盖章**：resolve-finalize 把 facts 记录的 `stage2_preflight.preflight_id` 原样写入 sidecar 的 `stage2_preflight` 字段（emit 回显 `stage2_preflight_id`）；facts 带该块但 malformed → `resolved_directions_proof_mismatch` fail closed——`stage2-finalize` 与 `stage2-resolve-accept` 靠这个字段拒绝另一代 facts/preflight 的 sidecar。`write_needed=false`（全部方向 reuse）时跳过 B 的模型任务，仍须执行 C 的 `stage2-resolve-finalize`，封存本轮空结果集合、复用身份与 sidecar 绑定；然后把返回的 `_resolved_directions.json` 传给后续普通计划和 stage2-finalize。
 
 **D. 拆分/合并改用户选择时问一次**：如果 `needs_user_choice=true` 且其中有 split/merge/refined（即新增或移除 ≥2 篇、或方向名/结构变了），用 `question` 问用户。material 提案在用户选择前保持 `proposed`，而 `stage2-finalize` 只消费全部 `acceptance=accepted` 的条目——**先做下面的选择步骤，再跑 finalize；绝不能靠直接传 sidecar 绕过提问（runner 会 `resolved_directions_not_accepted` 拒绝）**：
 - **「采纳 refined 方向作为新选择，继续跑 Stage 2 finalize」** — 默认推荐；先对用户采纳的方向跑
@@ -515,10 +545,13 @@ runner 校验：result schema/kind 正确、**`collection_key`/`provisional_dire
 **F. 跑 `stage2-plan`**（纯确定性）：
 ```bash
 <professor-contact-skill-dir>/scripts/contact_state stage2-plan \
-  --facts /tmp/<教授名>_套磁_facts.json \
-  --preflight-file <本教授事务临时目录>/stage2_preflight.json
+  --facts "$stage2_run_dir/facts.json" \
+  --preflight-file "$stage2_run_dir/stage2_preflight.json" \
+  --run-dir "$stage2_run_dir"
 ```
 
+
+普通 `stage2-plan` 必须加 `--run-dir "$stage2_run_dir"`，facts、方向解析和普通计划都属于同一 run。沿返回的保存路径完整读取本轮计划及每个 job 的准确 `model_input`，再由当前分析代理自身判断；截断时继续读保存文件。不得使用旧 stdout、当前源文件或自填回执代替准确输入。runner 同时核对本轮 accepted 方向解析的身份和摘要。
 
 - `freshness:<教授>:<方向>`：每条待判 gap 附候选材料（runner 已按「已确认版本关系 → 通讯/一作/独著 → 近三年 pending/middle → 其余主题线索」分级，标注 `later_total` 与 `unverifiable_count`）。你逐条判断并写 `results/freshness-<方向>.json`：
   ```json
@@ -543,13 +576,22 @@ runner 校验：result schema/kind 正确、**`collection_key`/`provisional_dire
   ```
   规则：占位符集合必须与 refs 集合精确相等；只引用 facts 里存在的 ID；**叙事不断言 gap_status**（状态由 runner 渲染的 freshness 卡承载）；论文小总结只在叙事里出现一次。每个定位段必须提供 `concrete_object`（具体对象）、`input_example`（输入例子）、`output_example`（输出例子），均为非空字符串，且只能依据对应任务的 `papers` / `gaps`；上面的合成样本仅作格式示例，实际内容按证据填写。
 
-**6.3 跑 `stage2-finalize`**：
+**6.3 封存完整结果，再跑 `stage2-finalize`**：
+
+全部 process 方向的叙事写入同一个 `narrative.json` 的 `directions[]`，全部方向齐备后才封存一次；时效结果按计划映射写齐。不得写一个方向就封存仍需追加的同名文件。执行：
 
 ```bash
-<professor-contact-skill-dir>/scripts/contact_state stage2-finalize --facts <facts> --results <results 目录> --preflight-file <本教授事务临时目录>/stage2_preflight.json --resolved-directions <教授目录>/论文分析/_resolved_directions.json
+<professor-contact-skill-dir>/scripts/contact_state stage2-consumption-seal-results \
+  --run-dir "$stage2_run_dir" --results-dir "<本轮完整 results 目录>"
 ```
 
-`--preflight-file` 是 Step 2.6 保存的同一份 preflight stdout，必须原样传回。finalize 在**任何写盘之前**重算 cheap structural inputs 并与 preflight 时比对：不一致 → `needs_refresh/preflight_inputs_changed`（不写 pack/freshness cache/Markdown；本轮按可恢复 partial 返回，稍后从 Step 2 重新开始）。finalize 还会重算 payload 的 `preflight_id`，并要求与 facts 的 `stage2_preflight.preflight_id`（Step 6.1 写入）一致：payload 被同一教授的另一次调用覆盖、facts 缺失绑定或 id 不一致 → 同样 `needs_refresh/preflight_inputs_changed`（drift 记 `preflight_proof_id`/`preflight_proof_binding`），不写任何文件。比对全部通过时，finalize 把本轮 accepted state 的 preflight metadata 种进 `套磁候选输入.json` 的 `cache.preflight`（含 pack integrity sha、逐 provisional 方向的 target/candidate 指纹、provisional→resolved 映射、逐 resolved 方向 accepted/freshness 指纹与 artifact stat guards），供下一次 Stage 2 的 Step 2.6 early reuse 判定。`stage2-refine-finalize` 只更新 `cache.render` 与 validator 的渲染绑定，保留同一已接受版本的 `cache.preflight`、原 round/pending 与第一轮 issues（`phase` 按既有规则更新为 `awaiting_second_validation` 或 `needs_correction`；修订本身不是业务新版本；不得为保留 map 恢复已失效的 preflight，业务依据或绑定已变时仍按原规则失效）。
+保留封存文件及原始结果，随后 finalize 只能读取这一轮这一目录的完整集合：
+
+```bash
+<professor-contact-skill-dir>/scripts/contact_state stage2-finalize --facts <facts> --results <results 目录> --preflight-file "$stage2_run_dir/stage2_preflight.json" --resolved-directions <教授目录>/论文分析/_resolved_directions.json
+```
+
+`--preflight-file` 是 Step 2.6 保存的同一份 preflight stdout，必须原样传回。finalize 在**首个受管写入之前**核对本轮冻结材料、完整业务观察、旧态绑定及 facts/计划/结果关联，并在渲染后再次复查：不一致 → `needs_refresh/preflight_inputs_changed`（不写 pack/freshness cache/Markdown；本轮按可恢复 partial 返回，稍后从 Step 2 重新开始）。finalize 还会重算 payload 的 `preflight_id`，并要求与 facts 的 `stage2_preflight.preflight_id`（Step 6.1 写入）一致：payload 被同一教授的另一次调用覆盖、facts 缺失绑定或 id 不一致 → 同样 `needs_refresh/preflight_inputs_changed`（drift 记 `preflight_proof_id`/`preflight_proof_binding`），不写任何文件。比对全部通过时，finalize 在内存中从本轮冻结值及已校验候选纯构造接受元数据，随后随成功接受写入 `套磁候选输入.json` 的 `cache.preflight`（含 pack integrity sha、逐 provisional 方向的 target/candidate 指纹、provisional→resolved 映射、逐 resolved 方向 accepted/freshness 指纹与 artifact stat guards），供下一次 Stage 2 的 Step 2.6 early reuse 判定。`stage2-refine-finalize` 更新 `cache.render` 与 validator 的渲染绑定，保留原 round/pending 与第一轮 issues（`phase` 按既有规则更新为 `awaiting_second_validation` 或 `needs_correction`）；同时清除 `cache.preflight`，使旧的快速复用证明失效，后续按当前正文重新检查。修订本身不新建业务版本，也不重置校验轮次。
 
 runner 校验全部 result JSON（gap ID ∈ 待判集、candidate_paper_ids ⊆ 候选清单、partial 缺 completed_part/remaining_gap 自动降级 unknown 并标记 `downgraded`、narrative refs 与占位符一致），fail-closed 校验 `_resolved_directions.json`（schema/kind/professor、逐方向 resolve fingerprint、acceptance 全 accepted、preflight proof 绑定），应用方向归属修正（移除/新增/重命名；split 创建真正的第二方向条目、merge 移除源方向并移植引用），**每个方向（含 unchanged）都写入 `resolved_direction` 子字段**（权威 resolved ID），然后原子写：
 
@@ -560,7 +602,7 @@ runner 校验全部 result JSON（gap ID ∈ 待判集、candidate_paper_ids ⊆
 **6.4 needs_decision 处理**：目标 md 被人手改过（body sha ≠ 状态记录）→ runner 返回 `needs_decision / manual_markdown_changed`，**不覆盖**。由调用方询问用户：`覆盖为状态版本（--decision-file {"decision":"overwrite"}）` / `保留手改不作为流程输入（本轮跳过该方向渲染）` / `把要保留的内容正式写进 selection.note 或 profile 后再渲染`。未决定 → 保持旧产物并返回 `needs_input`。
 
 **失败处理**：runner 返回 `error`（result 缺失/非法、引用包外 ID 等）→ 保留上一份已验收状态与 Markdown，返回 `partial/error` + reason_code（`result_missing` / `invalid_result_json` / `unknown_reference_id` / `blacklisted_gap_anchor` / `manual_markdown_changed` / `shortlist_over_limit` 等），**不手写 Markdown 兜底**。
-**唯一例外——`unknown_reference_id` 修复轮（转录错误不是业务失败）**：runner 以 `unknown_reference_id` 拒绝 freshness/narrative result 时，说明 result 文件里的引用 ID 被抄错（多字/少字/换字），这是可机械修复的转录缺陷：回到该 job 的 `model_input`，把被拒 result 行的 `gap_id`/引用 ID 重新**逐字节复制**正确值，改正该 result JSON 文件后**重跑一次** `stage2-finalize`；修复轮至多一次，仍被拒才返回 `partial/error`。修复的是你自己的 result 文件；`套磁候选输入.json`/`套磁候选分析.md` 仍只由 runner 写，不构成手写兜底。
+**唯一例外——`unknown_reference_id` 修复轮**：首次 finalize 只有以该明确原因拒绝时，runner 才登记一次修复资格。保留 revision=0 的完整结果和失败输出，在本事务目录 `repair-1` 子目录复制原完整结果集合；重新读取同一保存计划的 ID，仅机械修复这次被拒的引用编号及对应 refs/占位符，不改变判断、叙事含义、其他方向或来源。运行 `stage2-consumption-seal-results --run-dir <同一事务目录> --results-dir <repair-1> --repair-revision 1` 追加封存 revision=1，再以该目录重跑一次 finalize。原失败版本不可覆盖；没有修复资格、来源/facts/输入变化、一般非法结果改写或第三版结果均停止，不重新绑定旧结果。修复后仍失败则如实返回原错误路径。
 
 ### Step 6.5 — 白话校验循环（professor-contact-style-validator）
 
@@ -605,6 +647,7 @@ Return ONLY this JSON, no surrounding prose:
   "stage1_snapshots": {"<教授名>": "<program_root>/<教授目录>/套磁阶段1候选.json"},
   "reason_code": "<chatgpt_result_required|stage2_plan_stale|stage2_writer_busy|...|null>",
   "reused_professors": ["<Step 2.6 reuse_all no-op 复用的教授名>"],
+  "level_refreshed_professors": ["<Step 2.6 refresh_level 只做确定性级别/统计接受的教授名>"],
   "handoffs": [{"professor":"", "handoff_id":"", "bundle_path":"", "jobs":0, "missing":[]}],
   "analyses": [
     {"professor": "", "collection_key": "", "direction_id": "", "name_ja": "", "name_zh": "",
@@ -624,7 +667,7 @@ Return ONLY this JSON, no surrounding prose:
 
 `target_states` 是教授名 → 该教授自己那份 local target 绝对路径的映射（本轮解析过的每位教授一条）；返回值里不存在单一程序级 target 路径。`stage1_snapshots` 同样是教授名 → 该教授自己那份 Stage-1 正式状态绝对路径的映射，与 verify 消费的那一份一致。
 - `ok` — 全部被标记方向完成；`needs_external_result` — `wait` 已生成 bundle 或外部结果仍缺/非法，是可恢复软停止，必须返回 `chatgpt_result_required` 或 importer reason_code + handoff/missing；`partial` — 其它方向级失败/降级，包括本地 continuation 的 `stage2_plan_stale` / `stage2_writer_busy`；`error` — Zotero/路径/runner 等不可继续错误。**wait 的 external 不完整绝不能降级为本地高耗执行。**
-- `reused_professors` 列出 Step 2.6 判定 `reuse_all` 的教授；其 `analyses[]` 条目 `reused: true`，`pack`/`md` 指向既有 accepted 产物（未 rewrite、时间戳未变），无 credibility/计数更新。
+- `reused_professors` 列出 Step 2.6 判定 `reuse_all` 的教授；其 `analyses[]` 条目 `reused: true`，`pack`/`md` 指向既有 accepted 产物（未 rewrite、时间戳未变），无 credibility/计数更新。`level_refreshed_professors` 列出 `refresh_level` 的教授：只由确定性 `stage2-refresh-level` 更新了真实分析级别/统计与受管正文，没有新的模型分析；其 `analyses[]` 不新增 job 计数。
 - **不回传** gap 原文全文、论文全文、逐条大推理——人读细节在渲染后的 md 与输入包里。
 
 ## Errors
@@ -637,7 +680,7 @@ when: no `folder_path`; program root unresolvable; user aborted at the Zotero pr
 ## Hard rules
 - **每位教授自己那份 `<教授目录>/套磁目标.json` 是唯一选择来源**：绝不扫描 Zotero `套磁候选` note、绝不要求 `套磁候选总览.md`、绝不读已退役的程序级 `教授研究/套磁目标.json`（它只是 `contact_targets.py migrate` 的一次性输入，不是 Stage 2 的 fallback）、绝不从 Zotero collection key 推导 target 身份；`collection_key` 只是 `direction_id` 的兼容 join 键。被选方向成员身份变化（成员 `item_key` 集合变化或方向消失，`preview_changed`，stale 条目精确到 `direction_id`）阻断 Stage 2，直到 Stage 0 修订选择；未选方向、display 或置信度变化不阻断。
 - **Stage 1 候选快照必须先 verify 再消费**：分析/相关性范围 = `contact_stage1.py verify` 通过后的逐方向 `candidate_keys`；快照缺失/过期 → `needs_input`（重跑 Stage 1），绝不手改快照、绝不回退到「只读 provisional members」的旧范围（那会让 Stage 1 扩召白下 PDF）。扩召候选永远以候选身份参与（`non_final_candidates_only`）：可信度闸门只用 provisional members，`relevance_reason` 附扩召理由，绝不把扩召写成「该方向成员」。
-- **Stage 2 初始化顺序固定且 preflight gate 不可绕过**：resolve → 逐教授 `contact_targets.py resolve --target-file <该教授目录>/套磁目标.json` → 同一份 target 的 `contact_stage1.py verify --target-file` → 逐教授 `contact_state.py stage2-preflight --target-file`（三处 `--target-file` 必须是同一位教授那一份）→ 分区 → **仅当存在 process professor**才 Zotero probe/session → 候选论文读取。`reuse_all` 教授必须在任何 Zotero connectivity 检查/PDF 读取/模型 job 之前以 no-op 复用结束；`chatgpt_result` 显式提供或 `kb_import=true` 时禁止 early hard exit。preflight 是 correctness-preserving 优化，不是弱化缓存：任何无法证明安全的状态（legacy pack、malformed cache 容器、版本/参数变化、指纹或 artifact guard 不一致、受管正文原始字节与记录渲染/校验绑定不一致（含仅行尾变化）、validator 未验收）一律 fallback 到原 Stage 2 correctness path；preflight 绝不生成新的科学事实，`cache.preflight` 只是 cache metadata。保存的 preflight payload 与 facts 的绑定同样不可绕过：Step 6.1 必须把 payload 的 `preflight_id` 写进 facts，finalize 只承认由准备该 facts 的同一次调用保存的 proof。
+- **Stage 2 初始化顺序固定且 preflight gate 不可绕过**：resolve → 逐教授 `contact_targets.py resolve --target-file <该教授目录>/套磁目标.json` → 同一份 target 的 `contact_stage1.py verify --target-file` → 逐教授 `contact_state.py stage2-preflight --target-file`（三处 `--target-file` 必须是同一位教授那一份）→ 分区 → **仅当存在 process professor**才 Zotero probe/session → 候选论文读取。`reuse_all` 教授必须在任何 Zotero connectivity 检查/PDF 读取/模型 job 之前以 no-op 复用结束；`refresh_level` 教授只运行 `stage2-refresh-level`（不读 Zotero/PDF、不发模型 job）；`chatgpt_result` 显式提供或 `kb_import=true` 时禁止 early hard exit。preflight 是 correctness-preserving 优化，不是弱化缓存：任何无法证明安全的状态（legacy pack、malformed cache 容器、版本/参数变化、受管正文原始字节与记录渲染/校验绑定不一致（含仅行尾变化）、业务来源/指纹或 artifact guard 不一致）一律 fallback 到原 Stage 2 correctness path；validator 未验收或失败时不能 `reuse_all`——仅需级别/统计更新的走 `refresh_level`，其余回慢路径，且 validator 失败本身不构成业务来源变化；preflight 绝不生成新的科学事实，`cache.preflight` 只是 cache metadata。保存的 preflight payload 与 facts 的绑定同样不可绕过：Step 6.1 必须把 payload 的 `preflight_id` 写进 facts，finalize 只承认由准备该 facts 的同一次调用保存的 proof。
 - **Stage 2 Zotero 访问统一消费 resolved endpoint**：connectivity probe、`<zotero-read-skill-dir>/scripts/new-session.sh`、署名线 REST 分页与其它 Stage 2 直接 Zotero HTTP/MCP 访问都只使用 Step 2.7 解析出的 `ZOTERO_HTTP_URL` / `ZOTERO_MCP_URL`；同一轮内不得出现两组不同的 resolved endpoint，literal 生产端口只允许出现在 Step 2.7 第 2 条语义契约 fence 的 fallback 文本里，**绝不写进任何执行的命令、URL 或探测**——fixture/runtime 端点由环境注入，命令里手写字面生产端口即违反 endpoint contract。一切真实 Zotero HTTP/MCP 访问（含 connectivity probe）必须经 `scripts/stage2_zotero_rpc.py` 的 `probe`/`mcp`/`http` 子命令（其 CLI 不提供 URL/port 覆盖参数，endpoint 只由 helper 从环境变量解析）；唯一例外是 `new-session.sh` session 建立。helper 失败按 transport failure fail-closed 处理。
 - **跨方向按 item_key 去重**：同一教授同一 `item_key` 的准备/OCR/paper-analysis 每轮至多执行一次，结果复用到所有包含它的被选方向；**绝不仅因成员重叠就合并两个被选方向**的 narrative、user_note、gap pool 或 direction fingerprint。
 - **handoff barrier 不可绕过**：post-cost-gate/post-idempotency jobs 必须先 build ZIP；`wait` 在任何新 vision OCR/`paper-analysis full|gap-only` 前停止。resume 必须先按当前输入 rebuild current bundle，再 import external result；不匹配即 stale/mismatch，绝不‘尽量用’。

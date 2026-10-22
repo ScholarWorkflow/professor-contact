@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import subprocess
 import sys
+import tempfile
 
 from gate2_evidence import TestPreparationError
 
@@ -107,19 +108,138 @@ def prepare_stage2_proof(run_cli, facts_path):
         ) from exc
 
 
-def run_bound_stage2_plan(run_cli, facts_path):
+def _ensure_stage2_proof(run_cli, facts_path):
     facts_path = Path(facts_path)
     proof = facts_path.with_name(facts_path.stem + '-preflight.json')
     facts = json.loads(facts_path.read_text())
     if not proof.exists() or not facts.get('stage2_preflight'):
         proof = prepare_stage2_proof(run_cli, facts_path)
-    return run_cli('stage2-plan', '--facts', facts_path, '--preflight-file', proof)
+    return Path(proof)
+
+
+def _prepare_consumption(run_cli, facts_path, proof_path):
+    """Freeze this fixture's declared sources before the real plan/finalize."""
+    facts_path = Path(facts_path)
+    facts = json.loads(facts_path.read_text())
+    reference = (facts.get('stage2_preflight') or {}).get('consumption')
+    if isinstance(reference, dict) and reference.get('file'):
+        companion_path = Path(reference['file'])
+        if companion_path.is_file():
+            try:
+                companion = json.loads(companion_path.read_text())
+            except (OSError, ValueError):
+                companion = None
+            if isinstance(companion, dict) and not companion.get('stage2_plan'):
+                return subprocess.CompletedProcess(
+                    [], 0,
+                    json.dumps({'status': 'ok',
+                                'consumption_file': str(companion_path),
+                                'run_id': companion.get('run_id'),
+                                'sources_sha256': companion.get('sources_sha256')}),
+                    '')
+    run_dir = facts_path.with_name(facts_path.stem + '-run')
+    suffix = 0
+    while run_dir.exists():
+        suffix += 1
+        run_dir = facts_path.with_name(f"{facts_path.stem}-run-{suffix}")
+    run_dir.mkdir()
+    sources_path = run_dir / 'source-declarations.json'
+    write_json(sources_path, {'papers': facts.get('papers', []),
+                              'current_year': facts.get('current_year')})
+    target = Path(facts['professor_dir']) / '套磁目标.json'
+    result = run_cli('stage2-consumption-prepare',
+                     '--program-root', facts['program_root'],
+                     '--professor', facts['professor'],
+                     '--target-file', target,
+                     '--sources-file', sources_path,
+                     '--preflight-file', proof_path,
+                     '--run-dir', run_dir)
+    if result.returncode != 0:
+        return result
+    payload = json.loads(result.stdout)
+    if payload.get('status') != 'ok':
+        return result
+    facts = json.loads(facts_path.read_text())
+    facts.setdefault('stage2_preflight', {})['consumption'] = {
+        'file': payload['consumption_file'], 'version': 1,
+        'run_id': payload['run_id'], 'sources_sha256': payload['sources_sha256'],
+    }
+    write_json(facts_path, facts)
+    return result
+
+
+def prepare_consumption(run_cli, facts_path, proof_path=None):
+    """Public fixture entry: freeze the facts' declared sources before plan/resolve."""
+    facts_path = Path(facts_path)
+    proof = Path(proof_path) if proof_path is not None \
+        else _ensure_stage2_proof(run_cli, facts_path)
+    return _prepare_consumption(run_cli, facts_path, proof)
+
+
+def run_bound_stage2_plan(run_cli, facts_path):
+    facts_path = Path(facts_path)
+    proof = _ensure_stage2_proof(run_cli, facts_path)
+    prepared = _prepare_consumption(run_cli, facts_path, proof)
+    if prepared.returncode != 0:
+        return prepared
+    payload = json.loads(prepared.stdout)
+    if payload.get('status') != 'ok':
+        return prepared
+    run_dir = Path(payload['consumption_file']).parent
+    return run_cli('stage2-plan', '--facts', facts_path,
+                   '--preflight-file', proof, '--run-dir', run_dir)
+
+
+def _results_argument(arguments):
+    for index, value in enumerate(arguments):
+        if value == '--results' and index + 1 < len(arguments):
+            return arguments[index + 1]
+    return None
 
 
 def run_bound_stage2_finalize(run_cli, facts_path, *arguments):
     facts_path = Path(facts_path)
-    proof = facts_path.with_name(facts_path.stem + '-preflight.json')
+    facts_before = facts_path.read_bytes()
+    proof = _ensure_stage2_proof(run_cli, facts_path)
     facts = json.loads(facts_path.read_text())
-    if not proof.exists() or not facts.get('stage2_preflight'):
-        proof = prepare_stage2_proof(run_cli, facts_path)
-    return run_cli('stage2-finalize', '--facts', facts_path, '--preflight-file', proof, *arguments)
+    reference = (facts.get('stage2_preflight') or {}).get('consumption')
+    companion_path = Path(reference['file']) if isinstance(reference, dict) \
+        and reference.get('file') else None
+    companion = None
+    if companion_path is not None and companion_path.is_file():
+        try:
+            companion = json.loads(companion_path.read_text())
+        except (OSError, ValueError):
+            companion = None
+    sealed = isinstance(companion, dict) and isinstance(companion.get('results'), dict)
+    has_plan = isinstance(companion, dict) and isinstance(companion.get('stage2_plan'), dict)
+    if not has_plan or sealed:
+        planned = run_bound_stage2_plan(run_cli, facts_path)
+        if planned.returncode != 0:
+            return planned
+        payload = json.loads(planned.stdout)
+        if payload.get('status') != 'ok':
+            return planned
+        facts = json.loads(facts_path.read_text())
+        reference = (facts.get('stage2_preflight') or {}).get('consumption')
+        companion_path = Path(reference['file']) if isinstance(reference, dict) \
+            and reference.get('file') else None
+    results = _results_argument(arguments)
+    if companion_path is not None and results:
+        sealed_result = run_cli('stage2-consumption-seal-results',
+                                '--run-dir', companion_path.parent,
+                                '--results-dir', results)
+        if sealed_result.returncode != 0:
+            return sealed_result
+        sealed_payload = json.loads(sealed_result.stdout)
+        if sealed_payload.get('status') != 'ok':
+            return sealed_result
+    result = run_cli('stage2-finalize', '--facts', facts_path,
+                     '--preflight-file', proof, *arguments)
+    try:
+        payload = json.loads(result.stdout)
+    except ValueError:
+        payload = {}
+    if payload.get('status') != 'ok':
+        facts_path.write_bytes(facts_before)
+    return result

@@ -1,4 +1,4 @@
-from stage2_upstream_fixture import run_bound_stage2_finalize
+from stage2_upstream_fixture import run_bound_stage2_finalize, prepare_consumption
 import hashlib
 import json
 import subprocess
@@ -150,6 +150,12 @@ class FactsSidecarTests(unittest.TestCase):
         }
         path = self.root / "facts.json"
         path.write_text(json.dumps(facts, ensure_ascii=False, indent=1), encoding="utf-8")
+        prepared = prepare_consumption(run_cli, path)
+        if prepared.returncode != 0:
+            raise AssertionError(f"consumption fixture failed: {prepared.stdout} {prepared.stderr}")
+        payload = json.loads(prepared.stdout)
+        if payload.get("status") != "ok":
+            raise AssertionError(f"consumption fixture not ready: {payload}")
         return path
 
     def write_stage2_results(self, results: Path):

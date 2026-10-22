@@ -400,18 +400,6 @@ class MaterialPendingBuilder(ResolvedPipelineMixin, unittest.TestCase):
                 "dir_A", ["P1", "P2"], name_ja="Signal Processing",
                 name_zh="信号处理", summary="signal processing")],
         )
-        _, resolve_finalize = self.run_resolve(
-            facts_path, {"dir_A": canonical._refined("dir_A", "P2")})
-        if not resolve_finalize.get("needs_user_choice"):
-            raise FixtureBuildError(
-                "material_pending fixture must stop at the user-choice boundary: "
-                + json.dumps(resolve_finalize, ensure_ascii=False))
-        sidecar = json.loads(
-            (self.prof_dir / "论文分析" / "_resolved_directions.json").read_text(encoding="utf-8"))
-        if sidecar["directions"][0]["acceptance"] != "proposed":
-            raise FixtureBuildError(
-                "material_pending sidecar must stay proposed: "
-                + json.dumps(sidecar, ensure_ascii=False))
         _write_stage0_state(
             self.root, self.prof_dir, direction_id="dir_A",
             direction={"name_ja": "Signal Processing", "name_zh": "信号处理",
@@ -424,6 +412,26 @@ class MaterialPendingBuilder(ResolvedPipelineMixin, unittest.TestCase):
             seed_count=2)
         _resolve_targets(self.root, self.prof_dir)
         _build_and_verify_stage1_snapshot(self.root, self.prof_dir)
+        _, resolve_finalize = self.run_resolve(
+            facts_path, {"dir_A": canonical._refined("dir_A", "P2")})
+        if not resolve_finalize.get("needs_user_choice"):
+            raise FixtureBuildError(
+                "material_pending fixture must stop at the user-choice boundary: "
+                + json.dumps(resolve_finalize, ensure_ascii=False))
+        sidecar = json.loads(
+            (self.prof_dir / "论文分析" / "_resolved_directions.json").read_text(encoding="utf-8"))
+        if sidecar["directions"][0]["acceptance"] != "proposed":
+            raise FixtureBuildError(
+                "material_pending sidecar must stay proposed: "
+                + json.dumps(sidecar, ensure_ascii=False))
+        facts = json.loads(Path(facts_path).read_text(encoding="utf-8"))
+        reference = (facts.get("stage2_preflight") or {}).get("consumption") or {}
+        if reference.get("file"):
+            consumption_path = Path(reference["file"])
+            companion = json.loads(consumption_path.read_text(encoding="utf-8"))
+            companion.pop("resolve", None)
+            consumption_path.write_text(
+                json.dumps(companion, ensure_ascii=False, indent=1), encoding="utf-8")
         if (self.prof_dir / "套磁候选输入.json").exists():
             raise FixtureBuildError("material_pending fixture must not contain an accepted pack")
 

@@ -360,28 +360,28 @@ def build(*, atomic_write,
             raw = Path(path).read_bytes()
         except OSError as exc:
             return {"error": f"unreadable: {exc}"}
-        if not raw.startswith(b"---\n"):
+        if raw.startswith(b"---\r\n"):
+            separator = b"\r\n"
+        elif raw.startswith(b"---\n"):
+            separator = b"\n"
+        else:
             return {"error": "missing_frontmatter"}
-        end = raw.find(b"\n---\n", 4)
-        if end < 0:
+        if raw.find(separator + b"---" + separator, 3 + len(separator)) < 0:
             return {"error": "unterminated_frontmatter"}
-        header_text_bytes = raw[4:end]
-        body_start = end + 5
-        if raw[body_start:body_start + 1] == b"\n":
-            body_start += 1
+        header, body_bytes = split_frontmatter_bytes(raw)
+        if header is None:
+            return {"error": "invalid_utf8"}
+        # The splitter returns an exact suffix of raw, including its original
+        # line endings and trailing bytes. Its length therefore locates the
+        # actual boundary even for a CRLF machine header and an empty body.
+        body_start = len(raw) - len(body_bytes)
         if body_start > len(raw):
             return {"error": "invalid_body_boundary"}
-        body_bytes = raw[body_start:]
         try:
-            header_text = header_text_bytes.decode("utf-8")
+            raw[:body_start].decode("utf-8")
             body_text = body_bytes.decode("utf-8")
         except UnicodeDecodeError:
             return {"error": "invalid_utf8"}
-        header = {}
-        for line in header_text.splitlines():
-            if ":" in line:
-                key, _, value = line.partition(":")
-                header[key.strip()] = value.strip()
         header_bytes = raw[:body_start]
         return {
             "raw": raw,
@@ -393,13 +393,51 @@ def build(*, atomic_write,
             "line_offset": header_bytes.count(b"\n"),
         }
 
+    def split_frontmatter_bytes(data: bytes) -> tuple[dict | None, bytes]:
+        """Split a managed file without decoding/de-newlining its body bytes.
+
+        The renderer normally writes LF headers, but a legal accepted body may
+        have CRLF line endings (and an older writer may have used CRLF for the
+        header too). The body slice must preserve the exact on-disk bytes; only
+        the header keys are decoded.
+        """
+        if data.startswith(b"---\r\n"):
+            sep = b"\r\n"
+            start = len(b"---\r\n")
+        elif data.startswith(b"---\n"):
+            sep = b"\n"
+            start = len(b"---\n")
+        else:
+            return None, data
+        marker = sep + b"---" + sep
+        end = data.find(marker, start)
+        if end < 0:
+            return None, data
+        header = {}
+        try:
+            for line in data[start:end].split(sep):
+                if b":" not in line:
+                    continue
+                key, _, value = line.partition(b":")
+                header[key.strip().decode("utf-8")] = value.strip().decode("utf-8")
+        except UnicodeDecodeError:
+            return None, data
+        body_start = end + len(marker)
+        if data[body_start:body_start + len(sep)] == sep:
+            body_start += len(sep)
+        return header, data[body_start:]
+
     def managed_conflict(path: Path, body: str, previous_sha: str | None,
                          decision: str | None) -> dict | None:
         body_sha = sha256_text(body)
         if path.is_file():
-            snapshot = managed_snapshot(path)
-            existing_sha = snapshot.get("body_sha256") if isinstance(snapshot, dict) \
-                and not snapshot.get("error") else None
+            try:
+                raw = path.read_bytes()
+            except OSError:
+                header, existing_body = None, b""
+            else:
+                header, existing_body = split_frontmatter_bytes(raw)
+            existing_sha = sha256_bytes(existing_body) if header is not None else None
             if existing_sha is None:
                 # An unreadable, unterminated or non-UTF-8 managed file cannot
                 # prove the accepted render; every write needs an explicit
@@ -430,7 +468,7 @@ def build(*, atomic_write,
                           decision: str | None) -> dict:
         body_sha = sha256_text(body)
         if path.is_file():
-            existing_sha = sha256_text(path.read_text(encoding="utf-8"))
+            existing_sha = sha256_bytes(path.read_bytes())
             if existing_sha != body_sha and previous_sha and existing_sha != previous_sha:
                 if decision != "overwrite":
                     return {"written": False, "needs_decision": True,
@@ -443,8 +481,8 @@ def build(*, atomic_write,
         body_sha = sha256_text(body)
         previous = (projections or {}).get("render", {}).get(key, {}).get("sha256")
         if path.is_file():
-            _, existing_body = split_frontmatter(path.read_text(encoding="utf-8"))
-            existing_sha = sha256_text(existing_body)
+            _, existing_body = split_frontmatter_bytes(path.read_bytes())
+            existing_sha = sha256_bytes(existing_body)
             if existing_sha != body_sha and previous and existing_sha != previous:
                 return {"written": False, "needs_decision": True,
                         "reason_code": "manual_markdown_changed", "target": str(path)}
@@ -504,6 +542,7 @@ def build(*, atomic_write,
                 render_frontmatter=render_frontmatter,
                 split_frontmatter=split_frontmatter,
                 managed_snapshot=managed_snapshot,
+                split_frontmatter_bytes=split_frontmatter_bytes,
                 managed_conflict=managed_conflict,
                 managed_write=managed_write,
                 managed_write_raw=managed_write_raw,

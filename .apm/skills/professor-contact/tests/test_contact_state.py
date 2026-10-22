@@ -13,7 +13,8 @@ import unittest
 from datetime import datetime
 from pathlib import Path
 from issue64_test_support import path_set
-from stage2_upstream_fixture import run_bound_stage2_plan, run_bound_stage2_finalize
+from stage2_upstream_fixture import (run_bound_stage2_plan, run_bound_stage2_finalize,
+                                     prepare_consumption)
 
 import importlib.util
 
@@ -2138,7 +2139,7 @@ class TestMigrate(BaseEnv):
         plan_path = self.root / "mplan.json"
         plan_path.write_text(json.dumps(plan, ensure_ascii=False), encoding="utf-8")
         out = parse(run_cli("migrate-v3", "--apply", plan_path, "--program-root", self.root))
-        self.assertEqual(out["status"], "ok")
+        self.assertEqual(out["status"], "ok", out)
         self.assertEqual(len(out["applied"]), 1)
         pack = json.loads((self.prof_dir / "套磁候选输入.json").read_text(encoding="utf-8"))
         self.assertTrue(pack.get("migrated"))
@@ -3089,19 +3090,58 @@ class Issue65Stage2BindingEnv(unittest.TestCase):
                                       scenario="preflight")
         return self._formal_ok_payload(text, code, "preflight")
 
+    def _consumption_run_dir(self):
+        facts = json.loads(self.facts_path.read_text(encoding="utf-8"))
+        reference = (facts.get("stage2_preflight") or {}).get("consumption")
+        if not isinstance(reference, dict) or not reference.get("file"):
+            prepared = prepare_consumption(run_cli, self.facts_path, self.preflight_file)
+            if prepared.returncode != 0:
+                raise AssertionError(f"consumption fixture failed: {prepared.stdout} {prepared.stderr}")
+            payload = json.loads(prepared.stdout)
+            if payload.get("status") != "ok":
+                raise AssertionError(f"consumption fixture not ready: {payload}")
+            facts = json.loads(self.facts_path.read_text(encoding="utf-8"))
+            reference = (facts.get("stage2_preflight") or {}).get("consumption")
+        return Path(reference["file"]).parent
+
     def plan(self):
+        run_dir = self._consumption_run_dir()
         args = argparse.Namespace(facts=str(self.facts_path),
-                                  preflight_file=str(self.preflight_file))
+                                  preflight_file=str(self.preflight_file),
+                                  run_dir=str(run_dir))
         text, code = self._run_formal(contact_state.cmd_stage2_plan, args, scenario="plan")
         return self._formal_ok_payload(text, code, "plan")
 
     def plan_raw(self, preflight_file):
         """Run the formal plan against an explicit preflight file (no ok assert)."""
+        facts = json.loads(self.facts_path.read_text(encoding="utf-8"))
+        reference = (facts.get("stage2_preflight") or {}).get("consumption")
+        if not isinstance(reference, dict):
+            try:
+                prepare_consumption(run_cli, self.facts_path, preflight_file)
+            except (AssertionError, OSError, ValueError):
+                pass
         args = argparse.Namespace(facts=str(self.facts_path),
                                   preflight_file=str(preflight_file))
         return self._run_formal(contact_state.cmd_stage2_plan, args, scenario="plan")
 
     def finalize(self):
+        run_dir = self._consumption_run_dir()
+        companion = json.loads((run_dir / "stage2-consumption.json").read_text(encoding="utf-8"))
+        if not isinstance(companion.get("stage2_plan"), dict):
+            plan_args = argparse.Namespace(facts=str(self.facts_path),
+                                           preflight_file=str(self.preflight_file),
+                                           run_dir=str(run_dir))
+            plan_text, plan_code = self._run_formal(
+                contact_state.cmd_stage2_plan, plan_args, scenario="plan")
+            plan_payload = json.loads(plan_text)
+            if plan_payload.get("status") != "ok":
+                return plan_text, plan_code
+        if not isinstance(companion.get("results"), dict):
+            sealed = parse(run_cli("stage2-consumption-seal-results",
+                                   "--run-dir", run_dir, "--results-dir", self.results))
+            if sealed.get("status") != "ok":
+                raise AssertionError(f"result sealing failed: {sealed}")
         args = argparse.Namespace(facts=str(self.facts_path),
                                   results=str(self.results),
                                   decision_file=None, resolved_directions=None,
@@ -3227,6 +3267,12 @@ class TestIssue64Stage2PlanBinding(Issue65Stage2BindingEnv):
 
     def _bind_facts(self, proof):
         self._write_facts(preflight_id=proof["preflight_id"])
+        facts = json.loads(self.facts_path.read_text(encoding="utf-8"))
+        if proof.get("professor") == facts.get("professor"):
+            prepared = prepare_consumption(run_cli, self.facts_path, self.preflight_file)
+            if prepared.returncode != 0:
+                raise AssertionError(
+                    f"consumption fixture failed: {prepared.stdout} {prepared.stderr}")
 
     def _mutate_target_selection_history(self):
         target = json.loads(self.a_target.read_text(encoding="utf-8"))

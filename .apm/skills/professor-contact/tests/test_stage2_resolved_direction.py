@@ -1,4 +1,5 @@
-from stage2_upstream_fixture import run_bound_stage2_finalize, prepare_stage2_proof
+from stage2_upstream_fixture import (run_bound_stage2_finalize, prepare_stage2_proof,
+                                     prepare_consumption)
 """Tests for Stage 2 resolved_direction functionality (issue #7).
 
 Verifies that Stage 2 can resolve provisional directions against full-text
@@ -92,8 +93,16 @@ def new_resolve_results_dir(root, prefix: str = "resolve-run") -> Path:
     raise AssertionError(f"no free {prefix} directory under {root}")
 
 
-def plan_resolve(facts_path, results_dir, *extra_arguments):
+def plan_resolve(facts_path, results_dir, *extra_arguments, reuse_companion=False):
     """Formal `stage2-resolve-plan` bound to this round's results directory."""
+    if not reuse_companion:
+        facts = json.loads(Path(facts_path).read_text(encoding="utf-8"))
+        block = facts.get("stage2_preflight")
+        if isinstance(block, dict):
+            block.pop("consumption", None)
+            Path(facts_path).write_text(json.dumps(facts, ensure_ascii=False, indent=1),
+                                        encoding="utf-8")
+    prepare_consumption(run_cli, facts_path)
     return parse(run_cli("stage2-resolve-plan", "--facts", str(facts_path),
                          "--results-dir", str(results_dir), *map(str, extra_arguments)))
 
@@ -393,8 +402,11 @@ class ResolvedDirectionFinalizeTests(unittest.TestCase):
         # directory stays empty: no file may be invented into an accepted
         # "unchanged" resolution.
         results_dir = new_resolve_results_dir(self.root)
-        plan_payload = plan_resolve(facts_path, results_dir)
-        self.assertEqual(plan_payload["status"], "ok")
+        plan_payload = plan_resolve(
+            facts_path, results_dir,
+            reuse_companion=(getattr(self, "reuse_consumption", False)
+                             or getattr(self, "consumption_run", None) is not None))
+        self.assertEqual(plan_payload["status"], "ok", plan_payload)
         self.assertEqual([job["direction_id"] for job in plan_payload["jobs"]], ["dir_A"])
         payload = finalize_resolve(facts_path, results_dir)
         self.assertEqual(payload["status"], "error")
@@ -564,17 +576,18 @@ class ResolvedPipelineMixin:
             "red_lines": [],
         }
 
-    def write_facts(self, papers, directions, name="facts.json"):
+    def write_facts(self, papers, directions, name="facts.json", *, gap_scope="selected_direction"):
         facts_path = self.root / name
         write_json(facts_path, {
             "program_root": str(self.root),
             "professor_dir": str(self.prof_dir),
             "professor": self.professor,
             "current_year": 2026,
-            "params": {"gap_scope": "selected_direction", "freshness_scope": "shortlist"},
+            "params": {"gap_scope": gap_scope, "freshness_scope": "shortlist"},
             "papers": papers,
             "directions": directions,
         })
+        self.reuse_consumption = False
         prepare_stage2_proof(run_cli, facts_path)
         return facts_path
 
@@ -590,8 +603,11 @@ class ResolvedPipelineMixin:
         `results_dir` / `resolve_run_id` let a test re-enter or forge a round.
         """
         results_dir = results_dir or new_resolve_results_dir(self.root)
-        plan_payload = plan_resolve(facts_path, results_dir)
-        self.assertEqual(plan_payload["status"], "ok")
+        plan_payload = plan_resolve(
+            facts_path, results_dir,
+            reuse_companion=(getattr(self, "reuse_consumption", False)
+                             or getattr(self, "consumption_run", None) is not None))
+        self.assertEqual(plan_payload["status"], "ok", plan_payload)
         write_resolve_results(results_dir, plan_payload, resolve_results, facts_path,
                               skip=missing, resolve_run_id=resolve_run_id)
         finalize_payload = finalize_resolve(facts_path, results_dir)
@@ -604,9 +620,29 @@ class ResolvedPipelineMixin:
         return parse(run_cli("stage2-resolve-accept", "--facts", str(facts_path),
                              "--ckeys", ",".join(ckeys)))
 
+    def seal_stage2_plan(self, facts_path):
+        """Seal the Stage-2 plan before mutating a resolved sidecar."""
+        payload = parse(run_bound_stage2_plan(run_cli, facts_path))
+        self.assertEqual(payload["status"], "ok", payload)
+        return payload
+
     def run_stage2_finalize(self, facts_path):
         """stage2-plan → freshness/narrative results → stage2-finalize with the sidecar."""
-        plan_payload = parse(run_bound_stage2_plan(run_cli, facts_path))
+        consumption_run = getattr(self, "consumption_run", None)
+        facts = json.loads(Path(facts_path).read_text(encoding="utf-8"))
+        reference = (facts.get("stage2_preflight") or {}).get("consumption")
+        if isinstance(reference, dict) and reference.get("file") \
+                and getattr(self, "consumption_proof", None) is not None:
+            consumption_run = Path(reference["file"]).parent
+        elif getattr(self, "consumption_proof", None) is None:
+            consumption_run = None
+        if consumption_run is None:
+            plan_payload = parse(run_bound_stage2_plan(run_cli, facts_path))
+        else:
+            plan_payload = parse(run_cli(
+                "stage2-plan", "--facts", facts_path,
+                "--preflight-file", self.consumption_proof, "--run-dir", consumption_run))
+        self.assertEqual(plan_payload["status"], "ok", plan_payload)
         results_dir = self.root / "stage2_results"
         results_dir.mkdir(exist_ok=True)
         narrative_directions = []
@@ -635,6 +671,10 @@ class ResolvedPipelineMixin:
         write_json(results_dir / "narrative.json", {
             "schema": 1, "kind": "narrative", "directions": narrative_directions})
         sidecar_path = self.prof_dir / "论文分析" / "_resolved_directions.json"
+        if consumption_run is not None:
+            sealed = parse(run_cli("stage2-consumption-seal-results",
+                                   "--run-dir", consumption_run, "--results-dir", results_dir))
+            self.assertEqual(sealed["status"], "ok", sealed)
         payload = parse(run_bound_stage2_finalize(run_cli, str(facts_path), "--results", str(results_dir), "--resolved-directions", str(sidecar_path)))
         return payload
 
@@ -730,6 +770,7 @@ class Stage2FinalizeWithResolvedTests(ResolvedPipelineMixin, unittest.TestCase):
         ]
         facts_path = self.write_facts(papers, [self.make_direction("dir_A", ["P1"])])
         self.run_resolve(facts_path, {})
+        self.seal_stage2_plan(facts_path)
 
         sidecar_path = self.prof_dir / "论文分析" / "_resolved_directions.json"
         sidecar = json.loads(sidecar_path.read_text(encoding="utf-8"))
@@ -749,6 +790,7 @@ class Stage2FinalizeWithResolvedTests(ResolvedPipelineMixin, unittest.TestCase):
         ]
         facts_path = self.write_facts(papers, [self.make_direction("dir_A", ["P1"])])
         self.run_resolve(facts_path, {})
+        self.seal_stage2_plan(facts_path)
 
         sidecar_path = self.prof_dir / "论文分析" / "_resolved_directions.json"
         sidecar = json.loads(sidecar_path.read_text(encoding="utf-8"))
@@ -767,6 +809,7 @@ class Stage2FinalizeWithResolvedTests(ResolvedPipelineMixin, unittest.TestCase):
         ]
         facts_path = self.write_facts(papers, [self.make_direction("dir_A", ["P1"])])
         self.run_resolve(facts_path, {})
+        self.seal_stage2_plan(facts_path)
 
         sidecar_path = self.prof_dir / "论文分析" / "_resolved_directions.json"
         sidecar = json.loads(sidecar_path.read_text(encoding="utf-8"))
@@ -1265,11 +1308,8 @@ class ResolvedReuseTests(ResolvedPipelineMixin, unittest.TestCase):
         }, results_dir=results_dir)
         self.assertTrue(first["needs_user_choice"])
 
-        # Second run with this round's directory emptied BEFORE the user
-        # chose: the entry is still only a proposal and keeps asking for the
-        # choice.
-        for stale in results_dir.glob("resolve-*.json"):
-            stale.unlink()
+        # Second run with the same sealed files and no new results: the entry
+        # is still only a proposal and keeps asking for the choice.
         pending_rerun = finalize_resolve(facts_path, results_dir)
         self.assertEqual(pending_rerun["status"], "ok",
                          msg=json.dumps(pending_rerun, ensure_ascii=False))
@@ -1330,7 +1370,25 @@ class UserKeptProvisionalTests(ResolvedPipelineMixin, unittest.TestCase):
     def tearDown(self):
         self.temp.cleanup()
 
-    def _material_proposal_setup(self):
+    def _prepare_consumption(self, facts_path):
+        self.consumption_proof = prepare_stage2_proof(run_cli, facts_path)
+        self.consumption_run = new_resolve_results_dir(self.root, "consumption")
+        facts = json.loads(Path(facts_path).read_text(encoding="utf-8"))
+        sources_path = self.consumption_run / "sources.json"
+        write_json(sources_path, {"papers": facts["papers"]})
+        prepared = parse(run_cli(
+            "stage2-consumption-prepare", "--program-root", self.root,
+            "--professor", self.professor,
+            "--target-file", self.prof_dir / "套磁目标.json",
+            "--preflight-file", self.consumption_proof,
+            "--run-dir", self.consumption_run, "--sources-file", sources_path))
+        self.assertEqual(prepared["status"], "ok", prepared)
+        facts["stage2_preflight"]["consumption"] = {
+            "file": prepared["consumption_file"], "run_id": prepared["run_id"],
+            "sources_sha256": prepared["sources_sha256"]}
+        write_json(facts_path, facts)
+
+    def _material_proposal_setup(self, *, propose=True):
         """dir_A gets a rename proposal; dir_B stays unchanged. Returns facts_path."""
         papers = [
             self.make_paper("P1", "Adaptive Signal Processing", ["signal", "processing"],
@@ -1345,6 +1403,10 @@ class UserKeptProvisionalTests(ResolvedPipelineMixin, unittest.TestCase):
                                 summary="catalytic chemistry"),
         ]
         facts_path = self.write_facts(papers, directions)
+        self._prepare_consumption(facts_path)
+        if not propose:
+            return facts_path, papers
+        self.proposal_results_dir = new_resolve_results_dir(self.root)
         self.run_resolve(facts_path, {
             "dir_A": {
                 "resolved_direction_id": "dir_A",
@@ -1359,12 +1421,17 @@ class UserKeptProvisionalTests(ResolvedPipelineMixin, unittest.TestCase):
                 "merge_target": None,
                 "user_note": "",
             },
-        })
+        }, results_dir=self.proposal_results_dir)
         return facts_path, papers
 
-    def _keep_provisional(self, facts_path, ckey):
-        results_dir = new_resolve_results_dir(self.root)
-        plan_resolve(facts_path, results_dir)
+    def _keep_provisional(self, facts_path, ckey, *, results_dir=None):
+        if results_dir is None:
+            results_dir = new_resolve_results_dir(self.root)
+            plan = plan_resolve(facts_path, results_dir)
+            self.assertEqual(plan["status"], "ok", plan)
+            # The explicit choice replaces this direction's model answer;
+            # other planned directions still supply their complete results.
+            write_resolve_results(results_dir, plan, {}, facts_path, skip=(ckey,))
         return parse(run_cli("stage2-resolve-finalize",
                              "--facts", str(facts_path),
                              "--results", str(results_dir),
@@ -1378,7 +1445,8 @@ class UserKeptProvisionalTests(ResolvedPipelineMixin, unittest.TestCase):
                      if d["provisional_direction_id"] == "dir_A")
         self.assertEqual(entry["acceptance"], "proposed")
 
-        kept = self._keep_provisional(facts_path, "dir_A")
+        kept = self._keep_provisional(
+            facts_path, "dir_A", results_dir=self.proposal_results_dir)
         self.assertEqual(kept["status"], "ok", msg=json.dumps(kept, ensure_ascii=False))
         self.assertEqual(kept["kept_provisional"], ["dir_A"])
         kept_entry = next(d for d in kept["directions"]
@@ -1407,20 +1475,35 @@ class UserKeptProvisionalTests(ResolvedPipelineMixin, unittest.TestCase):
             self.assertEqual(rd["resolved_direction_id"], direction["direction_id"])
 
     def test_user_kept_provisional_is_reused_until_resolve_input_changes(self):
-        facts_path, papers = self._material_proposal_setup()
-        self._keep_provisional(facts_path, "dir_A")
+        facts_path, papers = self._material_proposal_setup(propose=False)
+        kept = self._keep_provisional(facts_path, "dir_A")
+        self.assertEqual(kept["status"], "ok", kept)
 
-        plan = plan_resolve(facts_path, new_resolve_results_dir(self.root))
+        self._prepare_consumption(facts_path)
+        results_dir = new_resolve_results_dir(self.root)
+        plan = plan_resolve(facts_path, results_dir, reuse_companion=True)
         self.assertEqual(plan["status"], "ok", msg=json.dumps(plan, ensure_ascii=False))
         actions = {row["direction_id"]: row["action"] for row in plan["directions"]}
         self.assertEqual(
             actions, {"dir_A": "reuse", "dir_B": "reuse"},
             "an accepted keep-provisional decision must not re-emit resolve jobs "
             "while the resolve input is unchanged")
+        self.assertEqual(plan["jobs"], [], plan)
+        reused = finalize_resolve(facts_path, results_dir)
+        self.assertEqual(reused["status"], "ok", reused)
+        stage2_plan = parse(run_cli(
+            "stage2-plan", "--facts", facts_path,
+            "--preflight-file", self.consumption_proof,
+            "--run-dir", self.consumption_run))
+        self.assertEqual(stage2_plan["status"], "ok", stage2_plan)
 
         make_facts_sidecar(Path(papers[1]["analysis_file"]), self.root / "P2.pdf",
                            ["Future work B."], topic_terms=["electro", "catalysis"])
-        changed = plan_resolve(facts_path, new_resolve_results_dir(self.root))
+        # A changed source starts a new freeze; the old accepted decision is
+        # compared with this round's current resolve input.
+        self._prepare_consumption(facts_path)
+        changed = plan_resolve(facts_path, new_resolve_results_dir(self.root),
+                               reuse_companion=True)
         self.assertEqual(changed["status"], "ok", msg=json.dumps(changed, ensure_ascii=False))
         actions = {row["direction_id"]: row["action"] for row in changed["directions"]}
         self.assertEqual(

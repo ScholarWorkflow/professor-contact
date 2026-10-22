@@ -70,7 +70,8 @@ def build(*, fail,
                     fail("unknown_reference_id",
                          f"{result_path}: gap outside package: {gap_id!r} "
                          f"(likely mistyped; copy one of the job model_input gap ids verbatim: "
-                         f"{sorted(judge_ids)})")
+                         f"{sorted(judge_ids)})", direction_id=ckey,
+                         result_file=str(result_path))
                 if gap_id in by_gap:
                     fail("invalid_result_json", f"{result_path}: duplicate result for gap {gap_id}")
                 by_gap[gap_id] = row
@@ -98,7 +99,8 @@ def build(*, fail,
                 unknown_ids = [c for c in cand_ids if c not in allowed_ids]
                 if unknown_ids:
                     fail("unknown_reference_id",
-                         f"{result_path}: candidate_paper_ids outside package for {gap_id[:12]}…: {unknown_ids}")
+                         f"{result_path}: candidate_paper_ids outside package for {gap_id[:12]}…: {unknown_ids}",
+                         direction_id=ckey, result_file=str(result_path))
                 evidence_value = row.get("evidence")
                 if not isinstance(evidence_value, str):
                     fail("invalid_result_json", f"{result_path}: evidence must be a string for {gap_id[:12]}…")
@@ -192,7 +194,8 @@ def build(*, fail,
                 if ref_kind not in ("paper", "later", "gap") or ref_id not in pool:
                     fail("unknown_reference_id",
                          f"{path}: ref {ref!r} outside package (likely mistyped; legal "
-                         f"{ref_kind} ids: {sorted(pool)})")
+                         f"{ref_kind} ids: {sorted(pool)})", direction_id=did,
+                         result_file=str(path))
             if placeholders != refs:
                 fail("invalid_result_json",
                      f"{path}: {did} placeholders {sorted(placeholders)} != refs {sorted(refs)}")
@@ -213,7 +216,8 @@ def build(*, fail,
             if gap_id not in scope["gaps"]:
                 fail("unknown_reference_id",
                      f"{path}: gap note outside package: {gap_id!r} (likely mistyped; "
-                     f"copy one of the job model_input gap ids verbatim: {sorted(scope['gaps'])})")
+                     f"copy one of the job model_input gap ids verbatim: {sorted(scope['gaps'])})",
+                     direction_id=did, result_file=str(path))
             if gap_id in gap_notes:
                 fail("invalid_result_json", f"{path}: duplicate gap note {gap_id}")
             if not isinstance(note.get("summary"), str) or not isinstance(note.get("explanation"), str):
@@ -614,6 +618,7 @@ def build(*, fail,
                 "item_key": key, "title": paper.get("title"), "year": paper.get("year"),
                 "authorship": paper.get("authorship"),
                 "analysis_file": paper.get("analysis_file"),
+                "analysis_level": paper.get("analysis_level"),
                 "pdf_available": bool(paper.get("has_pdf")),
                 "facts_state": facts_state,
                 "facts_error": facts_error,
@@ -634,6 +639,7 @@ def build(*, fail,
                 "item_key": key, "title": paper.get("title"), "year": paper.get("year"),
                 "authorship": paper.get("authorship"),
                 "analysis_file": paper.get("analysis_file"),
+                "analysis_level": paper.get("analysis_level"),
                 "pdf_available": bool(paper.get("has_pdf")),
                 "facts_state": facts_state,
                 "facts_error": facts_error,
@@ -690,9 +696,12 @@ def build(*, fail,
             stage2_require_later_paper_titles(ctx, direction, pack)
         projected = {direction_machine_id(d): direction_papers(pack, d)
                      for d in pack_directions}
-        full = sum(1 for papers in projected.values() for p in papers
-                   if p.get("analysis_file") or p.get("pdf_available"))
-        abstracted = sum(len(papers) for papers in projected.values()) - full
+        member_papers = [p for papers in projected.values() for p in papers]
+        fulltext = sum(1 for p in member_papers
+                       if p.get("analysis_level") == "fulltext")
+        abstracted = sum(1 for p in member_papers
+                         if p.get("analysis_level") == "abstract")
+        unknown = len(member_papers) - fulltext - abstracted
         papers_lookup = pack_paper_index(pack)
 
         def paper_record(key: str) -> dict | None:
@@ -735,8 +744,8 @@ def build(*, fail,
         doc.add_line("$$\\newcommand{\\dif}{\\mathop{}\\!\\mathrm{d}}$$", excluded())
         doc.blank()
         doc.add_line(
-            f"> {now_utc()} ｜ 数据来源：全文级 {full} 篇 · 摘要级 {abstracted} 篇"
-            f"（共 {full + abstracted} 篇）｜ 由 contact_state 确定性渲染（重跑=全量重写）",
+            f"> {now_utc()} ｜ 数据来源：全文级 {fulltext} 篇 · 摘要级 {abstracted} 篇 · 未确认 {unknown} 篇"
+            f"（共 {len(member_papers)} 篇）｜ 由 contact_state 确定性渲染（重跑=全量重写）",
             excluded())
         doc.blank()
         global_lines = []

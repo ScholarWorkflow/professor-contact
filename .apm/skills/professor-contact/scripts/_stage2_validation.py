@@ -35,6 +35,8 @@ def build(*, Stage2Context,
           load_input_pack,
           pack_direction_relevant_keys,
           managed_snapshot,
+          split_frontmatter,
+          split_frontmatter_bytes,
           managed_conflict,
           managed_write,
           _canonical_directory,
@@ -85,17 +87,23 @@ def build(*, Stage2Context,
         path = professor_dir / ANALYSIS_MD
         if path.is_symlink():
             fail("validation_render_stale", f"{path}: managed analysis must not be a symlink")
-        if not path.is_file():
-            fail("validation_render_missing", f"{path}: managed analysis is missing")
-        snapshot = managed_snapshot(path)
-        if not isinstance(snapshot, dict) or snapshot.get("error"):
+        try:
+            data = path.read_bytes()
+        except OSError as exc:
+            fail("validation_render_missing", f"{path}: {exc}")
+        header, body_bytes = split_frontmatter_bytes(data)
+        try:
+            body = body_bytes.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            fail("validation_render_missing", f"{path}: {exc}")
+        body_start = data.find(body_bytes)
+        if body_start < 0:
             fail("validation_render_stale",
-                 f"{path}: managed analysis cannot be read losslessly as UTF-8 with a "
-                 "complete frontmatter/body split",
-                 detail=snapshot.get("error") if isinstance(snapshot, dict) else None)
-        current = snapshot["body_sha256"]
-        body = snapshot["body"]
-        header = snapshot["header"]
+                 f"{path}: managed analysis body could not be located in its file")
+        current = sha256_bytes(body_bytes)
+        snapshot = {"header": header, "body": body, "body_bytes": body_bytes,
+                    "body_sha256": current, "line_offset": data[:body_start].count(b"\n"),
+                    "raw": data}
         expected_title = f"# 套磁候选分析 — {pack.get('professor')}"
         if not isinstance(header, dict) or header.get("managed_by") != MANAGED_BY \
                 or header.get("render_sha256") != current or current != recorded \
@@ -331,10 +339,26 @@ def build(*, Stage2Context,
                  f"validator output marks the managed analysis as another artifact: {target}")
 
         entry = matches[0]
-        snapshot = stage2_bound_snapshot(professor_dir, pack)
-        render_sha = snapshot["body_sha256"]
-        body = snapshot["body"]
-        line_offset = snapshot["line_offset"]
+        render_sha, body = stage2_bound_render(professor_dir, pack)
+        try:
+            rendered_data = (professor_dir / ANALYSIS_MD).read_bytes()
+        except OSError as exc:
+            fail("validation_render_missing", f"{professor_dir / ANALYSIS_MD}: {exc}")
+        current_header, current_body_bytes = split_frontmatter_bytes(rendered_data)
+        try:
+            current_body = current_body_bytes.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            fail("validation_render_missing", f"{professor_dir / ANALYSIS_MD}: {exc}")
+        body_start = rendered_data.find(current_body_bytes)
+        if not isinstance(current_header, dict) or current_header.get("managed_by") != MANAGED_BY \
+                or current_header.get("state_fingerprint") != stage2_pack_state_fingerprint(pack) \
+                or current_header.get("render_sha256") != render_sha \
+                or current_body != body or sha256_bytes(current_body_bytes) != render_sha:
+            fail("validation_render_stale",
+                 "managed analysis changed while the style-validator report was being read")
+        if body_start < 0:
+            fail("validation_render_stale", "managed analysis body could not be located in its file")
+        line_offset = rendered_data[:body_start].count(b"\n")
         direction_rows = pack.get("directions")
         if not isinstance(direction_rows, list) or not direction_rows:
             fail("validation_direction_ambiguous", "input pack has no canonical directions")
@@ -477,10 +501,93 @@ def build(*, Stage2Context,
                 "blocking_by_direction": blocking_by_direction,
                 "fixed_blocking_by_direction": fixed_blocking_by_direction}
 
+    def stage2_validation_legality(pack: dict | None,
+                                   validator: dict | None = None) -> tuple[dict | None, str | None]:
+        """The schema/round/phase shape shared by every Stage-2 old-state check.
+
+        This is the base legality layer only; render/pack binding and the
+        terminal fast-path policy stay with their callers. ``None`` means a
+        legal absence of a validator. A non-``None`` error means the recorded
+        container is malformed and must not be treated as "no validator".
+        """
+        if validator is None:
+            validator = pack.get("validator") if isinstance(pack, dict) else None
+        if validator is None:
+            if isinstance(pack, dict) and "validator" in pack:
+                return None, "validator_container"
+            return None, None
+        if not isinstance(validator, dict):
+            return None, "validator_container"
+        if validator.get("schema") != 2:
+            return None, "validator_schema"
+        recorded_round = validator.get("round")
+        if isinstance(recorded_round, bool) or recorded_round not in (1, 2):
+            return None, "validator_round"
+        phase = validator.get("phase")
+        if phase not in ("needs_correction", "awaiting_second_validation", "terminal"):
+            return None, "validator_phase"
+        pending = validator.get("pending")
+        results = validator.get("results")
+        if not isinstance(pending, dict) or not isinstance(results, dict):
+            return None, "validator_state"
+        allowed = {direction_machine_id(direction)
+                   for direction in (pack or {}).get("directions") or []
+                   if isinstance(direction, dict)}
+        if set(results) != allowed:
+            return None, "validator_results_scope"
+        for did, issues in pending.items():
+            if did not in allowed or not isinstance(issues, list) or not issues:
+                return None, "validator_pending"
+        for did, row in results.items():
+            if did not in allowed or not isinstance(row, dict):
+                return None, "validator_results"
+            if row.get("result") not in ("pass", "skipped", "needs_correction",
+                                         "fail_after_2_rounds"):
+                return None, "validator_result_value"
+            row_round = row.get("rounds")
+            if isinstance(row_round, bool) or row_round not in (1, 2):
+                return None, "validator_result_rounds"
+            if row_round > recorded_round or (row.get("result") == "fail_after_2_rounds"
+                                               and (recorded_round != 2 or row_round != 2)):
+                return None, "validator_result_rounds"
+            if not isinstance(row.get("issues"), list):
+                return None, "validator_result_issues"
+        corrected = validator.get("correction_applied_direction_ids")
+        if not isinstance(corrected, list) \
+                or any(not isinstance(did, str) or did not in allowed for did in corrected) \
+                or len(set(corrected)) != len(corrected):
+            return None, "validator_corrections"
+        unresolved = [did for did in pending if did not in set(corrected)]
+        if phase == "needs_correction":
+            if recorded_round != 1 or not pending or not unresolved:
+                return None, "validator_phase_state"
+        elif phase == "awaiting_second_validation":
+            if recorded_round != 1 or not pending or unresolved:
+                return None, "validator_phase_state"
+        else:
+            if recorded_round == 1 and pending:
+                return None, "validator_terminal_pending"
+            if any(row.get("result") == "needs_correction" for row in results.values()):
+                return None, "validator_terminal_result"
+        fixed = validator.get("fixed_blocking")
+        if fixed is not None:
+            if not isinstance(fixed, dict) or any(
+                    not isinstance(did, str) or did not in allowed or not isinstance(rows, list)
+                    for did, rows in fixed.items()):
+                return None, "validator_fixed"
+        return validator, None
+
     def stage2_require_recorded_validation(ctx, validation_path: Path) -> tuple[dict, dict, list[str]]:
         """Authorize refinement only from the exact raw report and open recorded findings."""
         pack = ctx.pack if isinstance(ctx.pack, dict) else {}
         validator = pack.get("validator") if isinstance(pack.get("validator"), dict) else {}
+        validator, legality_error = stage2_validation_legality(pack, validator)
+        if legality_error:
+            fail("validation_evidence_not_recorded",
+                 f"recorded Stage-2 validation state is malformed: {legality_error}")
+        if validator is None:
+            fail("validation_evidence_not_recorded",
+                 "record the raw style-validator report with stage2-record-validation first")
         if validator.get("schema") != 2:
             fail("validation_evidence_not_recorded",
                  "record the raw style-validator report with stage2-record-validation first")
@@ -857,12 +964,12 @@ def build(*, Stage2Context,
         updated_pack = dict(ctx.pack)
         updated_pack["generated_at"] = now_utc()
         updated_pack["directions"] = pack_directions
-        # A refinement owns only cache.render; replacing the whole cache block
-        # would drop the recorded preflight proof (and force the next ordinary
-        # finalize into a membership rebuild) even though that proof is still
-        # the accepted one for this pack.
+        # A refinement owns only cache.render; keep the U1 ownership/marker
+        # metadata on that render entry. The preflight proof still expires: the
+        # rewritten body must re-prove through the slow path (U5 L6).
         cache_block = copy.deepcopy(ctx.pack.get("cache")) \
             if isinstance(ctx.pack.get("cache"), dict) else {}
+        cache_block.pop("preflight", None)
         render_block = dict(cache_block.get("render")) \
             if isinstance(cache_block.get("render"), dict) else {}
         render_entry = {"sha256": md_result["sha256"], "ownership": ownership}
@@ -993,6 +1100,7 @@ def build(*, Stage2Context,
         stage2_restore_pack_later_papers=stage2_restore_pack_later_papers,
         stage2_parse_report_location=stage2_parse_report_location,
         stage2_validation_report=stage2_validation_report,
+        stage2_validation_legality=stage2_validation_legality,
         stage2_require_recorded_validation=stage2_require_recorded_validation,
         stage2_pack_matches_facts=stage2_pack_matches_facts,
         stage2_validation_material=stage2_validation_material,

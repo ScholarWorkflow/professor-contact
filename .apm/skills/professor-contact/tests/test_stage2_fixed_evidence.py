@@ -28,7 +28,7 @@ from test_contact_state import (
     run_cli,
     stage2_style_validation_report,
 )
-from stage2_upstream_fixture import run_bound_stage2_finalize
+from stage2_upstream_fixture import run_bound_stage2_finalize, prepare_consumption
 
 CITATION_KEY = "CCCC3333"
 CITATION_TITLE = "Unrelated synthetic example"
@@ -141,12 +141,16 @@ class FixedEvidenceBase(BaseEnv):
         facts["stage2_preflight"] = {"preflight_id": payload["preflight_id"]}
         Path(facts_path).write_text(
             json.dumps(facts, ensure_ascii=False, indent=1), encoding="utf-8")
+        prepared = prepare_consumption(run_cli, facts_path)
+        if prepared.returncode != 0:
+            raise AssertionError(f"consumption fixture failed: {prepared.stdout} {prepared.stderr}")
+        result = json.loads(prepared.stdout)
+        if result.get("status") != "ok":
+            raise AssertionError(f"consumption fixture not ready: {result}")
 
     def finalize(self, facts_path, proof, results, *extra):
         return parse(run_bound_stage2_finalize(
-            run_cli, facts_path, "--results", results, *extra)) if proof is None \
-            else parse(run_cli("stage2-finalize", "--facts", facts_path,
-                               "--preflight-file", proof, "--results", results, *extra))
+            run_cli, facts_path, "--results", results, *extra))
 
     def blocking_issue(self, quote, location):
         return {"rule": "A1", "severity": "blocking", "location": location,
@@ -1115,25 +1119,25 @@ class FixedEvidenceBase(BaseEnv):
         self.assertEqual(pack["validator"]["phase"], validator_before["phase"])
         self.assertEqual(pack["validator"]["results"], validator_before["results"])
 
-        # An equivalent body with a stale header still gets the machine header
-        # corrected, without rewriting the body.
+        # An equivalent body with a stale header binding is invalid old evidence:
+        # the acceptance must fail closed and write nothing.
         header_pack = env.pack()
         header_pack.pop("validator", None)
         env.write_pack(header_pack)
-        rows = env.document()["body"].splitlines()
-        header_pack = env.pack()
         header, body = contact_state.split_frontmatter(
             (env.prof_dir / contact_state.ANALYSIS_MD).read_text(encoding="utf-8"))
         (env.prof_dir / contact_state.ANALYSIS_MD).write_text(
             contact_state.render_frontmatter("0" * 64, contact_state.sha256_text(body))
             + body, encoding="utf-8")
-        body_before = body
+        stale_header_bytes = (env.prof_dir / contact_state.ANALYSIS_MD).read_bytes()
+        pack_before = (env.prof_dir / contact_state.INPUT_PACK).read_bytes()
         out = env.finalize(facts_path, proof, results)
-        self.assertEqual(out["status"], "ok", out)
-        document = env.document()
-        self.assertEqual(document["body"], body_before)
-        self.assertEqual(document["header"]["state_fingerprint"],
-                         contact_state.stage2_pack_state_fingerprint(env.pack()))
+        self.assertEqual(out["status"], "error", out)
+        self.assertEqual(out["reason_code"], "validation_render_stale", out)
+        self.assertEqual((env.prof_dir / contact_state.ANALYSIS_MD).read_bytes(),
+                         stale_header_bytes)
+        self.assertEqual((env.prof_dir / contact_state.INPUT_PACK).read_bytes(),
+                         pack_before)
 
         # A real fixed-evidence change is accepted as new structured input: the
         # managed body changes, the old validator retires, and its raw report
@@ -1257,7 +1261,10 @@ class FixedEvidenceBase(BaseEnv):
         line_env.write_pack(line_pack)
         analysis_path = line_env.prof_dir / contact_state.ANALYSIS_MD
         raw = analysis_path.read_text(encoding="utf-8")
-        changed = raw.replace("全文级 2 篇", "全文级 9 篇", 1)
+        match = re.search(r"全文级 \d+ 篇", raw)
+        self.assertIsNotNone(match)
+        original_source_text = match.group(0)
+        changed = raw.replace(original_source_text, "全文级 9 篇", 1)
         self.assertNotEqual(changed, raw)
         header, edited_body = contact_state.split_frontmatter(changed)
         edited_sha = contact_state.sha256_text(edited_body)
@@ -1272,7 +1279,7 @@ class FixedEvidenceBase(BaseEnv):
         out = line_env.finalize(line_facts, line_proof, line_results)
         self.assertEqual(out["status"], "ok", out)
         repaired = line_env.document()["body"]
-        self.assertIn("全文级 2 篇", repaired)
+        self.assertIn(original_source_text, repaired)
         self.assertNotIn("全文级 9 篇", repaired)
 
         # A user-note line with the generated source-line prefix is not the top

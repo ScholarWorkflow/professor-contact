@@ -487,7 +487,11 @@ DEFAULT_FOLLOWUP_TEMPLATE = None
 # must agree exactly on these during v1 normalization or the pack is ambiguous.
 _CANONICAL_PAPER_FIELDS = ("title", "year", "authorship", "analysis_file",
                            "pdf_available", "facts_state", "facts_error",
-                           "paper_facts")
+                           "paper_facts", "analysis_level")
+# The canonical level value domain is owned by `_contact_pack.py` (the module
+# that normalizes canonical paper records); every Stage-2 reader shares this
+# exact tuple instead of defining a second vocabulary.
+ANALYSIS_LEVELS = _contact_pack_module.ANALYSIS_LEVELS
 
 
 # Binding point: every helper the module needs is defined by now; the factory
@@ -536,6 +540,7 @@ direction_fingerprint = _contact_base.direction_fingerprint
 render_frontmatter = _contact_base.render_frontmatter
 split_frontmatter = _contact_base.split_frontmatter
 managed_snapshot = _contact_base.managed_snapshot
+split_frontmatter_bytes = _contact_base.split_frontmatter_bytes
 managed_conflict = _contact_base.managed_conflict
 managed_write = _contact_base.managed_write
 managed_write_raw = _contact_base.managed_write_raw
@@ -580,10 +585,13 @@ strict_candidate_state = _contact_pack.strict_candidate_state
 _stage2_facts = _stage2_facts_module.build(
     atomic_json=atomic_json,
     fail=fail,
+    soft_exit=soft_exit,
+    ANALYSIS_LEVELS=ANALYSIS_LEVELS,
     SCHEMA=SCHEMA,
     MANAGED_BY=MANAGED_BY,
     INPUT_PACK=INPUT_PACK,
     FRESHNESS_CACHE=FRESHNESS_CACHE,
+    observe_consumption=lambda ctx: stage2_consumption_drift(ctx),
     GAP_SCOPES=GAP_SCOPES,
     FRESHNESS_SCOPES=FRESHNESS_SCOPES,
     GAP_STATUSES=GAP_STATUSES,
@@ -630,10 +638,20 @@ freshness_candidates = _stage2_facts.freshness_candidates
 load_freshness_cache = _stage2_facts.load_freshness_cache
 save_freshness_cache = _stage2_facts.save_freshness_cache
 gap_scope_keys = _stage2_facts.gap_scope_keys
+canonical_index_path = _stage2_facts.canonical_index_path
+read_analysis_index = _stage2_facts.read_analysis_index
+index_entry_level = _stage2_facts.index_entry_level
+index_entry_analysis_path = _stage2_facts.index_entry_analysis_path
+resolve_declared_level = _stage2_facts.resolve_declared_level
+observed_source_projection = _stage2_facts.observed_source_projection
+observed_level_projection = _stage2_facts.observed_level_projection
+consumed_sources = _stage2_facts.consumed_sources
 load_papers_with_digests = _stage2_facts.load_papers_with_digests
 build_gap_pool = _stage2_facts.build_gap_pool
 Stage2Context = _stage2_facts.Stage2Context
 Stage2PackRefineContext = _stage2_facts.Stage2PackRefineContext
+freeze_stage2_sources = _stage2_facts.freeze_stage2_sources
+observe_stage2_sources = _stage2_facts.observe_stage2_sources
 
 
 # Stage-2 resolve module binding point. Every helper it needs is defined by
@@ -757,7 +775,13 @@ def _canonical_under(program_root: Path, value) -> str | None:
 # never builds a second channel or a second copy of any helper.
 _stage2_preflight = _stage2_preflight_module.build(
     fail=fail, soft_exit=soft_exit, emit=emit, read_json_file=read_json_file,
+    atomic_json=atomic_json,
+    freeze_stage2_sources=freeze_stage2_sources,
+    observe_stage2_sources=observe_stage2_sources,
     sha256_obj=sha256_obj, sha256_bytes=sha256_bytes,
+    sha256_text=sha256_text, split_frontmatter=split_frontmatter,
+    split_frontmatter_bytes=split_frontmatter_bytes,
+    stage2_validation_legality=lambda pack: _stage2_validation.stage2_validation_legality(pack),
     managed_snapshot=managed_snapshot,
     direction_machine_id=direction_machine_id,
     facts_direction_id=facts_direction_id, direction_relevant_keys=direction_relevant_keys,
@@ -766,8 +790,14 @@ _stage2_preflight = _stage2_preflight_module.build(
     load_input_pack=load_input_pack, load_freshness_cache=load_freshness_cache,
     _resolve_evidence=_resolve_evidence, Stage2Context=Stage2Context,
     filename_component=filename_component, truncate=truncate,
+    pack_direction_relevant_keys=pack_direction_relevant_keys,
+    observed_source_projection=observed_source_projection,
+    observed_level_projection=observed_level_projection,
+    consumed_sources=consumed_sources,
+    canonical_index_path=canonical_index_path,
     INPUT_PACK=INPUT_PACK, GAP_SCOPES=GAP_SCOPES, FRESHNESS_SCOPES=FRESHNESS_SCOPES,
     ANALYSIS_MD=ANALYSIS_MD, MANAGED_BY=MANAGED_BY, SHORTLIST_MAX=SHORTLIST_MAX,
+    FRESHNESS_CACHE=FRESHNESS_CACHE,
     ABSTRACT_INPUT_CHARS=ABSTRACT_INPUT_CHARS, QUOTE_INPUT_CHARS=QUOTE_INPUT_CHARS,
     TRANSLATION_INPUT_CHARS=TRANSLATION_INPUT_CHARS)
 
@@ -790,16 +820,30 @@ _artifact_guards_for_keys = _stage2_preflight._artifact_guards_for_keys
 stage2_direction_artifact_guards = _stage2_preflight.stage2_direction_artifact_guards
 stage2_resolution_evidence_guards = _stage2_preflight.stage2_resolution_evidence_guards
 _pack_resolved_grouping = _stage2_preflight._pack_resolved_grouping
+stage2_consumed_source_keys = _stage2_preflight.stage2_consumed_source_keys
+stage2_group_consumed_keys = _stage2_preflight.stage2_group_consumed_keys
+stage2_level_projection = _stage2_preflight.stage2_level_projection
+stage2_pdf_source_projection = _stage2_preflight.stage2_pdf_source_projection
+stage2_refresh_preflight_metadata = _stage2_preflight.stage2_refresh_preflight_metadata
 stage2_freshness_view_fingerprint = _stage2_preflight.stage2_freshness_view_fingerprint
 stage2_preflight_metadata = _stage2_preflight.stage2_preflight_metadata
 stage2_pack_state_fingerprint = _stage2_preflight.stage2_pack_state_fingerprint
 stage2_pack_content_fingerprint = _stage2_preflight.stage2_pack_content_fingerprint
 stage2_validator_accepts = _stage2_preflight.stage2_validator_accepts
 cmd_stage2_preflight = _stage2_preflight.cmd_stage2_preflight
+stage2_preflight_payload_professor = _stage2_preflight.stage2_preflight_payload_professor
+cmd_stage2_consumption_prepare = _stage2_preflight.cmd_stage2_consumption_prepare
+cmd_stage2_consumption_seal_results = _stage2_preflight.cmd_stage2_consumption_seal_results
 stage2_plan_bind_preflight = _stage2_preflight.stage2_plan_bind_preflight
 cmd_stage2_plan = _stage2_preflight.cmd_stage2_plan
+stage2_complete_observation = _stage2_preflight.stage2_complete_observation
+stage2_consumption_drift = _stage2_preflight.stage2_consumption_drift
+stage2_compare_observation = _stage2_preflight.stage2_compare_observation
+stage2_validate_consumption_plan = _stage2_preflight.stage2_validate_consumption_plan
+mark_consumption_repair = _stage2_preflight.mark_consumption_repair
 
 STAGE2_PREFLIGHT_VERSION = _stage2_preflight_module.STAGE2_PREFLIGHT_VERSION
+STAGE2_LEVEL_STATISTICS_VERSION = _stage2_preflight_module.STAGE2_LEVEL_STATISTICS_VERSION
 STAGE2_RESOLUTION_SEMANTICS_VERSION = _stage2_preflight_module.STAGE2_RESOLUTION_SEMANTICS_VERSION
 STAGE2_U1_DISPLAY_VERSION = _stage2_preflight_module.STAGE2_U1_DISPLAY_VERSION
 STAGE2_TARGET_FILE_NAME = _stage2_preflight_module.STAGE2_TARGET_FILE_NAME
@@ -849,6 +893,9 @@ stage2_require_later_paper_titles = _stage2_render.stage2_require_later_paper_ti
 # Binding point: every helper the module needs is defined by now; the factory
 # receives this runner's own function objects and constants (no second channel).
 _stage2_finalize = _stage2_finalize_module.build(
+    ProfessorBusinessFailure=ProfessorBusinessFailure,
+    professor_business_channel=professor_business_channel,
+    mark_consumption_repair=mark_consumption_repair,
     Stage2Context=Stage2Context,
     Stage2PackRefineContext=Stage2PackRefineContext,
     atomic_json=atomic_json,
@@ -856,6 +903,7 @@ _stage2_finalize = _stage2_finalize_module.build(
     fail=fail,
     soft_exit=soft_exit,
     now_utc=now_utc,
+    sha256_text=sha256_text,
     sha256_bytes=sha256_bytes,
     sha256_obj=sha256_obj,
     read_json_file=read_json_file,
@@ -863,6 +911,8 @@ _stage2_finalize = _stage2_finalize_module.build(
     pack_paper_index=pack_paper_index,
     pack_direction_relevant_keys=pack_direction_relevant_keys,
     managed_snapshot=managed_snapshot,
+    split_frontmatter=split_frontmatter,
+    split_frontmatter_bytes=split_frontmatter_bytes,
     managed_conflict=managed_conflict,
     managed_write=managed_write,
     atomic_write=atomic_write,
@@ -877,20 +927,37 @@ _stage2_finalize = _stage2_finalize_module.build(
     read_stage1_professor_entry=read_stage1_professor_entry,
     stage2_preflight_cheap_inputs=stage2_preflight_cheap_inputs,
     stage2_preflight_metadata=stage2_preflight_metadata,
+    stage2_preflight_payload_professor=stage2_preflight_payload_professor,
+    stage2_complete_observation=stage2_complete_observation,
+    stage2_compare_observation=stage2_compare_observation,
+    stage2_validate_consumption_plan=stage2_validate_consumption_plan,
     stage2_pack_state_fingerprint=stage2_pack_state_fingerprint,
     stage2_pack_content_fingerprint=stage2_pack_content_fingerprint,
+    stage2_group_consumed_keys=stage2_group_consumed_keys,
+    stage2_refresh_preflight_metadata=stage2_refresh_preflight_metadata,
+    observed_source_projection=observed_source_projection,
+    stage2_candidate_universe=stage2_candidate_universe,
+    observed_level_projection=observed_level_projection,
+    stage2_artifact_guard_reason=stage2_artifact_guard_reason,
+    _pack_resolved_grouping=_pack_resolved_grouping,
     validate_freshness_results=validate_freshness_results,
     validate_narrative=validate_narrative,
     build_direction_pack=build_direction_pack,
     render_analysis_document=render_analysis_document,
     render_analysis_md=render_analysis_md,
+    stage2_validation_legality=lambda pack: _stage2_validation.stage2_validation_legality(pack),
+    stage2_freshness_view_fingerprint=stage2_freshness_view_fingerprint,
+    load_freshness_cache=load_freshness_cache,
     MANAGED_BY=MANAGED_BY,
     INPUT_PACK_SCHEMA=INPUT_PACK_SCHEMA,
     DIRECTION_IDENTITY_VERSION=DIRECTION_IDENTITY_VERSION,
     INPUT_PACK_KIND=INPUT_PACK_KIND,
     RESOLVED_DIRECTION_SCHEMA=RESOLVED_DIRECTION_SCHEMA,
     ANALYSIS_MD=ANALYSIS_MD,
+    FRESHNESS_CACHE=FRESHNESS_CACHE,
     STAGE2_RESOLUTION_SEMANTICS_VERSION=STAGE2_RESOLUTION_SEMANTICS_VERSION,
+    STAGE2_LEVEL_STATISTICS_VERSION=STAGE2_LEVEL_STATISTICS_VERSION,
+    STAGE2_PREFLIGHT_VERSION=STAGE2_PREFLIGHT_VERSION,
     PLACEHOLDER_RE=PLACEHOLDER_RE,
     STAGE2_U1_DISPLAY_VERSION=STAGE2_U1_DISPLAY_VERSION,
     stage2_trusted_paper_title=stage2_trusted_paper_title,
@@ -902,7 +969,11 @@ stage2_pack_requires_membership_rebuild = _stage2_finalize.stage2_pack_requires_
 stage2_old_pack_gap_statuses = _stage2_finalize.stage2_old_pack_gap_statuses
 stage2_render_state = _stage2_finalize.stage2_render_state
 stage2_require_paper_reference_titles = _stage2_finalize.stage2_require_paper_reference_titles
+stage2_body_without_generation_time = _stage2_finalize.stage2_body_without_generation_time
+stage2_old_managed_render = _stage2_finalize.stage2_old_managed_render
+stage2_accept_managed_body = _stage2_finalize.stage2_accept_managed_body
 cmd_stage2_finalize = _stage2_finalize.cmd_stage2_finalize
+cmd_stage2_refresh_level = _stage2_finalize.cmd_stage2_refresh_level
 
 
 # Stage-2 helper module: loaded by path next to this runner (the runner may be
@@ -1480,6 +1551,8 @@ _stage2_validation = _stage2_validation_module.build(
     load_input_pack=load_input_pack,
     pack_direction_relevant_keys=pack_direction_relevant_keys,
     managed_snapshot=managed_snapshot,
+    split_frontmatter=split_frontmatter,
+    split_frontmatter_bytes=split_frontmatter_bytes,
     managed_conflict=managed_conflict,
     managed_write=managed_write,
     _canonical_directory=_canonical_directory,
@@ -1505,6 +1578,7 @@ stage2_rendered_later_papers = _stage2_validation.stage2_rendered_later_papers
 stage2_restore_pack_later_papers = _stage2_validation.stage2_restore_pack_later_papers
 stage2_parse_report_location = _stage2_validation.stage2_parse_report_location
 stage2_validation_report = _stage2_validation.stage2_validation_report
+stage2_validation_legality = _stage2_validation.stage2_validation_legality
 stage2_require_recorded_validation = _stage2_validation.stage2_require_recorded_validation
 stage2_pack_matches_facts = _stage2_validation.stage2_pack_matches_facts
 stage2_validation_material = _stage2_validation.stage2_validation_material
@@ -1623,7 +1697,7 @@ def apply_ready_entry(program_root: Path, entry: dict, plan: dict) -> dict:
     facts_path = Path(facts_name)
     try:
         atomic_json(facts_path, ctx_facts)
-        ctx = Stage2Context(facts_path)
+        ctx = Stage2Context(facts_path, require_consumption=False)
     finally:
         facts_path.unlink(missing_ok=True)
     pack_directions = []
@@ -1740,7 +1814,30 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--preflight-file", required=True,
                    help="saved stage2-preflight stdout; the plan is bound to the same "
                         "professor-local transaction identity before it emits jobs")
+    p.add_argument("--run-dir",
+                   help="optional temporary transaction directory; seals the emitted "
+                        "jobs into the consumption companion when facts reference it")
     p.set_defaults(func=lambda a: cmd_stage2_plan(a))
+
+    p = sub.add_parser("stage2-consumption-seal-results")
+    p.add_argument("--run-dir", required=True)
+    p.add_argument("--results-dir", required=True)
+    p.add_argument("--repair-revision", type=int, choices=(1,),
+                   help="append the single authorized reference transcription repair")
+    p.set_defaults(func=cmd_stage2_consumption_seal_results)
+
+    p = sub.add_parser("stage2-consumption-prepare")
+    p.add_argument("--program-root", required=True)
+    p.add_argument("--professor", required=True)
+    p.add_argument("--target-file", required=True,
+                   help="authoritative professor-local Stage-0 target file")
+    p.add_argument("--sources-file",
+                   help="current local paper source declarations, before facts assembly")
+    p.add_argument("--preflight-file", required=True,
+                   help="saved stage2-preflight stdout for this transaction")
+    p.add_argument("--run-dir", required=True,
+                   help="temporary transaction directory for stage2-consumption.json")
+    p.set_defaults(func=cmd_stage2_consumption_prepare)
 
     p = sub.add_parser("stage2-preflight")
     p.add_argument("--program-root", required=True)
@@ -1762,6 +1859,17 @@ def build_parser() -> argparse.ArgumentParser:
                    help="saved stage2-preflight stdout; re-verifies cheap inputs "
                         "before any write and seeds cache.preflight")
     p.set_defaults(func=cmd_stage2_finalize)
+
+    p = sub.add_parser("stage2-refresh-level")
+    p.add_argument("--program-root", required=True)
+    p.add_argument("--professor", required=True)
+    p.add_argument("--target-file", required=True,
+                   help="authoritative professor-local Stage-0 target file")
+    p.add_argument("--preflight-file", required=True,
+                   help="saved stage2-preflight stdout whose action is refresh_level; "
+                        "re-verified under the professor writer lease")
+    p.add_argument("--decision-file")
+    p.set_defaults(func=cmd_stage2_refresh_level)
 
     p = sub.add_parser("stage2-refine-plan")
     group = p.add_mutually_exclusive_group(required=True)

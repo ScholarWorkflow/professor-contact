@@ -300,14 +300,15 @@ class Stage2PreflightContractTests(unittest.TestCase):
 
     def test_issue64_t7_stage2_plan_commands_pass_the_saved_preflight_proof(self):
         """The production plan hop consumes the proof saved by Step 2.6."""
-        expected_proof = "--preflight-file <本教授事务临时目录>/stage2_preflight.json"
+        expected_proof = '--preflight-file "$stage2_run_dir/stage2_preflight.json"'
         for target in ("professor-contact-codex", "professor-contact-opencode"):
             with self.subTest(target=target):
                 commands = [command for command in bash_commands(self._analyzer(target))
                             if "scripts/contact_state stage2-plan" in command]
                 self.assertEqual(len(commands), 1, msg=commands)
-                self.assertIn("--facts /tmp/<教授名>_套磁_facts.json", commands[0])
+                self.assertIn('--facts "$stage2_run_dir/facts.json"', commands[0])
                 self.assertIn(expected_proof, commands[0])
+                self.assertIn('--run-dir "$stage2_run_dir"', commands[0])
 
     def test_issue64_t7_preflight_proof_save_is_per_professor_transaction(self):
         """R64-17/R64-20 supplement (§6/§8.2): each professor transaction saves the
@@ -346,14 +347,14 @@ class Stage2PreflightContractTests(unittest.TestCase):
         )
         # Step 6.1 carries the saved proof id into the facts JSON...
         self.assertIn('"stage2_preflight": {"preflight_id"', agent)
-        facts_section = agent[agent.index("6.1 采集 facts JSON"):
-                              agent.index("6.3 跑 `stage2-finalize`")]
+        facts_section = agent[agent.index("6.1 冻结来源"):
+                              agent.index("6.3 封存完整结果")]
         self.assertIn("preflight_id", facts_section)
         # ...and finalize verifies the binding before any write.
-        finalize_section = agent[agent.index("6.3 跑 `stage2-finalize`"):]
+        finalize_section = agent[agent.index("6.3 封存完整结果"):]
         self.assertIn("preflight_proof_id", finalize_section)
         self.assertIn("preflight_proof_binding", finalize_section)
-        self.assertIn("任何写盘之前", finalize_section)
+        self.assertIn("首个受管写入之前", finalize_section)
         # The gate documents fail-closed handling for malformed cache shapes.
         skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
         self.assertIn("preflight_cache_malformed", skill)
