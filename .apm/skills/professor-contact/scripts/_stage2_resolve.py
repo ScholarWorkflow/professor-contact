@@ -1495,13 +1495,6 @@ def build(*, AUTHORSHIP_RANK,
         if not ckeys:
             fail("invalid_accept_keys",
                  "--ckeys must name at least one direction to accept (comma-separated collection keys)")
-        consumption = _resolve_consumption(ctx)
-        if consumption is not None:
-            resolve_plan = (consumption.get("resolve") or {}).get("plan")
-            if not isinstance(resolve_plan, dict) \
-                    or not isinstance(consumption["resolve"].get("results"), dict):
-                fail("invalid_result_json", "resolved choice has no sealed resolve plan")
-            _validate_resolve_plan(ctx, Path(resolve_plan["results_dir"]), ckeys)
         resolved_path = ctx.professor_dir / "论文分析" / "_resolved_directions.json"
         data, error = read_json_file(resolved_path)
         if error is not None or not isinstance(data, dict):
@@ -1539,6 +1532,13 @@ def build(*, AUTHORSHIP_RANK,
         # an earlier preflight proof into the current generation.
         facts_proof, facts_proof_error = _facts_preflight_proof(ctx.facts)
         _check_resolved_proof_binding(facts_proof, facts_proof_error, data, resolved_path)
+        consumption = _resolve_consumption(ctx)
+        if consumption is not None:
+            resolve_plan = (consumption.get("resolve") or {}).get("plan")
+            if not isinstance(resolve_plan, dict) \
+                    or not isinstance(consumption["resolve"].get("results"), dict):
+                fail("invalid_result_json", "resolved choice has no sealed resolve plan")
+            _validate_resolve_plan(ctx, Path(resolve_plan["results_dir"]), ckeys)
         accepted = []
         for k in ckeys:
             if entries[k].get("acceptance") != "accepted":
