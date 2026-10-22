@@ -255,6 +255,13 @@ def build(*, atomic_json,
             for name in candidates:
                 if name not in materials:
                     materials[name] = _freeze_material(Path(name))
+        for key, declared_paper in declarations.items():
+            if key in keys:
+                continue
+            for field in ("analysis_file", "sidecar_file", "facts_file", "pdf_file"):
+                name = canonical_index_path(declared_paper.get(field))
+                if name is not None and name not in materials:
+                    materials[name] = _freeze_material(Path(name))
         freshness_path = professor_dir / FRESHNESS_CACHE
         freshness_record = _freeze_material(freshness_path)
         materials[str(freshness_path.resolve())] = freshness_record
@@ -1011,10 +1018,13 @@ def build(*, atomic_json,
                         for field in ("analysis_file", "sidecar_file", "facts_file", "pdf_file"):
                             path = canonical_index_path(paper.get(field))
                             if path is not None and path not in sources["materials"]:
-                                fail("invalid_facts", f"facts source was not frozen: {field}={path}")
+                                fail("invalid_facts",
+                                     f"facts source was not frozen: {field}={path}; "
+                                     f"declared={declared_paper.get(field)!r}")
                     recorded = companion.get("facts_sha256")
                     if recorded is not None and recorded != self.facts_sha256:
-                        fail("invalid_facts", "facts bytes changed after being sealed")
+                        soft_exit("needs_refresh", "source_fingerprint_changed",
+                                  drift=["facts"])
             if self.sources is None and require_consumption:
                 fail("invalid_facts", "facts require a prepared consumption companion")
             self.papers = load_papers_with_digests(

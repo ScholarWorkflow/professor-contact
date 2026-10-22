@@ -1482,8 +1482,15 @@ def build(*, AUTHORSHIP_RANK,
         explicitly, and each named entry's input_fingerprint must still match the
         current facts (a stale proposal fails closed and must be re-resolved).
         """
+        facts, facts_error = read_json_file(Path(args.facts))
+        if facts_error is None and isinstance(facts, dict) \
+                and isinstance(facts.get("professor_dir"), str):
+            early_path = Path(facts["professor_dir"]) / "论文分析" / "_resolved_directions.json"
+            _, early_error = read_json_file(early_path)
+            if early_error is not None:
+                fail("missing_resolved_directions",
+                     f"no readable resolved directions file to accept: {early_path}")
         ctx = Stage2Context(Path(args.facts))
-        ctx.validate_consumption_current()
         ckeys = [k.strip() for k in (args.ckeys or "").split(",") if k.strip()]
         if not ckeys:
             fail("invalid_accept_keys",
@@ -1537,7 +1544,6 @@ def build(*, AUTHORSHIP_RANK,
             if entries[k].get("acceptance") != "accepted":
                 entries[k]["acceptance"] = "accepted"
                 accepted.append(k)
-        ctx.validate_consumption_current()
         atomic_json(resolved_path, data)
         _bind_resolve_sidecar(ctx, resolved_path, keep_provisional=accepted, decision="adopt")
         emit({
