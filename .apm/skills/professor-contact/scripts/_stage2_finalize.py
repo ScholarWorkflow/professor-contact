@@ -1391,20 +1391,7 @@ def build(*, Stage2Context,
                 body_equivalent = False
                 final_body, final_sha = candidate_body, sha256_bytes(candidate_body_bytes)
             else:
-                if old_error == "state_fingerprint_mismatch":
-                    if not body_equivalent:
-                        if decision != "overwrite":
-                            soft_exit("needs_decision", "manual_markdown_changed",
-                                      target=str(md_path),
-                                      options=["overwrite", "keep_manual", "promote"])
-                        final_body, final_sha = candidate_body, sha256_bytes(candidate_body_bytes)
-                    elif isinstance((raw_old_pack or {}).get("validator"), dict):
-                        fail("validation_render_stale",
-                             "the accepted validation still binds the old header state",
-                             target=str(md_path))
-                    # With no validator and an equivalent body the machine
-                    # header may be corrected without rewriting the body.
-                elif old_error == "render_binding" and not body_equivalent:
+                if old_error == "render_binding" and not body_equivalent:
                     old_render_entry = (((raw_old_pack or {}).get("cache") or {})
                                         .get("render") or {}).get(ANALYSIS_MD) or {}
                     legacy_display = "u1" not in old_render_entry

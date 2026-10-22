@@ -1119,25 +1119,25 @@ class FixedEvidenceBase(BaseEnv):
         self.assertEqual(pack["validator"]["phase"], validator_before["phase"])
         self.assertEqual(pack["validator"]["results"], validator_before["results"])
 
-        # An equivalent body with a stale header still gets the machine header
-        # corrected, without rewriting the body.
+        # An equivalent body with a stale header binding is invalid old evidence:
+        # the acceptance must fail closed and write nothing.
         header_pack = env.pack()
         header_pack.pop("validator", None)
         env.write_pack(header_pack)
-        rows = env.document()["body"].splitlines()
-        header_pack = env.pack()
         header, body = contact_state.split_frontmatter(
             (env.prof_dir / contact_state.ANALYSIS_MD).read_text(encoding="utf-8"))
         (env.prof_dir / contact_state.ANALYSIS_MD).write_text(
             contact_state.render_frontmatter("0" * 64, contact_state.sha256_text(body))
             + body, encoding="utf-8")
-        body_before = body
+        stale_header_bytes = (env.prof_dir / contact_state.ANALYSIS_MD).read_bytes()
+        pack_before = (env.prof_dir / contact_state.INPUT_PACK).read_bytes()
         out = env.finalize(facts_path, proof, results)
-        self.assertEqual(out["status"], "ok", out)
-        document = env.document()
-        self.assertEqual(document["body"], body_before)
-        self.assertEqual(document["header"]["state_fingerprint"],
-                         contact_state.stage2_pack_state_fingerprint(env.pack()))
+        self.assertEqual(out["status"], "error", out)
+        self.assertEqual(out["reason_code"], "validation_render_stale", out)
+        self.assertEqual((env.prof_dir / contact_state.ANALYSIS_MD).read_bytes(),
+                         stale_header_bytes)
+        self.assertEqual((env.prof_dir / contact_state.INPUT_PACK).read_bytes(),
+                         pack_before)
 
         # A real fixed-evidence change is accepted as new structured input: the
         # managed body changes, the old validator retires, and its raw report
