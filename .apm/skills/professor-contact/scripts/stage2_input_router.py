@@ -116,6 +116,18 @@ def export_missing(item_keys: Iterable[str], output_dir: Path, executable: str |
     for key in clean_keys:
         path = output_dir / f"{key}.json"
         if path.is_file():
+            try:
+                exported = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+                routed[key] = PaperInput(
+                    key, None, None, None, "error",
+                    f"cannot read exported abstract: {exc.__class__.__name__}",
+                )
+                continue
+            abstract = exported.get("abstract") if isinstance(exported, dict) else None
+            if not isinstance(abstract, str) or not abstract.strip():
+                routed[key] = PaperInput(key, None, None, None, "error", "no usable abstract")
+                continue
             routed[key] = PaperInput(key, str(path.resolve()), "abstract", "abstract_json", "ok")
         else:
             reason = errors.get(key)
