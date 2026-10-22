@@ -683,7 +683,7 @@ class TestPreflightDecision(PreflightBase):
         self.snapshot_entry["input_fingerprint"] = "stage1-fp-2"
         self._write_snapshot()
         self.facts["papers"].append({
-            "item_key": "EEEE5555", "title": "New synthetic candidate", "year": 2025,
+            "item_key": "EEEE5555", "title": "New synthetic candidate", "year": 2020,
             "month": 1, "authorship": "middle", "abstract": "A new candidate.",
             "has_pdf": False, "authors": []})
         self.facts_path.write_text(json.dumps(self.facts, ensure_ascii=False, indent=1),
