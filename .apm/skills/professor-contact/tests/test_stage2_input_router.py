@@ -85,7 +85,7 @@ class Stage2InputRouterTests(unittest.TestCase):
         def export(command, **kwargs):
             self.assertEqual(command, ["uv", "run", str(script), "A", "B", "--output-dir", str(self.out.resolve())])
             self.assertFalse((self.out / "B.json").exists())
-            (self.out / "A.json").write_text("{}", encoding="utf-8")
+            (self.out / "A.json").write_text(json.dumps({"abstract": "Usable abstract"}), encoding="utf-8")
             return subprocess.CompletedProcess(command, 1, json.dumps({
                 "status": "partial", "errors": [{"item_key": "B", "reason": "no abstract"}]}), "")
 
@@ -97,6 +97,50 @@ class Stage2InputRouterTests(unittest.TestCase):
         self.assertEqual([r.status for r in routes], ["ok", "error", "ok"])
         self.assertEqual(routes[0].carrier, "abstract_json")
         self.assertEqual(routes[1].reason, "no abstract")
+
+    def test_empty_abstract_is_error_and_valid_batch_item_continues(self):
+        for abstract in ("", " \n\t"):
+            with self.subTest(abstract=abstract):
+                def export(command, **kwargs):
+                    (self.out / "A.json").write_text(json.dumps({
+                        "item_key": "A", "level": "abstract", "abstract": abstract,
+                    }), encoding="utf-8")
+                    (self.out / "B.json").write_text(json.dumps({
+                        "abstract": "SECRET ABSTRACT BODY",
+                    }), encoding="utf-8")
+                    return subprocess.CompletedProcess(command, 0, '{"status":"ok"}', "")
+
+                with mock.patch.object(router.subprocess, "run", side_effect=export):
+                    routes = router.route_batch(
+                        [{"item_key": "A"}, {"item_key": "B"}], self.out, str(self.exporter))
+                self.assertEqual([r.status for r in routes], ["error", "ok"])
+                self.assertIsNone(routes[0].paper)
+                self.assertEqual(routes[0].reason, "no usable abstract")
+                with self.assertRaises(ValueError):
+                    router.build_task_prompt(routes[0], "/tmp/direction.md", "/tmp/save")
+                prompt = router.build_task_prompt(routes[1], "/tmp/direction.md", "/tmp/save")
+                self.assertIn(str((self.out / "B.json").resolve()), prompt)
+                self.assertNotIn("SECRET ABSTRACT BODY", prompt)
+
+    def test_unreadable_export_is_item_error_without_leaking_content(self):
+        for failure in ("JSONDecodeError", "OSError"):
+            with self.subTest(failure=failure):
+                original_read = Path.read_text
+
+                def read(path, *args, **kwargs):
+                    if path == self.out / "A.json":
+                        if failure == "OSError":
+                            raise OSError("SECRET ABSTRACT BODY")
+                        return "{SECRET ABSTRACT BODY"
+                    return original_read(path, *args, **kwargs)
+
+                with mock.patch.object(Path, "read_text", read):
+                    routes = router.route_batch(
+                        [{"item_key": "A"}, {"item_key": "B"}], self.out, str(self.exporter))
+                self.assertEqual([r.status for r in routes], ["error", "ok"])
+                self.assertIsNone(routes[0].paper)
+                self.assertIn(failure, routes[0].reason)
+                self.assertNotIn("SECRET", routes[0].reason)
 
     def test_missing_or_relative_skill_is_error_without_path_fallback(self):
         for skill_dir in (None, Path("relative/zotero-read"), self.root / "missing"):

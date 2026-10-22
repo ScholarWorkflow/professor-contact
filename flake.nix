@@ -5,7 +5,7 @@
     nixpkgs.url = "github:NixOS/nixpkgs/6510408d147d8c5e6d76043e899e9251756f6a75";
 
     agent-env-nix = {
-      url = "github:RekiDunois/agent-env-nix/91861b4f028eda1dbeb41481dcc48cd7c4a60874";
+      url = "github:RekiDunois/agent-env-nix/main";
       inputs.nixpkgs.follows = "nixpkgs";
     };
 
@@ -13,7 +13,7 @@
     # pkgs/mkAgentPackage, and the same source also exports the pdfx-agent
     # package used as the Stage-2 OCR-mechanism dependency.
     pdf-processing-core = {
-      url = "github:ScholarWorkflow/pdf-processing-core/3444dca0e0b84f46d1839ab5c707afa78e23d3a7";
+      url = "github:ScholarWorkflow/pdf-processing-core/2be1bf850f29b7ccf7bd1b066ae7292aac33fc87";
       inputs.nixpkgs.follows = "nixpkgs";
       inputs.agent-env-nix.follows = "agent-env-nix";
     };
@@ -27,7 +27,7 @@
     # paper-analysis follows this repository's base-skills and shared installer,
     # so the installed vision-tools payload is one single evaluation object for
     # both contact and paper-analysis.  Its own pdf-processing-core input stays
-    # as declared (same revision, same source tree).
+    # as declared (an independent library-only source pin).
     paper-analysis = {
       url = "github:ScholarWorkflow/paper-analysis/eceade6b6d22a6114ecdd99b5a0c358869dfc798";
       inputs.nixpkgs.follows = "nixpkgs";

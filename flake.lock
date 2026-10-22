@@ -9,17 +9,17 @@
         ]
       },
       "locked": {
-        "lastModified": 1792341743,
-        "narHash": "sha256-/VgkCnSU4Giw+7P68NMgMnYQ+SHJY45Q8YYxETKqA+w=",
+        "lastModified": 1792677659,
+        "narHash": "sha256-OldjLoRpCc3IFGaYfP7c6a5ynOMYAzKbgHn6/H0WW/A=",
         "owner": "RekiDunois",
         "repo": "agent-env-nix",
-        "rev": "91861b4f028eda1dbeb41481dcc48cd7c4a60874",
+        "rev": "c368871942435bdc178a1063ce9c677acaf8cabc",
         "type": "github"
       },
       "original": {
         "owner": "RekiDunois",
+        "ref": "main",
         "repo": "agent-env-nix",
-        "rev": "91861b4f028eda1dbeb41481dcc48cd7c4a60874",
         "type": "github"
       }
     },
@@ -487,17 +487,17 @@
         ]
       },
       "locked": {
-        "lastModified": 1792092950,
-        "narHash": "sha256-zs3xGkWGYCiCvewX6EY8OPeACeoRycWIek3TD2YnIyk=",
+        "lastModified": 1792688556,
+        "narHash": "sha256-bxMX8BkOTevBQQtmZ9KbjgDOHpDIn3rtGZV+wxkG8es=",
         "owner": "ScholarWorkflow",
         "repo": "pdf-processing-core",
-        "rev": "3444dca0e0b84f46d1839ab5c707afa78e23d3a7",
+        "rev": "2be1bf850f29b7ccf7bd1b066ae7292aac33fc87",
         "type": "github"
       },
       "original": {
         "owner": "ScholarWorkflow",
         "repo": "pdf-processing-core",
-        "rev": "3444dca0e0b84f46d1839ab5c707afa78e23d3a7",
+        "rev": "2be1bf850f29b7ccf7bd1b066ae7292aac33fc87",
         "type": "github"
       }
     },
