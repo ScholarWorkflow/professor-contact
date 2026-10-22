@@ -199,6 +199,7 @@ def _results_argument(arguments):
 
 def run_bound_stage2_finalize(run_cli, facts_path, *arguments):
     facts_path = Path(facts_path)
+    facts_before = facts_path.read_bytes()
     proof = _ensure_stage2_proof(run_cli, facts_path)
     facts = json.loads(facts_path.read_text())
     reference = (facts.get('stage2_preflight') or {}).get('consumption')
@@ -233,5 +234,12 @@ def run_bound_stage2_finalize(run_cli, facts_path, *arguments):
         sealed_payload = json.loads(sealed_result.stdout)
         if sealed_payload.get('status') != 'ok':
             return sealed_result
-    return run_cli('stage2-finalize', '--facts', facts_path,
-                   '--preflight-file', proof, *arguments)
+    result = run_cli('stage2-finalize', '--facts', facts_path,
+                     '--preflight-file', proof, *arguments)
+    try:
+        payload = json.loads(result.stdout)
+    except ValueError:
+        payload = {}
+    if payload.get('status') != 'ok':
+        facts_path.write_bytes(facts_before)
+    return result

@@ -682,6 +682,12 @@ class TestPreflightDecision(PreflightBase):
         self.snapshot_entry["directions"][1]["candidate_keys"].append("EEEE5555")
         self.snapshot_entry["input_fingerprint"] = "stage1-fp-2"
         self._write_snapshot()
+        self.facts["papers"].append({
+            "item_key": "EEEE5555", "title": "New synthetic candidate", "year": 2025,
+            "month": 1, "authorship": "middle", "abstract": "A new candidate.",
+            "has_pdf": False, "authors": []})
+        self.facts_path.write_text(json.dumps(self.facts, ensure_ascii=False, indent=1),
+                                   encoding="utf-8")
         payload = self.preflight()
         self.assertEqual(payload["action"], "process")
         self.assertIn("stage1_professor_changed", payload["reason_codes"])
@@ -691,6 +697,10 @@ class TestPreflightDecision(PreflightBase):
         self.assertIn("candidate_set_changed", changed["reason_codes"])
         proof_path = self.root / "partial-invalidation-preflight.json"
         proof_path.write_text(json.dumps(payload, ensure_ascii=False, indent=1), encoding="utf-8")
+        facts = json.loads(self.facts_path.read_text(encoding="utf-8"))
+        facts["stage2_preflight"] = {"preflight_id": payload["preflight_id"]}
+        self.facts_path.write_text(json.dumps(facts, ensure_ascii=False, indent=1),
+                                   encoding="utf-8")
         prepare_consumption(run_cli, self.facts_path, proof_path)
         plan = parse(run_cli("stage2-plan", "--facts", self.facts_path,
                              "--preflight-file", proof_path))

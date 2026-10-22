@@ -607,9 +607,10 @@ def build(*, Stage2Context,
         manual = actual_sha != header.get("render_sha256") and actual_sha != render.get("sha256")
         if manual:
             return None, "manual_markdown_changed"
-        if (not old.get("binding_valid") or render.get("sha256") != actual_sha
-                or header.get("state_fingerprint") != stage2_pack_state_fingerprint(pack)):
+        if not old.get("binding_valid") or render.get("sha256") != actual_sha:
             return None, "render_binding"
+        if header.get("state_fingerprint") != stage2_pack_state_fingerprint(pack):
+            return None, "state_fingerprint_mismatch"
         expected_title = f"# 套磁候选分析 — {pack.get('professor')}"
         if not old.get("body", "").splitlines() or old["body"].splitlines()[0] != expected_title:
             return None, "render_identity"
@@ -1381,7 +1382,8 @@ def build(*, Stage2Context,
                      "the recorded validation no longer binds the actual managed body; "
                      "an unchanged-business finalize cannot restore that evidence",
                      target=str(md_path))
-            if old_error == "manual_markdown_changed" or business_changed or not body_equivalent:
+            if old_error == "manual_markdown_changed" \
+                    or (not body_equivalent and not business_changed):
                 if decision != "overwrite":
                     soft_exit("needs_decision", "manual_markdown_changed", target=str(md_path),
                               options=["overwrite", "keep_manual", "promote"])
@@ -1389,8 +1391,42 @@ def build(*, Stage2Context,
                 body_equivalent = False
                 final_body, final_sha = candidate_body, sha256_bytes(candidate_body_bytes)
             else:
-                fail("validation_render_stale", f"accepted Stage-2 state is invalid: {old_error}",
-                     target=str(md_path))
+                if old_error == "state_fingerprint_mismatch":
+                    if not body_equivalent:
+                        if decision != "overwrite":
+                            soft_exit("needs_decision", "manual_markdown_changed",
+                                      target=str(md_path),
+                                      options=["overwrite", "keep_manual", "promote"])
+                        final_body, final_sha = candidate_body, sha256_bytes(candidate_body_bytes)
+                    elif isinstance((raw_old_pack or {}).get("validator"), dict):
+                        fail("validation_render_stale",
+                             "the accepted validation still binds the old header state",
+                             target=str(md_path))
+                    # With no validator and an equivalent body the machine
+                    # header may be corrected without rewriting the body.
+                elif old_error == "render_binding" and not body_equivalent:
+                    old_render_entry = (((raw_old_pack or {}).get("cache") or {})
+                                        .get("render") or {}).get(ANALYSIS_MD) or {}
+                    legacy_display = "u1" not in old_render_entry
+                    if not legacy_display and decision != "overwrite":
+                        soft_exit("needs_decision", "manual_markdown_changed",
+                                  target=str(md_path),
+                                  options=["overwrite", "keep_manual", "promote"])
+                    final_body, final_sha = candidate_body, sha256_bytes(candidate_body_bytes)
+                elif old_error == "validator_binding":
+                    old_meta = (((raw_old_pack or {}).get("cache") or {})
+                                .get("preflight") or {})
+                    legacy_semantics = old_meta.get("resolution_semantics_version") \
+                        != STAGE2_RESOLUTION_SEMANTICS_VERSION
+                    if not legacy_semantics:
+                        fail("validation_render_stale",
+                             "the accepted validation still binds the old render",
+                             target=str(md_path))
+                    final_body, final_sha = candidate_body, sha256_bytes(candidate_body_bytes)
+                else:
+                    fail("validation_render_stale",
+                         f"accepted Stage-2 state is invalid: {old_error}",
+                         target=str(md_path))
         elif not business_changed and body_equivalent and old_validator is not None:
             carried_validator = copy.deepcopy(old_validator)
 

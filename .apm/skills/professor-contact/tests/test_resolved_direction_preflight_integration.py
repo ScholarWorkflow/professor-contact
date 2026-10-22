@@ -163,6 +163,8 @@ class ResolvedPreflightBase(PreflightBase):
                               self._resolve_results, self.facts_path)
 
     def resolve_finalize(self):
+        if getattr(self, "_resolve_plan", None) is None:
+            self.resolve_plan()
         out = finalize_resolve(self.facts_path, self.results_dir)
         self.assertEqual(out["status"], "ok", out)
         return out
