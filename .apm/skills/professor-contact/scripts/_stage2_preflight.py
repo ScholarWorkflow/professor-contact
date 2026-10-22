@@ -790,6 +790,18 @@ def build(*, fail, soft_exit, emit, read_json_file, atomic_json, sha256_obj, sha
         (`pass`/`skipped`) count as accepted; missing results, malformed state and
         `fail_after_2_rounds` force the slow path without redefining policy here.
         """
+        raw_validator = pack.get("validator") if isinstance(pack, dict) else None
+        if isinstance(raw_validator, dict) and "schema" not in raw_validator:
+            # Legacy terminal records were written before the schema-2 envelope;
+            # they still prove a recorded pass/skipped result for read-only reuse.
+            legacy_results = raw_validator.get("results")
+            if not isinstance(legacy_results, dict):
+                return "validator_not_accepted"
+            for direction_id in direction_ids:
+                row = legacy_results.get(direction_id)
+                if not isinstance(row, dict) or row.get("result") not in ("pass", "skipped"):
+                    return "validator_not_accepted"
+            return None
         validator, legality_error = stage2_validation_legality(pack)
         if legality_error:
             return "validator_not_accepted"
@@ -1334,7 +1346,29 @@ def build(*, fail, soft_exit, emit, read_json_file, atomic_json, sha256_obj, sha
                                               "permissions": permissions}
             atomic_json(ctx.consumption_file, data)
 
+    def stage2_preflight_payload_professor(facts_path, preflight_file) -> str:
+        """Validate the saved proof before constructing the frozen context.
+
+        A missing/unreadable payload or one belonging to another professor is an
+        input error, not evidence that this run's frozen sources changed.
+        """
+        if not preflight_file:
+            fail("invalid_params", "stage2 command requires --preflight-file")
+        plan, error = read_json_file(Path(preflight_file))
+        if error or not isinstance(plan, dict) or plan.get("status") != "ok" \
+                or not isinstance(plan.get("preflight_inputs"), dict):
+            fail("invalid_params",
+                 f"preflight file unreadable or not a preflight payload: {preflight_file}")
+        facts, facts_error = read_json_file(Path(facts_path))
+        if facts_error is None and isinstance(facts, dict):
+            professor = facts.get("professor")
+            if isinstance(professor, str) and professor \
+                    and plan.get("professor") != professor:
+                fail("invalid_params", "preflight file professor mismatch")
+        return plan.get("professor")
+
     def cmd_stage2_plan(args) -> None:
+        stage2_preflight_payload_professor(args.facts, getattr(args, "preflight_file", None))
         ctx = Stage2Context(Path(args.facts))
         ctx.validate_consumption_current()
         identity, proof_id = stage2_plan_bind_preflight(ctx, getattr(args, "preflight_file", None))
@@ -1647,6 +1681,7 @@ def build(*, fail, soft_exit, emit, read_json_file, atomic_json, sha256_obj, sha
         stage2_refresh_preflight_metadata=stage2_refresh_preflight_metadata,
         stage2_freshness_view_fingerprint=stage2_freshness_view_fingerprint,
         stage2_preflight_metadata=stage2_preflight_metadata,
+        stage2_preflight_payload_professor=stage2_preflight_payload_professor,
         stage2_pack_state_fingerprint=stage2_pack_state_fingerprint,
         stage2_pack_content_fingerprint=stage2_pack_content_fingerprint,
         stage2_validator_accepts=stage2_validator_accepts,

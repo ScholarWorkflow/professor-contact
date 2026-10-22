@@ -62,6 +62,7 @@ def build(*, Stage2Context,
           stage2_refresh_preflight_metadata,
           observed_source_projection,
           stage2_candidate_universe,
+          stage2_preflight_payload_professor,
           observed_level_projection,
           stage2_artifact_guard_reason,
           _pack_resolved_grouping,
@@ -716,6 +717,8 @@ def build(*, Stage2Context,
                 fail("invalid_result_json", f"sealed result bindings changed: {path}")
 
     def cmd_stage2_finalize(args) -> None:
+        stage2_preflight_payload_professor(
+            args.facts, getattr(args, "preflight_file", None))
         ctx = Stage2Context(Path(args.facts))
         ctx.validate_consumption_current()
         if not isinstance(ctx.consumption, dict):

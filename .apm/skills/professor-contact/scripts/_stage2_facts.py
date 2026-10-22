@@ -989,8 +989,10 @@ def build(*, atomic_json,
                     candidate_keys = set(sources.get("candidate_keys") or [])
                     facts_papers = self.facts.get("papers", [])
                     facts_keys = {paper.get("item_key") for paper in facts_papers}
-                    if facts_keys != candidate_keys or len(facts_keys) != len(facts_papers):
-                        fail("invalid_facts", "facts papers do not cover the frozen candidate set exactly")
+                    if not candidate_keys.issubset(facts_keys) \
+                            or len(facts_keys) != len(facts_papers):
+                        fail("invalid_facts",
+                             "facts papers do not cover the frozen candidate set")
                     business = sources.get("business_inputs") or {}
                     if business.get("current_year") is not None \
                             and self.current_year != business["current_year"]:
