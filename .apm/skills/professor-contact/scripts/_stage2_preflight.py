@@ -1368,7 +1368,7 @@ def build(*, fail, soft_exit, emit, read_json_file, atomic_json, sha256_obj, sha
             if isinstance(professor, str) and professor \
                     and plan.get("professor") != professor:
                 fail("invalid_params", "preflight file professor mismatch")
-        return plan.get("professor")
+        return plan
 
     def cmd_stage2_plan(args) -> None:
         stage2_preflight_payload_professor(args.facts, getattr(args, "preflight_file", None))

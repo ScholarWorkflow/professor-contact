@@ -717,8 +717,28 @@ def build(*, Stage2Context,
                 fail("invalid_result_json", f"sealed result bindings changed: {path}")
 
     def cmd_stage2_finalize(args) -> None:
-        stage2_preflight_payload_professor(
+        proof_payload = stage2_preflight_payload_professor(
             args.facts, getattr(args, "preflight_file", None))
+        facts_payload, _ = read_json_file(Path(args.facts))
+        proof_block = (facts_payload.get("stage2_preflight")
+                       if isinstance(facts_payload, dict) else None)
+        if isinstance(facts_payload, dict) and "stage2_preflight" in facts_payload \
+                and not isinstance(proof_block, dict):
+            soft_exit("needs_refresh", "preflight_inputs_changed",
+                      drift=["preflight_proof_id"])
+        recorded_proof = (proof_block.get("preflight_id")
+                          if isinstance(proof_block, dict) else None)
+        if recorded_proof is not None and proof_payload.get("preflight_id") != recorded_proof:
+            soft_exit("needs_refresh", "preflight_inputs_changed",
+                      drift=["preflight_proof_id"])
+        proof_id = proof_payload.get("preflight_id")
+        proof_inputs = proof_payload.get("preflight_inputs")
+        if isinstance(proof_id, str) and isinstance(proof_inputs, dict):
+            expected_id = sha256_obj({"professor": proof_payload.get("professor"),
+                                      "preflight_inputs": proof_inputs})
+            if proof_id != expected_id:
+                soft_exit("needs_refresh", "preflight_inputs_changed",
+                          drift=["preflight_proof_id"])
         ctx = Stage2Context(Path(args.facts))
         ctx.validate_consumption_current()
         if not isinstance(ctx.consumption, dict):
