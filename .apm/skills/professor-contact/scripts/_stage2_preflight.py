@@ -345,7 +345,10 @@ def build(*, fail, soft_exit, emit, read_json_file, atomic_json, sha256_obj, sha
         fields = set(baseline) | set(current)
         if not include_level:
             fields.discard("levels")
-        return sorted(field for field in fields if baseline.get(field) != current.get(field))
+        changed = sorted(field for field in fields if baseline.get(field) != current.get(field))
+        if "targets" in changed:
+            changed.append("selected_direction_ids")
+        return changed
 
 
     def stage2_target_path(professor_dir: Path) -> Path:

@@ -1,4 +1,5 @@
-from stage2_upstream_fixture import run_bound_stage2_finalize, run_bound_stage2_plan
+from stage2_upstream_fixture import (prepare_consumption, run_bound_stage2_finalize,
+                                    run_bound_stage2_plan)
 """Stage 2 early preflight cache gate regression tests (issue #11).
 
 The preflight must decide from persisted state alone whether an accepted
@@ -690,9 +691,10 @@ class TestPreflightDecision(PreflightBase):
         self.assertIn("candidate_set_changed", changed["reason_codes"])
         proof_path = self.root / "partial-invalidation-preflight.json"
         proof_path.write_text(json.dumps(payload, ensure_ascii=False, indent=1), encoding="utf-8")
+        prepare_consumption(run_cli, self.facts_path, proof_path)
         plan = parse(run_cli("stage2-plan", "--facts", self.facts_path,
                              "--preflight-file", proof_path))
-        self.assertEqual(plan["status"], "ok")
+        self.assertEqual(plan["status"], "ok", plan)
         by_key = {entry["direction_id"]: entry for entry in plan["directions"]}
         self.assertEqual(by_key["DIR00001"]["action"], "reuse")
         self.assertEqual(by_key["DIR00002"]["action"], "reuse")
