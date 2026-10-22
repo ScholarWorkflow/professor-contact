@@ -404,7 +404,8 @@ class ResolvedDirectionFinalizeTests(unittest.TestCase):
         results_dir = new_resolve_results_dir(self.root)
         plan_payload = plan_resolve(
             facts_path, results_dir,
-            reuse_companion=getattr(self, "reuse_consumption", False))
+            reuse_companion=(getattr(self, "reuse_consumption", False)
+                             or getattr(self, "consumption_run", None) is not None))
         self.assertEqual(plan_payload["status"], "ok", plan_payload)
         self.assertEqual([job["direction_id"] for job in plan_payload["jobs"]], ["dir_A"])
         payload = finalize_resolve(facts_path, results_dir)
@@ -604,7 +605,8 @@ class ResolvedPipelineMixin:
         results_dir = results_dir or new_resolve_results_dir(self.root)
         plan_payload = plan_resolve(
             facts_path, results_dir,
-            reuse_companion=getattr(self, "reuse_consumption", False))
+            reuse_companion=(getattr(self, "reuse_consumption", False)
+                             or getattr(self, "consumption_run", None) is not None))
         self.assertEqual(plan_payload["status"], "ok", plan_payload)
         write_resolve_results(results_dir, plan_payload, resolve_results, facts_path,
                               skip=missing, resolve_run_id=resolve_run_id)
