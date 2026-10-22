@@ -1375,7 +1375,9 @@ def build(*, AUTHORSHIP_RANK,
         # (reused) resolutions must NOT re-prompt the user on every re-run.
         material_changes = []
         for ckey, r in resolved.items():
-            if r["resolution_type"] != "unchanged" and not r.get("reused"):
+            already_accepted = (existing_by_ckey.get(ckey) or {}).get("acceptance") == "accepted"
+            if r["resolution_type"] != "unchanged" and not r.get("reused") \
+                    and not already_accepted:
                 material_changes.append({
                     "provisional_direction_id": ckey,
                     "resolved_direction_id": r["resolved_direction_id"],
