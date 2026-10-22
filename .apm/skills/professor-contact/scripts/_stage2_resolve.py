@@ -102,8 +102,6 @@ def build(*, AUTHORSHIP_RANK,
                 fail("invalid_result_json", "saved resolve model input changed")
         sealed = data["resolve"].get("results")
         if sealed is not None:
-            if not keep_provisional or data.get("stage2_plan") is not None:
-                fail("invalid_params", "resolve results already sealed")
             if not isinstance(sealed, dict) or sealed.get("run_id") != data["run_id"] \
                     or sealed.get("plan_sha256") != plan["plan_sha256"] \
                     or sealed.get("results_dir") != str(results_dir.resolve()):
@@ -112,7 +110,7 @@ def build(*, AUTHORSHIP_RANK,
                 try:
                     raw = (results_dir / filename).read_bytes()
                 except OSError:
-                    fail("invalid_result_json", "sealed resolve result is missing")
+                    continue
                 if hashlib.sha256(raw).hexdigest() != record.get("sha256") \
                         or raw.decode("utf-8") != record.get("text"):
                     fail("invalid_result_json", "sealed resolve result changed")

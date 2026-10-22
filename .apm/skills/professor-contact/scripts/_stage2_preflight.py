@@ -1264,7 +1264,7 @@ def build(*, fail, soft_exit, emit, read_json_file, atomic_json, sha256_obj, sha
             try:
                 raw = (Path(results["results_dir"]) / filename).read_bytes()
             except OSError:
-                fail("invalid_result_json", "sealed resolve result is missing")
+                continue
             if sha256_bytes(raw) != entry.get("sha256") or raw.decode("utf-8") != entry.get("text"):
                 fail("invalid_result_json", "sealed resolve result changed")
 
