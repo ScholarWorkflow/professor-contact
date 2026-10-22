@@ -290,11 +290,26 @@ class PreflightBase(unittest.TestCase):
         self.assertEqual(out["status"], "ok", out)
 
     def seed_validator_results(self, result, rounds, keys=("DIR00001", "DIR00002")):
-        """Prepare persisted historical results without posing them as a new report."""
+        """Prepare a legal persisted terminal validator for reuse checks."""
         pack = self._read_pack()
-        pack["validator"] = {"results": {
-            key: {"result": result, "rounds": rounds, "issues": []} for key in keys
-        }}
+        direction_ids = [contact_state.direction_machine_id(direction)
+                         for direction in pack.get("directions") or []
+                         if isinstance(direction, dict)]
+        selected = [key for key in keys if key in direction_ids] or direction_ids
+        recorded_round = 2 if result == "fail_after_2_rounds" else max(1, rounds)
+        render = ((pack.get("cache") or {}).get("render") or {}).get(
+            contact_state.ANALYSIS_MD) or {}
+        validator = {
+            "schema": 2, "round": recorded_round, "phase": "terminal",
+            "pending": {}, "correction_applied_direction_ids": [],
+            "results": {
+                key: {"result": result, "rounds": recorded_round, "issues": []}
+                for key in selected
+            },
+            "render_sha256": render.get("sha256"),
+        }
+        pack["validator"] = validator
+        validator["pack_sha256"] = contact_state.stage2_pack_content_fingerprint(pack)
         self._write_pack(pack)
 
     def seed_preflight_meta(self, current_year=None, **param_overrides):

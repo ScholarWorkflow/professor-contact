@@ -1308,11 +1308,8 @@ class ResolvedReuseTests(ResolvedPipelineMixin, unittest.TestCase):
         }, results_dir=results_dir)
         self.assertTrue(first["needs_user_choice"])
 
-        # Second run with this round's directory emptied BEFORE the user
-        # chose: the entry is still only a proposal and keeps asking for the
-        # choice.
-        for stale in results_dir.glob("resolve-*.json"):
-            stale.unlink()
+        # Second run with the same sealed files and no new results: the entry
+        # is still only a proposal and keeps asking for the choice.
         pending_rerun = finalize_resolve(facts_path, results_dir)
         self.assertEqual(pending_rerun["status"], "ok",
                          msg=json.dumps(pending_rerun, ensure_ascii=False))

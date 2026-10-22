@@ -793,18 +793,6 @@ def build(*, fail, soft_exit, emit, read_json_file, atomic_json, sha256_obj, sha
         (`pass`/`skipped`) count as accepted; missing results, malformed state and
         `fail_after_2_rounds` force the slow path without redefining policy here.
         """
-        raw_validator = pack.get("validator") if isinstance(pack, dict) else None
-        if isinstance(raw_validator, dict) and "schema" not in raw_validator:
-            # Legacy terminal records were written before the schema-2 envelope;
-            # they still prove a recorded pass/skipped result for read-only reuse.
-            legacy_results = raw_validator.get("results")
-            if not isinstance(legacy_results, dict):
-                return "validator_not_accepted"
-            for direction_id in direction_ids:
-                row = legacy_results.get(direction_id)
-                if not isinstance(row, dict) or row.get("result") not in ("pass", "skipped"):
-                    return "validator_not_accepted"
-            return None
         validator, legality_error = stage2_validation_legality(pack)
         if legality_error:
             return "validator_not_accepted"
@@ -1264,7 +1252,7 @@ def build(*, fail, soft_exit, emit, read_json_file, atomic_json, sha256_obj, sha
             try:
                 raw = (Path(results["results_dir"]) / filename).read_bytes()
             except OSError:
-                continue
+                fail("invalid_result_json", "sealed resolve result is missing")
             if sha256_bytes(raw) != entry.get("sha256") or raw.decode("utf-8") != entry.get("text"):
                 fail("invalid_result_json", "sealed resolve result changed")
 

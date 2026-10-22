@@ -110,7 +110,7 @@ def build(*, AUTHORSHIP_RANK,
                 try:
                     raw = (results_dir / filename).read_bytes()
                 except OSError:
-                    continue
+                    fail("invalid_result_json", "sealed resolve result is missing")
                 if hashlib.sha256(raw).hexdigest() != record.get("sha256") \
                         or raw.decode("utf-8") != record.get("text"):
                     fail("invalid_result_json", "sealed resolve result changed")

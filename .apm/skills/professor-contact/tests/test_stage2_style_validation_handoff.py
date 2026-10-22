@@ -957,7 +957,22 @@ class Stage2ValidationHandoffTests(BaseEnv):
         target_path = self.prof_dir / "套磁目标.json"
         for result in ("pass", "skipped"):
             pack = json.loads(pack_path.read_text(encoding="utf-8"))
-            pack["validator"] = {"results": {"DIR00001": {"result": result}}}
+            direction_ids = [contact_state.direction_machine_id(direction)
+                             for direction in pack.get("directions") or []
+                             if isinstance(direction, dict)]
+            render = ((pack.get("cache") or {}).get("render") or {}).get(
+                contact_state.ANALYSIS_MD) or {}
+            validator = {
+                "schema": 2, "round": 1, "phase": "terminal",
+                "pending": {}, "correction_applied_direction_ids": [],
+                "results": {
+                    direction_id: {"result": result, "rounds": 1, "issues": []}
+                    for direction_id in direction_ids
+                },
+                "render_sha256": render.get("sha256"),
+            }
+            pack["validator"] = validator
+            validator["pack_sha256"] = contact_state.stage2_pack_content_fingerprint(pack)
             pack_path.write_text(json.dumps(pack, ensure_ascii=False), encoding="utf-8")
             preflight = parse(run_cli(
                 "stage2-preflight", "--program-root", self.root,
