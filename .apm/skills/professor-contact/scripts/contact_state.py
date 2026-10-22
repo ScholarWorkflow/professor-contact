@@ -1697,7 +1697,7 @@ def apply_ready_entry(program_root: Path, entry: dict, plan: dict) -> dict:
     facts_path = Path(facts_name)
     try:
         atomic_json(facts_path, ctx_facts)
-        ctx = Stage2Context(facts_path)
+        ctx = Stage2Context(facts_path, require_consumption=False)
     finally:
         facts_path.unlink(missing_ok=True)
     pack_directions = []

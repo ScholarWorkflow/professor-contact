@@ -2139,7 +2139,7 @@ class TestMigrate(BaseEnv):
         plan_path = self.root / "mplan.json"
         plan_path.write_text(json.dumps(plan, ensure_ascii=False), encoding="utf-8")
         out = parse(run_cli("migrate-v3", "--apply", plan_path, "--program-root", self.root))
-        self.assertEqual(out["status"], "ok")
+        self.assertEqual(out["status"], "ok", out)
         self.assertEqual(len(out["applied"]), 1)
         pack = json.loads((self.prof_dir / "套磁候选输入.json").read_text(encoding="utf-8"))
         self.assertTrue(pack.get("migrated"))
@@ -3122,7 +3122,14 @@ class Issue65Stage2BindingEnv(unittest.TestCase):
         run_dir = self._consumption_run_dir()
         companion = json.loads((run_dir / "stage2-consumption.json").read_text(encoding="utf-8"))
         if not isinstance(companion.get("stage2_plan"), dict):
-            self.plan()
+            plan_args = argparse.Namespace(facts=str(self.facts_path),
+                                           preflight_file=str(self.preflight_file),
+                                           run_dir=str(run_dir))
+            plan_text, plan_code = self._run_formal(
+                contact_state.cmd_stage2_plan, plan_args, scenario="plan")
+            plan_payload = json.loads(plan_text)
+            if plan_payload.get("status") != "ok":
+                return plan_text, plan_code
         if not isinstance(companion.get("results"), dict):
             sealed = parse(run_cli("stage2-consumption-seal-results",
                                    "--run-dir", run_dir, "--results-dir", self.results))
@@ -3253,6 +3260,12 @@ class TestIssue64Stage2PlanBinding(Issue65Stage2BindingEnv):
 
     def _bind_facts(self, proof):
         self._write_facts(preflight_id=proof["preflight_id"])
+        facts = json.loads(self.facts_path.read_text(encoding="utf-8"))
+        if proof.get("professor") == facts.get("professor"):
+            prepared = prepare_consumption(run_cli, self.facts_path, self.preflight_file)
+            if prepared.returncode != 0:
+                raise AssertionError(
+                    f"consumption fixture failed: {prepared.stdout} {prepared.stderr}")
 
     def _mutate_target_selection_history(self):
         target = json.loads(self.a_target.read_text(encoding="utf-8"))

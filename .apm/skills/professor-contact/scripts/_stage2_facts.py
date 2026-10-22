@@ -919,7 +919,7 @@ def build(*, atomic_json,
     class Stage2Context:
         """Everything plan and finalize need, computed once from the facts file."""
 
-        def __init__(self, facts_path: Path):
+        def __init__(self, facts_path: Path, *, require_consumption: bool = True):
             self.facts_path = facts_path
             facts_material = _freeze_material(facts_path)
             if facts_material.get("state") != "present" \
@@ -1015,7 +1015,7 @@ def build(*, atomic_json,
                     recorded = companion.get("facts_sha256")
                     if recorded is not None and recorded != self.facts_sha256:
                         fail("invalid_facts", "facts bytes changed after being sealed")
-            if self.sources is None:
+            if self.sources is None and require_consumption:
                 fail("invalid_facts", "facts require a prepared consumption companion")
             self.papers = load_papers_with_digests(
                 self.facts, self.professor_dir, sources=self.sources)
