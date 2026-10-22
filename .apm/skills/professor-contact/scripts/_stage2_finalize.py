@@ -1416,8 +1416,12 @@ def build(*, Stage2Context,
                 elif old_error == "validator_binding":
                     old_meta = (((raw_old_pack or {}).get("cache") or {})
                                 .get("preflight") or {})
-                    legacy_semantics = old_meta.get("resolution_semantics_version") \
+                    old_render_entry = (((raw_old_pack or {}).get("cache") or {})
+                                        .get("render") or {}).get(ANALYSIS_MD) or {}
+                    legacy_semantics = (
+                        old_meta.get("resolution_semantics_version")
                         != STAGE2_RESOLUTION_SEMANTICS_VERSION
+                        or "u1" not in old_render_entry)
                     if not legacy_semantics:
                         fail("validation_render_stale",
                              "the accepted validation still binds the old render",
