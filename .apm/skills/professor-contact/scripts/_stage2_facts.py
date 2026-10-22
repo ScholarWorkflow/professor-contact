@@ -926,7 +926,8 @@ def build(*, atomic_json,
     class Stage2Context:
         """Everything plan and finalize need, computed once from the facts file."""
 
-        def __init__(self, facts_path: Path, *, require_consumption: bool = True):
+        def __init__(self, facts_path: Path, *, require_consumption: bool = True,
+                     prefer_current_sources: bool = False):
             self.facts_path = facts_path
             facts_material = _freeze_material(facts_path)
             if facts_material.get("state") != "present" \
@@ -959,7 +960,7 @@ def build(*, atomic_json,
                                              or not index_entry_level(_index_papers[key])[1]):
                     fail("invalid_facts", f"paper {key}: invalid analysis registration")
             preflight_block = self.facts.get("stage2_preflight")
-            if isinstance(preflight_block, dict):
+            if isinstance(preflight_block, dict) and not prefer_current_sources:
                 reference = preflight_block.get("consumption")
                 if isinstance(reference, dict):
                     companion_path = Path(str(reference.get("file") or ""))

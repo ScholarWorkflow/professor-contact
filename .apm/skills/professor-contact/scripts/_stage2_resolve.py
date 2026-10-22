@@ -1518,13 +1518,15 @@ def build(*, AUTHORSHIP_RANK,
         if unknown:
             fail("invalid_accept_keys",
                  f"--ckeys name directions missing from the resolved directions file: {unknown}")
-        evidence = _resolve_evidence(ctx)
+        current_ctx = Stage2Context(Path(args.facts), require_consumption=False,
+                                    prefer_current_sources=True)
+        evidence = _resolve_evidence(current_ctx)
         stale = []
-        for plan in ctx.direction_plans:
+        for plan in current_ctx.direction_plans:
             if plan["did"] not in ckeys:
                 continue
             if entries[plan["did"]].get("input_fingerprint") != \
-                    _current_resolve_fingerprint(ctx, plan, evidence):
+                    _current_resolve_fingerprint(current_ctx, plan, evidence):
                 stale.append({"direction": plan["did"], "problem": "input_fingerprint_mismatch"})
         if stale:
             fail("resolved_directions_stale",
