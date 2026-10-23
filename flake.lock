@@ -487,17 +487,17 @@
         ]
       },
       "locked": {
-        "lastModified": 1792092950,
-        "narHash": "sha256-zs3xGkWGYCiCvewX6EY8OPeACeoRycWIek3TD2YnIyk=",
+        "lastModified": 1792688556,
+        "narHash": "sha256-bxMX8BkOTevBQQtmZ9KbjgDOHpDIn3rtGZV+wxkG8es=",
         "owner": "ScholarWorkflow",
         "repo": "pdf-processing-core",
-        "rev": "3444dca0e0b84f46d1839ab5c707afa78e23d3a7",
+        "rev": "2be1bf850f29b7ccf7bd1b066ae7292aac33fc87",
         "type": "github"
       },
       "original": {
         "owner": "ScholarWorkflow",
         "repo": "pdf-processing-core",
-        "rev": "3444dca0e0b84f46d1839ab5c707afa78e23d3a7",
+        "rev": "2be1bf850f29b7ccf7bd1b066ae7292aac33fc87",
         "type": "github"
       }
     },
