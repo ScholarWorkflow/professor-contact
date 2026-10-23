@@ -13,13 +13,13 @@
     # pkgs/mkAgentPackage, and the same source also exports the pdfx-agent
     # package used as the Stage-2 OCR-mechanism dependency.
     pdf-processing-core = {
-      url = "github:ScholarWorkflow/pdf-processing-core/2be1bf850f29b7ccf7bd1b066ae7292aac33fc87";
+      url = "github:ScholarWorkflow/pdf-processing-core/main";
       inputs.nixpkgs.follows = "nixpkgs";
       inputs.agent-env-nix.follows = "agent-env-nix";
     };
 
     base-skills = {
-      url = "github:ScholarWorkflow/base-skills/3ab2ac188e625b8a8ae37b5fa318c579787c3d1e";
+      url = "github:ScholarWorkflow/base-skills/main";
       inputs.nixpkgs.follows = "nixpkgs";
       inputs.agent-env-nix.follows = "agent-env-nix";
     };
@@ -29,7 +29,7 @@
     # both contact and paper-analysis.  Its own pdf-processing-core input stays
     # as declared (an independent library-only source pin).
     paper-analysis = {
-      url = "github:ScholarWorkflow/paper-analysis/eceade6b6d22a6114ecdd99b5a0c358869dfc798";
+      url = "github:ScholarWorkflow/paper-analysis/master";
       inputs.nixpkgs.follows = "nixpkgs";
       inputs.agent-env-nix.follows = "agent-env-nix";
       inputs.base-skills.follows = "base-skills";
@@ -38,10 +38,10 @@
     # zotero-tools keeps its own pinned build environment on purpose (the same
     # choice professor-research makes for its leaf packages); overriding it here
     # would evaluate a second zotero-tools payload under the same package id.
-    zotero-tools.url = "github:ScholarWorkflow/zotero-tools/24eb6cf596c082ac005ccdd800b962fbb6a8e2c8";
+    zotero-tools.url = "github:ScholarWorkflow/zotero-tools/master";
 
     knowledge-tools = {
-      url = "github:ScholarWorkflow/knowledge-tools/bdb0db128b7cfccc6a3b20a8d0acee8695d0e211";
+      url = "github:ScholarWorkflow/knowledge-tools/main";
       inputs.nixpkgs.follows = "nixpkgs";
       inputs.agent-env-nix.follows = "agent-env-nix";
     };
@@ -51,7 +51,7 @@
     # input supplies the base/source skill packages, and zotero-tools keeps its
     # owner lock.  Only the two inputs this repository already pins are aligned.
     professor-research = {
-      url = "github:ScholarWorkflow/professor-research/bb27533540715c44039c108302f11d3e00d6b62e";
+      url = "github:ScholarWorkflow/professor-research/main";
       inputs.nixpkgs.follows = "nixpkgs";
       inputs.agent-env-nix.follows = "agent-env-nix";
     };
