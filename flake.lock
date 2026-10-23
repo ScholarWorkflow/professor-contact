@@ -446,17 +446,17 @@
         "pdf-processing-core": "pdf-processing-core"
       },
       "locked": {
-        "lastModified": 1792174671,
-        "narHash": "sha256-97IvFlWAN1DI7p0T5o3/qTLESmpsKPTQwJM0ow+GvYY=",
+        "lastModified": 1792752935,
+        "narHash": "sha256-qhimfORQo8QH/7tqYUN3c+Ph5EWrzpeZuMIKMhm9mdA=",
         "owner": "ScholarWorkflow",
         "repo": "paper-analysis",
-        "rev": "eceade6b6d22a6114ecdd99b5a0c358869dfc798",
+        "rev": "c140658cc60f9d9c3d17008cbab0b599f40c8e46",
         "type": "github"
       },
       "original": {
         "owner": "ScholarWorkflow",
+        "ref": "master",
         "repo": "paper-analysis",
-        "rev": "eceade6b6d22a6114ecdd99b5a0c358869dfc798",
         "type": "github"
       }
     },

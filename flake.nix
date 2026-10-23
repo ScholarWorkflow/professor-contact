@@ -29,7 +29,7 @@
     # both contact and paper-analysis.  Its own pdf-processing-core input stays
     # as declared (an independent library-only source pin).
     paper-analysis = {
-      url = "github:ScholarWorkflow/paper-analysis/eceade6b6d22a6114ecdd99b5a0c358869dfc798";
+      url = "github:ScholarWorkflow/paper-analysis/master";
       inputs.nixpkgs.follows = "nixpkgs";
       inputs.agent-env-nix.follows = "agent-env-nix";
       inputs.base-skills.follows = "base-skills";
