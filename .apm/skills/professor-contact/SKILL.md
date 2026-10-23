@@ -482,7 +482,7 @@ Issue #59：`--email-id` 是**硬执行范围**，不是过滤提示。同一次
 | 4 | `professor-contact-selection` | 见 Input contract |
 | 5 | `professor-contact-email-generator` | 见 Input contract |
 
-`professor-contact-email-validator` / `professor-contact-style-validator` 不由 caller 直接驱动：它们由对应 Stage 的 agent 按既有 validator loop 调用（本约定不改变该归属）。
+`professor-contact-email-validator` / `professor-contact-style-validator` 的调用者由对应 Stage 和 runtime 决定：**Codex Stage 3** 由 root caller 顺序委派 `professor-contact-idea-generator` 与 `professor-contact-style-validator`，两者为同级子任务，不并行运行；仅在 runner 记录本轮校验后返回 `needs_correction=true` 时，由 root caller 将修正交接交回 idea-generator，修正 finalize 完成后再委派 style-validator。完整交接、通过条件与最多 2 轮的限制遵守下文「Stage 3/4 编排边界」。**OpenCode Stage 3** 仍由 idea-generator 持有既有 validator loop；**Stage 5** 仍由 email-generator 按对应 runtime 的既有 validator loop 调用 email-validator。
 
 ### OpenCode 分支
 
