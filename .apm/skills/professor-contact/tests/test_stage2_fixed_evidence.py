@@ -383,6 +383,11 @@ class FixedEvidenceBase(BaseEnv):
         self.assertIn(f"- 作者原话：「{self.gap_quotes['AAAA1111']}」", card)
         self.assertIn(
             f"- 中译：中译：{self.gap_quotes['AAAA1111'][:24]}".strip(), card)
+        translation_line = f"- 中译：{gap['translation_zh']}"
+        explanation = direction["narrative"]["gap_notes"][gap["gap_id"]]["explanation"]
+        translation_index = lines.index(translation_line)
+        self.assertEqual(lines[translation_index + 1], f"- 大白话：{explanation}")
+        self.assertEqual(lines[translation_index + 2], "- 页码：p.8（Conclusion）")
         self.assertIn("- 页码：p.8（Conclusion）", card)
         self.assertIn("- 当前状态：partial（置信度 high）", card)
         self.assertNotIn(CITATION_KEY, self.without_links(card),

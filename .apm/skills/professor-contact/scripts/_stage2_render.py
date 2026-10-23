@@ -883,6 +883,9 @@ def build(*, fail,
                 doc.add(("- 中译：", generator(did, card_id, "label")),
                         (str(gap.get("translation_zh")),
                          source(did, card_id, "translation_zh")))
+                if explanation:
+                    doc.add(("- 大白话：", generator(did, card_id, "label")),
+                            (explanation, narrative(did, card_id, "explanation")))
                 doc.add(("- 页码：p.", generator(did, card_id, "label")),
                         (str(gap.get("page")), source(did, card_id, "page")),
                         ("（", generator(did, card_id, "label")),
@@ -916,9 +919,6 @@ def build(*, fail,
                     doc.add_line(
                         "- ⚠ 未查证是否已被后续工作实现（unknown 原因见后续论文依据）",
                         generator(did, card_id, "warning"))
-                if explanation:
-                    doc.add(("- 大白话：", generator(did, card_id, "label")),
-                            (explanation, narrative(did, card_id, "explanation")))
                 doc.blank()
                 doc.add_line("   </details>", generator(did, card_id, "card_end"))
             if not d.get("gap_shortlist"):
