@@ -209,8 +209,8 @@
       },
       "original": {
         "owner": "ScholarWorkflow",
+        "ref": "main",
         "repo": "base-skills",
-        "rev": "3ab2ac188e625b8a8ae37b5fa318c579787c3d1e",
         "type": "github"
       }
     },
@@ -286,8 +286,8 @@
       },
       "original": {
         "owner": "ScholarWorkflow",
+        "ref": "main",
         "repo": "knowledge-tools",
-        "rev": "bdb0db128b7cfccc6a3b20a8d0acee8695d0e211",
         "type": "github"
       }
     },
@@ -496,8 +496,8 @@
       },
       "original": {
         "owner": "ScholarWorkflow",
+        "ref": "main",
         "repo": "pdf-processing-core",
-        "rev": "2be1bf850f29b7ccf7bd1b066ae7292aac33fc87",
         "type": "github"
       }
     },
@@ -522,8 +522,8 @@
       },
       "original": {
         "owner": "ScholarWorkflow",
+        "ref": "main",
         "repo": "professor-research",
-        "rev": "bb27533540715c44039c108302f11d3e00d6b62e",
         "type": "github"
       }
     },
@@ -602,8 +602,8 @@
       },
       "original": {
         "owner": "ScholarWorkflow",
+        "ref": "master",
         "repo": "zotero-tools",
-        "rev": "24eb6cf596c082ac005ccdd800b962fbb6a8e2c8",
         "type": "github"
       }
     }
