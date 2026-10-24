@@ -116,6 +116,23 @@ class Stage3ValidationIngestTests(Stage3DirectionGroupBase):
     def validator_block(self):
         return self.load_state().get("validator") or {}
 
+    def test_stale_direction_contract_cannot_be_upgraded_by_prose_correction(self):
+        self.render_two()
+        state = self.load_state()
+        state["generator_contract_version"] = "stage3-ideas-v2"
+        for direction in state["directions"]:
+            direction.pop("generator_contract_version", None)
+        write_json(self.prof_dir / CANDIDATE_STATE, state)
+        self.assertEqual(self.stage3_finalize(self.results_dir, "--direction-id", "dir_A")["status"], "ok")
+        self.validator_output([self.finding("候选 dir_B_1")])
+        self.assertEqual(self.record()["status"], "ok")
+        before = (self.prof_dir / CANDIDATE_STATE).read_bytes()
+        for payload in (self.correction_plan(), self.correction_finalize()):
+            self.assertEqual(payload["status"], "needs_refresh", payload)
+            self.assertEqual(payload["reason_code"], "validation_source_changed")
+            self.assertEqual(payload["direction_id"], "dir_B")
+        self.assertEqual((self.prof_dir / CANDIDATE_STATE).read_bytes(), before)
+
     # -- 1. single direction: pass ---------------------------------------
 
     def test_pass_round_records_terminal_result_without_correction(self):

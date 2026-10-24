@@ -217,7 +217,7 @@ class Issue55Stage3RuntimeAssetTests(unittest.TestCase):
             "schema": 2,
             "kind": "professor-contact-stage3-state",
             "identity_version": "direction-id-v1",
-            "generator_contract_version": "stage3-ideas-v2",
+            "generator_contract_version": verifier.STAGE3_GENERATOR_CONTRACT_VERSION,
             "directions": directions,
             "validator": {"results": {"DIR00001": {
                 "result": validation,
