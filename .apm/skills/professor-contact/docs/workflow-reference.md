@@ -218,6 +218,7 @@ flowchart LR
 
 - 默认逐 resolved `direction_id` 独立生成；显示名和 `collection_key` 不决定身份。
 - `gap_refs` 必须精确到 `(direction_id, item_key, gap_id)`。
+- 每方向 job 的 `supporting_papers` 携带包内已有 `facts_state`、`analysis_level` 和有效 `paper_facts`（缺失/失败为 null），不重读论文或重跑 Stage 2。future work 来源只是延伸锚点，额外支撑论文按事实中的具体基座/先例/边界作用选择，已有合法 gap 证据仍可按原规则支撑其来源论文，不以 `paper_facts` 可用性新增引用门槛；单篇足够可只用单篇，不凑数或固定篇数。生成契约 `stage3-ideas-v3` 使旧契约候选在既有刷新范围内重新生成，按方向记录生成版本，局部刷新不会把未选旧方向标为新版；之后同输入仍可复用。
 - cross-direction 候选是显式 opt-in；未传 `cross_direction_groups` 时不得偷偷生成跨方向 job 或 section。
 - profile 变化影响 Stage 3/4，而不要求重跑 Stage 2 学术事实。
 - **教授本地提交独立（issue #66）**：`stage3-finalize` 只读取/提交当前教授——候选状态与本地 Markdown 以一个本地事务写盘（Markdown 先安装、候选状态最后安装＝唯一提交标记；提交前普通失败恢复旧内容，提交后清理失败不回滚），绝不读写其它教授的状态、`套磁想法候选总览.md` 或 `_contact_projections.json`。其它教授状态异常、总览缺失/过期/被手改都不会阻塞、回滚或重判一次合法的教授本地提交。

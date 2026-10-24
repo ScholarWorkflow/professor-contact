@@ -77,6 +77,11 @@ def build(*, atomic_write,
           render_candidates_md,
           render_candidates_overview,
           canonical_professor_dir):
+    def _direction_contract_current(direction: dict, state: dict | None) -> bool:
+        return direction.get("generator_contract_version",
+                             (state or {}).get("generator_contract_version")) == \
+            STAGE3_GENERATOR_CONTRACT_VERSION
+
     def _stage3_selected_scope_keys(selection_path: Path, professor_dir: Path,
                                     by_ckey: dict) -> set:
         """Selected-refresh scope from one explicit professor-local selection container.
@@ -246,8 +251,8 @@ def build(*, atomic_write,
                     if direction_id_arg and did != direction_id_arg:
                         fail("validation_scope_not_in_evidence",
                              f"--direction-id {direction_id_arg!r} is not the failed scope {did!r}")
-                    if contract_changed or profile_changed \
-                            or input_fps.get(did) != pack_fps.get(did):
+                    if contract_changed or not _direction_contract_current(current, state) \
+                            or profile_changed or input_fps.get(did) != pack_fps.get(did):
                         soft_exit("needs_refresh", "validation_source_changed", direction_id=did)
                     correction[f"direction:{did}"] = row
                 elif scope["kind"] == "group":
@@ -300,6 +305,7 @@ def build(*, atomic_write,
                 input_fps.get(did) == pack_fps.get(did)
                 and not profile_changed
                 and old
+                and _direction_contract_current(old, state)
                 and old.get("stage3_status") == "ready"
                 and old.get("candidates"))
 
@@ -356,7 +362,11 @@ def build(*, atomic_write,
                     "supporting_papers": [
                         {"item_key": p["item_key"], "title": p.get("title"),
                          "year": p.get("year"), "authorship": p.get("authorship"),
-                         "named_by_user": bool(p.get("named_by_user"))}
+                         "named_by_user": bool(p.get("named_by_user")),
+                         "facts_state": p.get("facts_state"),
+                         "analysis_level": p.get("analysis_level"),
+                         "paper_facts": (p.get("paper_facts")
+                                         if p.get("facts_state") == "valid" else None)}
                         for p in direction_papers(pack, direction)],
                     "gaps": gap_lines,
                     "completed_gap_blacklist": blacklist,
@@ -366,6 +376,7 @@ def build(*, atomic_write,
                         "provenance": "每条候选必须带 kind:'direction' 和 direction_ids:[本方向 direction_id]；gap_refs 每条必须是 {direction_id, item_key, gap_id} 精确三元组，且 direction_id 就是本方向；papers[] 每篇 {item_key, direction_ids:[本方向], role, fit_note}，同一论文不得重复出现",
                         "gap_anchor": "gap_refs 只能引用 model_input.gaps / completed_gap_blacklist 里的精确 (item_key,gap_id)；done_by_self 只能以【我的延伸】+difference_point 差异点方式出现；partial 候选必须写 remaining_gap 关注点；unknown 候选必须带 unverified:true",
                         "papers": "候选 papers[] 只给 {item_key, direction_ids, role, fit_note}；标题/年份/署名由 runner 从输入包回填，禁止自写标题",
+                        "paper_selection": "future work 来源只是延伸锚点，不等于全部支撑论文。查看 supporting_papers 中本方向可用的 paper_facts，依据 facts_state=valid 且非空的事实判断额外论文的具体基座/先例/边界作用，有具体作用才纳入 papers[] 并在 role/fit_note 写清。已有合法 gap 证据仍可按原规则支撑其来源论文，不因 paper_facts 缺失或失败取消；不得从标题推断缺失的研究内容，也不补跑论文分析。单篇足够就用单篇，不凑数、不固定篇数、不要求完整比较报告",
                         "count": "generated 与 refined 模式都必须给 3-5 个可选候选；有用户笔记时其中恰好 1 条 origin='user_refined'（校准后的用户想法本身成为可选候选），其余为真正不同的备选",
                         "diversity": "候选之间切入点/所挂 gap 不重复",
                         "scope": "本任务只属于 direction_id 指向的这一个方向；跨方向组合不在本任务内，绝不混入 candidates[]"}}})
@@ -588,8 +599,12 @@ def build(*, atomic_write,
         if getattr(args, "validation_file", None) and profile_changed:
             # r13 §5.5-5: correction prose never rebinds the recorded profile.
             soft_exit("needs_refresh", "validation_source_changed")
-        old_directions = {d.get("direction_id"): d
+        old_directions = {d.get("direction_id"): dict(d)
                           for d in (state or {}).get("directions", []) if isinstance(d, dict)}
+        # A partial refresh must not certify retained legacy directions as current.
+        for old_direction in old_directions.values():
+            old_direction.setdefault("generator_contract_version",
+                                     (state or {}).get("generator_contract_version"))
         old_group_list = [g for g in (state or {}).get("cross_direction_groups", [])
                           if isinstance(g, dict)]
         old_groups = {(g.get("group_id") if isinstance(g, dict) else None): g
@@ -616,7 +631,8 @@ def build(*, atomic_write,
                     if direction_id_arg and did != direction_id_arg:
                         fail("validation_scope_not_in_evidence",
                              f"--direction-id {direction_id_arg!r} is not the failed scope {did!r}")
-                    if contract_changed or profile_changed or old_fps.get(did) != pack_fps.get(did):
+                    if contract_changed or not _direction_contract_current(current, state) \
+                            or profile_changed or old_fps.get(did) != pack_fps.get(did):
                         soft_exit("needs_refresh", "validation_source_changed", direction_id=did)
                     correction[f"direction:{did}"] = row
                 elif scope["kind"] == "group":
@@ -707,6 +723,7 @@ def build(*, atomic_write,
                 })
                 continue
             if old_direction and did not in correction_dids and not contract_changed \
+                    and _direction_contract_current(old_direction, state) \
                     and not profile_changed \
                     and old_fps.get(did) == pack_fps.get(did) \
                     and old_direction.get("stage3_status") == "ready" \
@@ -736,6 +753,7 @@ def build(*, atomic_write,
             checked["status"] = direction.get("status")
             checked["user_note_present"] = bool(direction.get("user_note"))
             checked["stage3_status"] = "ready"
+            checked["generator_contract_version"] = STAGE3_GENERATOR_CONTRACT_VERSION
             updated_directions.append(checked)
         # Cross-direction groups: only EXPLICITLY requested groups exist (issue #8
         # §6). A group survives when its recorded participant fingerprints + profile

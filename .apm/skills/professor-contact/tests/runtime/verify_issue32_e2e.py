@@ -33,7 +33,7 @@ PROFESSOR_STAGE_OUTPUTS = (
 INPUT_PACK_KIND = "professor-contact-stage2-input"
 CANDIDATE_STATE_KIND = "professor-contact-stage3-state"
 DIRECTION_IDENTITY_VERSION = "direction-id-v1"
-STAGE3_GENERATOR_CONTRACT_VERSION = "stage3-ideas-v2"
+STAGE3_GENERATOR_CONTRACT_VERSION = "stage3-ideas-v3"
 STAGE5_FINAL_NAMES = (
     "套磁邮件.md", "套磁邮件.txt", "套磁跟进邮件.md", "套磁跟进邮件.txt",
 )

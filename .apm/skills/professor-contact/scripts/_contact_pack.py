@@ -294,7 +294,8 @@ def build(*, fail,
                                        for c in entry.get("candidates") or []
                                        if isinstance(c, dict)]
             new_entry["stage3_status"] = "ready" if new_entry["candidates"] else "empty"
-            new_entry["generator_contract_version"] = STAGE3_GENERATOR_CONTRACT_VERSION
+            new_entry["generator_contract_version"] = entry.get(
+                "generator_contract_version", raw.get("generator_contract_version"))
             directions.append(new_entry)
             old_fps = raw.get("input_fingerprints") or {}
             fp = old_fps.get(did) or old_fps.get(entry.get("collection_key"))
@@ -328,7 +329,8 @@ def build(*, fail,
         state["schema"] = CANDIDATE_STATE_SCHEMA
         state["kind"] = CANDIDATE_STATE_KIND
         state["identity_version"] = DIRECTION_IDENTITY_VERSION
-        state["generator_contract_version"] = STAGE3_GENERATOR_CONTRACT_VERSION
+        # Identity migration does not certify regeneration under the current contract.
+        state["generator_contract_version"] = raw.get("generator_contract_version")
         state["directions"] = directions
         state["input_fingerprints"] = fingerprints
         state["cross_direction_groups"] = list(grouped.values())

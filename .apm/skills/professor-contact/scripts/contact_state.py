@@ -408,7 +408,7 @@ EMAIL_PACK_SCHEMA = 2
 # apart instead of treating every file as the new authority.
 STAGE4_LOCAL_SCHEMA = 3
 DIRECTION_IDENTITY_VERSION = "direction-id-v1"
-STAGE3_GENERATOR_CONTRACT_VERSION = "stage3-ideas-v2"
+STAGE3_GENERATOR_CONTRACT_VERSION = "stage3-ideas-v3"
 STAGE3_CROSS_CONTRACT_VERSION = "stage3-cross-v1"
 INPUT_PACK_KIND = "professor-contact-stage2-input"
 CANDIDATE_STATE_KIND = "professor-contact-stage3-state"

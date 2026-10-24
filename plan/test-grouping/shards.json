@@ -410,6 +410,11 @@
      "signals": {
       "stage4": 12
      }
+    },
+    {
+     "name": "test_stage3_supporting_papers",
+     "stage": "stage3",
+     "tests": 3
     }
    ]
   },
