@@ -41,3 +41,13 @@ Canonical plan: plan/stage3-supporting-paper-selection/implementation-plan.md.
 The implementation is ready for an authorized commit/PR and normal current-head merge checks, not immediate merging. No additional open-ended business test is requested. After publication, verify the actual required CI/approvals for that head; investigate a remaining missing-yq prerequisite only where it blocks applicable checks. Any content change requires only affected-scope re-review.
 
 Reviewer ran no formal tests, changed no product/test files, and published no comment, approval, or merge.
+
+## PR #138 incremental review, 2026-10-24
+
+Published head `e10f113b4341b1d1981d6b97100d11f5ca2ec4f1`, base `1af814fed6643a27bc1348dcee4d69f13723b253`: independently fetched tree `582c9250ac97b7731b31535d7834a9bf892b89a1` exactly matches reviewed local `d39bd2c`. The prepublication statements above are historical; no content drift occurred on publication.
+
+CI [40084864572](https://github.com/ScholarWorkflow/professor-contact/actions/runs/40084864572): shards 1/2/4 passed; shard3 had three failures and aggregate `test` failed. All 52 full-verifier tests passed in shard2, closing the local missing-yq verification gap. Issue74 formal was skipped, not passed.
+
+REVIEW_DEFECT / PROOF_IMPLEMENTATION_DEFECT: the prior review missed `_write_state` in `test_issue55_stage3_runtime_assets.py`, a current-state fixture still hard-coding v2. The current v3 verifier correctly rejected it in three routing/CLI success tests. The minimal correction changes only that field to `verifier.STAGE3_GENERATOR_CONTRACT_VERSION`; production code and all assertions remain unchanged.
+
+Incremental review PASS: the existing affected module's structured report records 16/16 PASS, including all three prior failures; result-record changes are accurate. Unaffected implementation, plan and test conclusions are reused. No additional test matrix or live-model claim is introduced. Formal merge remains NOT_READY until this correction is published and applicable required CI passes on the corrected head; no approval or merge has been performed.
