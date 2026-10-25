@@ -100,7 +100,7 @@ class Review3RegressionTests(unittest.TestCase):
         args.jobs = jobs
         args.professor = None
         support.add_paper_context(args, self.root)
-        return handoff.build_bundle(args)
+        return support.legacy_embedded_bundle(args, handoff)
 
     def _write_future_inputs(self, required_pages):
         self.prepare.write_text(
@@ -143,7 +143,7 @@ class Review3RegressionTests(unittest.TestCase):
         args.jobs = jobs
         args.professor = None
         support.add_paper_context(args, self.root)
-        return handoff.build_bundle(args)
+        return support.legacy_embedded_bundle(args, handoff)
 
     def _manifest(self, bundle):
         with zipfile.ZipFile(bundle["bundle_path"]) as zf:

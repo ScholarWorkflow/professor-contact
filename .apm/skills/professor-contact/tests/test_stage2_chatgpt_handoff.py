@@ -100,7 +100,7 @@ class HandoffTests(unittest.TestCase):
         args.jobs = jobs_file
         args.professor = None
         support.add_paper_context(args, self.root)
-        return handoff.build_bundle(args)
+        return support.legacy_embedded_bundle(args, handoff)
 
     def _manifest(self, bundle):
         with zipfile.ZipFile(bundle["bundle_path"]) as zf:
@@ -162,7 +162,7 @@ class HandoffTests(unittest.TestCase):
         job.update(extra)
         return job
 
-    def test_pdf_bundle_is_deterministic_and_portable(self):
+    def test_legacy_pdf_bundle_is_deterministic_and_portable(self):
         job = self._pdf_job(
             research_direction={"collection_key": "C", "name_ja": "ja", "name_zh": "zh", "user_note": "note"},
             ocr_file=str(self.ocr.resolve()),

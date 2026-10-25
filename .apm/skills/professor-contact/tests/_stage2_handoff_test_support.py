@@ -132,3 +132,40 @@ def add_paper_context(args, root):
         (skill / "scripts" / name).write_text("# reference fixture\n")
     args.paper_analysis_skill_dir = skill
     args.paper_analysis_agent = agent
+
+
+def legacy_embedded_bundle(args, handoff):
+    """Construct the pre-text transport fixture for existing legacy-import tests.
+
+    Current build still validates inputs; only this fixture embeds old PDFs.
+    New transport behavior is checked separately in test_stage2_chatgpt_handoff_text.
+    """
+    import json
+    import zipfile
+    result = handoff.build_bundle(args)
+    record = json.loads(Path(result['local_manifest_path']).read_text())
+    manifest = record['manifest']
+    for job in manifest['jobs']:
+        job.pop('source_mode', None)
+        job.pop('text_transport', None)
+        job['job_id'] = handoff._expected_job_id(job)
+    fingerprint = handoff._source_fingerprint(manifest['professor'], manifest['jobs'])
+    manifest.update(source_fingerprint=fingerprint, handoff_id=fingerprint[:20])
+    root = args.professor_dir / '论文分析' / '_chatgpt_handoff'
+    archive_path = root / f"stage2-{manifest['handoff_id']}.zip"
+    raw = {j['item_key']: j for j in json.loads(args.jobs.read_text())['jobs']}
+    context, files = handoff.instruction_context(args.paper_analysis_skill_dir, args.paper_analysis_agent)
+    files.update({'manifest.json': handoff._json_bytes(manifest), 'context.json': handoff._json_bytes(context),
+                  'instructions.md': handoff._instructions().encode()})
+    for job in manifest['jobs']:
+        spec = raw[job['item_key']]
+        files[job['input_path']] = Path(spec['input_path']).read_bytes()
+        files[str(Path(job['input_path']).parent / 'job.json')] = handoff._json_bytes(job)
+        if job.get('future_work'):
+            files[job['future_work']['prepare_path']] = Path(spec['future_work_prepare']).read_bytes()
+            files[job['future_work']['candidates_path']] = Path(spec['future_work_candidates']).read_bytes()
+    with zipfile.ZipFile(archive_path, 'w') as zf:
+        for rel, data in sorted(files.items()):
+            handoff._zip_add_bytes(zf, rel, data)
+    handoff._atomic_json(root / '_latest.json', {'schema': 1, 'handoff_id': manifest['handoff_id'], 'source_fingerprint': fingerprint})
+    return {**result, 'handoff_id': manifest['handoff_id'], 'source_fingerprint': fingerprint, 'bundle_path': str(archive_path)}
