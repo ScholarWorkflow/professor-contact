@@ -295,8 +295,11 @@ For each flagged direction:
    **B. build current bundle（无论 continue/wait 都做）**
    ```bash
    <professor-contact-skill-dir>/scripts/stage2_chatgpt_handoff build \
-     --professor-dir "<教授目录>" --jobs "/tmp/<教授名>_stage2_handoff_jobs.json" --professor "<教授名>"
+     --professor-dir "<教授目录>" --jobs "/tmp/<教授名>_stage2_handoff_jobs.json" --professor "<教授名>" \
+     --paper-analysis-skill-dir "<paper-analysis-skill-dir>" \
+     --paper-analysis-agent "<本次已加载 paper-analysis 的 agent 文件绝对路径>"
    ```
+   `paper-analysis-skill-dir` 使用本次实际加载的依赖目录。agent 文件使用同一安装的原始 `paper-analysis.agent.md`（APM/开发仓库的 `.apm/agents/`）；不要传运行时全局配置，不从另一个 checkout 拼版本。缺文件时明确报告缺源，不联网补包。export 原样附 skill、agent 与四个已引用 helper 的源码供网页查 schema；本地执行与 sidecar finalize 留给 importer。
    只解析 compact JSON 的 `handoff_id/source_fingerprint/bundle_path/jobs`。把**本轮这次 build 返回的** `handoff_id` 与 `source_fingerprint` 保存为该 local continue plan 的精确绑定，后面的 `local-lease-acquire` 必须原样传回；**禁止在 acquire 时用当时的 `_latest` 代替本轮 build 结果**。bundle 固定落在 `<教授目录>/论文分析/_chatgpt_handoff/`；同输入得到同 logical id，changed PDF/abstract/note/scope/local baseline 得到新 id。**bundle build 不得把 PDF/abstract 正文读入本 agent context。**
 
    **C. resume import（仅 `chatgpt_result` 提供时）**

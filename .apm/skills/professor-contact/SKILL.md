@@ -120,6 +120,8 @@ Stage 2 的 handoff 是**可选执行通道，不是第二套工作流**。`套�
 
 `<教授目录>/论文分析/_chatgpt_handoff/stage2-<handoff_id>.zip`
 
+ZIP 同时原样附本次实际加载的 paper-analysis skill、agent 指令及已引用 helper 源码；`context.json` 记录包内路径与 SHA256，网页按 `instructions.md` 读取。导出需要同一安装的 skill/agent 路径，缺源明确报错；不附 profile、全局配置或无关依赖，不联网补齐。运行入口与 sidecar finalize 仍由本地负责。
+
 若确有待分析 jobs，analyzer 返回 `result=needs_external_result`、`reason_code=chatgpt_result_required`、`handoff_id`、`bundle_path`，这是软停止而非错误。零 jobs 时无需等待，继续普通 Stage 2。
 
 用户把该 ZIP 交给 ChatGPT/外部处理并拿回 `stage2-<handoff_id>-result.zip` 后，重新调用同一教授的 Stage 2，并传 `chatgpt_handoff: wait` + `chatgpt_result: <result.zip绝对路径>`。analyzer **先按当前本地输入重新确定性构建 current bundle，再用 current bundle 校验 result**：因此 PDF/abstract/note/scope/local baseline 任一变化都会改变 handoff/source fingerprint，使旧 result 自动拒绝。匹配结果只会被安装到普通 `论文分析/...md`、本地 finalize 的 `.future_work.json`、经本地 `facts.py finalize` 验证落盘的 `.facts.json`（PDF fulltext job 必须带 facts 草稿；OCR-only/abstract-only job 显式无 facts 契约，不伪造、不本地补跑）与 `_index.json`；随后继续 sidecar/facts/`stage2-plan`/`stage2-finalize`，下游不因执行者来自 handoff 而分叉——本地与 handoff 两条路径产出同一规范化 paper-facts 形状。

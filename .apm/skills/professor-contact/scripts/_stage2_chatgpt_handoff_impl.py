@@ -40,6 +40,40 @@ REQUIRED_ANALYSIS_HEADINGS = (
 )
 
 
+# These are the four helpers referenced by the current paper-analysis contract.
+# They are reference material for schemas; execution/finalization stays local.
+REFERENCES = ("paper_input.py", "pdf_runtime.py", "future_work.py", "facts.py")
+
+
+def instruction_context(skill_dir: Path, agent_file: Path) -> tuple[dict, dict[str, bytes]]:
+    if not skill_dir or not agent_file:
+        raise ValueError("paper_analysis_context_missing: supply the loaded skill and agent paths")
+    skill_dir, agent_file = Path(skill_dir), Path(agent_file)
+    if agent_file.name not in {"paper-analysis.agent.md", "paper-analysis.toml"}:
+        raise ValueError("paper_analysis_context_invalid: select only the paper-analysis agent file")
+    files = {}
+    sources = {"SKILL.md": skill_dir / "SKILL.md"}
+    sources.update({f"scripts/{name}": skill_dir / "scripts" / name for name in REFERENCES})
+    for rel, path in sources.items():
+        if not path.is_file():
+            raise ValueError(f"paper_analysis_context_missing: {rel}")
+        files[f"context/paper-analysis/{rel}"] = path.read_bytes()
+    if not agent_file.is_file():
+        raise ValueError("paper_analysis_context_missing: paper-analysis agent")
+    agent_bytes = agent_file.read_bytes()
+    if agent_file.suffix == ".toml":
+        import tomllib
+        agent = tomllib.loads(agent_bytes.decode("utf-8"))
+        # Never package config.toml, MCP/environment settings or unrelated agents.
+        allowed = {"name", "developer_instructions", "description", "model", "model_reasoning_effort"}
+        if set(agent) - allowed or not isinstance(agent.get("developer_instructions"), str):
+            raise ValueError("paper_analysis_context_invalid: agent TOML contains unsupported configuration")
+    agent_path = f"context/paper-analysis/{agent_file.name}"
+    files[agent_path] = agent_bytes
+    hashes = {name: hashlib.sha256(data).hexdigest() for name, data in sorted(files.items())}
+    return {"schema": 1, "source": "caller-selected installed paper-analysis", "skill": "context/paper-analysis/SKILL.md", "agent": agent_path, "sha256": hashes}, files
+
+
 def _json_bytes(value: Any) -> bytes:
     return (json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8")
 
@@ -415,6 +449,10 @@ def build_bundle(args: argparse.Namespace) -> dict[str, Any]:
     # enumeration/caller ordering must therefore not affect manifest/fingerprint/ZIP bytes.
     normalized.sort(key=lambda job: job["item_key"])
     manifest = _build_manifest(professor, normalized)
+    context, context_files = instruction_context(
+        getattr(args, "paper_analysis_skill_dir", None),
+        getattr(args, "paper_analysis_agent", None),
+    )
 
     root = professor_dir / "论文分析" / "_chatgpt_handoff"
     bundle_dir = root / f"stage2-{manifest['handoff_id']}"
@@ -425,6 +463,10 @@ def build_bundle(args: argparse.Namespace) -> dict[str, Any]:
     bundle_dir.mkdir(parents=True)
     _atomic_json(bundle_dir / "manifest.json", manifest)
     _atomic_write(bundle_dir / "instructions.md", _instructions().encode("utf-8"))
+
+    _atomic_json(bundle_dir / "context.json", context)
+    for rel, data in context_files.items():
+        _atomic_write(bundle_dir / rel, data)
 
     by_item = {job["item_key"]: job for job in normalized}
     for entry in manifest["jobs"]:
@@ -974,6 +1016,8 @@ def _parser() -> argparse.ArgumentParser:
     build.add_argument("--professor-dir", required=True, type=Path)
     build.add_argument("--jobs", required=True, type=Path)
     build.add_argument("--professor")
+    build.add_argument("--paper-analysis-skill-dir", required=True, type=Path)
+    build.add_argument("--paper-analysis-agent", required=True, type=Path)
     imp = sub.add_parser("import")
     imp.add_argument("--professor-dir", required=True, type=Path)
     imp.add_argument("--bundle", required=True, type=Path)

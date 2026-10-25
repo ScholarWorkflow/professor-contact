@@ -70,6 +70,7 @@ class ReviewRegressionTests(unittest.TestCase):
         args.professor_dir = self.prof
         args.jobs = jobs_path
         args.professor = None
+        support.add_paper_context(args, self.root)
         return handoff.build_bundle(args)
 
     def _manifest(self, bundle: dict) -> dict:

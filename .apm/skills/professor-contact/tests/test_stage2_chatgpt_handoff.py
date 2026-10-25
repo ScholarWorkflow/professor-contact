@@ -1,3 +1,4 @@
+import hashlib
 import importlib.util
 import json
 import os
@@ -98,6 +99,7 @@ class HandoffTests(unittest.TestCase):
         args.professor_dir = self.prof
         args.jobs = jobs_file
         args.professor = None
+        support.add_paper_context(args, self.root)
         return handoff.build_bundle(args)
 
     def _manifest(self, bundle):
@@ -290,6 +292,21 @@ class HandoffTests(unittest.TestCase):
         self.assertEqual(facts["analysis"], "T.md")
         self.assertEqual(facts["input_fingerprint"], f"sha256:{job['input_sha256']}")
         self.assertEqual(facts["research_problem"], "problem")
+
+    def test_legacy_bundle_without_context_still_imports(self):
+        bundle = self._build([self._pdf_job()])
+        job = self._manifest(bundle)["jobs"][0]
+        path = Path(bundle["bundle_path"])
+        with zipfile.ZipFile(path) as zf:
+            legacy = {name: zf.read(name) for name in zf.namelist()
+                      if name != "context.json" and not name.startswith("context/")}
+        with zipfile.ZipFile(path, "w") as zf:
+            for name, data in legacy.items():
+                zf.writestr(name, data)
+        result = self._result_zip(bundle, [{
+            "job_id": job["job_id"], "item_key": "ABC", "input_sha256": job["input_sha256"], "status": "ok"
+        }])
+        self.assertEqual(self._import(bundle, result)["status"], "imported")
 
     def test_tampered_bundled_carrier_is_rejected_by_actual_byte_hash(self):
         bundle = self._build([self._pdf_job()])
@@ -613,6 +630,69 @@ class HandoffTests(unittest.TestCase):
         self.assertIn("uv run", agent)
         self.assertIn(".facts.json", skill)
         self.assertIn("paper_facts", skill)
+
+
+class ContextTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        self.args = support.Args()
+        support.add_paper_context(self.args, self.root)
+
+    def context(self):
+        return handoff.instruction_context(self.args.paper_analysis_skill_dir, self.args.paper_analysis_agent)
+
+    def test_verbatim_sources_and_reference_paths(self):
+        raw = '# 逐节总结\r\n先说明本节做什么。\r\n'.encode()
+        self.args.paper_analysis_agent.write_bytes(raw)
+        (self.args.paper_analysis_skill_dir / 'secret.env').write_text('DO NOT COPY')
+        metadata, files = self.context()
+        self.assertEqual(files[metadata['agent']], raw)
+        self.assertEqual(len(files), 6)
+        for path, data in files.items():
+            self.assertEqual(metadata['sha256'][path], hashlib.sha256(data).hexdigest())
+        self.assertNotIn(str(self.root), json.dumps(metadata))
+        self.assertFalse(any('secret' in p for p in files))
+        self.assertIn('context/paper-analysis/scripts/facts.py', files)
+
+    def test_nix_agent_is_copied_without_rewriting(self):
+        agent = self.root / 'paper-analysis.toml'
+        raw = b'name = "paper-analysis"\ndescription = "Analyze"\ndeveloper_instructions = "Use the supplied template."\n'
+        agent.write_bytes(raw)
+        self.args.paper_analysis_agent = agent
+        metadata, files = self.context()
+        self.assertEqual(files[metadata['agent']], raw)
+        agent.write_bytes(raw + b'\n[mcp_servers.private]\nenv = {TOKEN = "private"}\n')
+        with self.assertRaisesRegex(ValueError, 'unsupported configuration'):
+            self.context()
+
+    def test_missing_source_fails_before_export(self):
+        (self.args.paper_analysis_skill_dir / 'scripts/facts.py').unlink()
+        with self.assertRaisesRegex(ValueError, 'paper_analysis_context_missing: scripts/facts.py'):
+            self.context()
+        with self.assertRaisesRegex(ValueError, 'paper_analysis_context_missing'):
+            handoff.instruction_context(None, None)
+
+    def test_zip_includes_context_but_preserves_job_contract(self):
+        self.args.professor_dir = self.root / 'Professor'
+        self.args.professor_dir.mkdir()
+        self.args.jobs = self.root / 'jobs.json'
+        self.args.jobs.write_text('{"schema":1,"jobs":[]}')
+        self.args.professor = 'Professor'
+        result = handoff.build_bundle(self.args)
+        with zipfile.ZipFile(result['bundle_path']) as zf:
+            manifest = json.loads(zf.read('manifest.json'))
+            metadata = json.loads(zf.read('context.json'))
+            self.assertEqual(manifest['jobs'], [])
+            handoff._verify_manifest_integrity(manifest)
+            for path, digest in metadata['sha256'].items():
+                self.assertEqual(hashlib.sha256(zf.read(path)).hexdigest(), digest)
+            self.assertIn(b'developer_instructions', zf.read('instructions.md'))
+            self.assertIn(b'exact-items-v1', zf.read('instructions.md'))
+            self.assertIn(handoff.RESULT_KIND.encode(), zf.read('instructions.md'))
+            self.assertIn(b'job_id.strip()', zf.read('instructions.md'))
+            self.assertIn(b'"schema": 1', zf.read('instructions.md'))
 
 
 if __name__ == "__main__":
