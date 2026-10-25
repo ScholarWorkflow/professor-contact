@@ -120,3 +120,15 @@ class FakeUvEnvironment:
             os.environ.pop("UV_TEST_LOG", None)
         else:
             os.environ["UV_TEST_LOG"] = self._old_uv_test_log
+
+
+def add_paper_context(args, root):
+    skill = root / "paper-context"
+    (skill / "scripts").mkdir(parents=True, exist_ok=True)
+    (skill / "SKILL.md").write_text("# paper-analysis\nUse the paper-analysis agent.\n")
+    agent = root / "paper-analysis.agent.md"
+    agent.write_text("# Paper analysis\nFollow the full Markdown template.\n")
+    for name in ("paper_input.py", "pdf_runtime.py", "future_work.py", "facts.py"):
+        (skill / "scripts" / name).write_text("# reference fixture\n")
+    args.paper_analysis_skill_dir = skill
+    args.paper_analysis_agent = agent

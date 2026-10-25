@@ -708,6 +708,10 @@ def _instructions() -> str:
 
 This ZIP contains only the exact Stage-2 per-paper analysis jobs selected by the local workflow.
 
+Read `context.json`, then its `skill` and `agent` files in full. They are verbatim snapshots of the caller-selected paper-analysis installation; per-file SHA256 values identify the exact supplied version without requiring network access. For a TOML agent, read `developer_instructions`. Follow its analysis roles, Markdown template and writing rules; the supplied `scripts/` files document canonical input and draft schemas.
+
+Web adaptation: use the bundled inputs and perform the semantic analysis described by that agent (parallel roles when available, otherwise the same roles sequentially). Registered local agents, fixed Nix launchers, uv/MCP, local caches and helper execution are local-runtime operations; do not claim they ran on the web. Return drafts under the paths below. The local importer handles validation, sidecar finalization and installation. The transport's existing exact-items/OCR selection contract below remains applicable; broader source-selection behavior in an installed agent does not enlarge this handoff's candidate set. Report unavailable evidence or capabilities as partial/error.
+
 For each `manifest.json.jobs[]` entry:
 1. Analyze only the bundled `input_path`; do not use Zotero/MCP or invent missing local context.
 2. Preserve `job_id`, `item_key`, `input_sha256`, direction IDs, and target identity exactly.
@@ -717,6 +721,25 @@ For each `manifest.json.jobs[]` entry:
    - `ocr-excerpt-v1`: OCR every page in `future_work.ocr_required_pages` into `future_work_ocr.json` as `{\"pages\":{\"N\":\"text\"}}`. Return `future_work_selections.json` for selections whose page IS in `ocr_required_pages`, using only `{page,quote_excerpt,translation_zh,source}`; the list may be empty, but the file must be present. Do NOT guess candidate ids for OCR pages. If you also select any bundled exact candidate from a readable page whose page is NOT in `ocr_required_pages`, return those readable-page selections in `future_work_items.json` using the ordinary exact-item fields. The local importer runs `merge-ocr`, keeps the readable-page candidates, uniquely binds OCR page+excerpt selections to regenerated candidates, combines both selection sets, then runs `validate` and `finalize`.
 5. For every PDF job with `expected.facts=true`, also return `facts.json`: the compact structured-facts draft already established during the same analysis pass — `paper` (title/authors/year/venue/doi), `research_problem`, `research_object`, `approach`, `findings[]`, `contributions[]`, `topic_terms[]`, `limitations[]`, optional `source_anchors` and `confidence`. Never include `future_work_ids`; the local importer joins them from the validated future-work sidecar. Never re-read the paper a second time just to build the draft.
 6. Bind completed rows in `result_manifest.json` with schema/kind/handoff/source/job/item/input hash and `status=ok|partial|error`.
+
+`<safe-job>` is computed from `job_id.strip()`: retain each Unicode alphanumeric character and `-_.`, replace every other character with `_`, truncate to the first 120 characters, and use `job` if empty (Python: `"".join(c if c.isalnum() or c in "-_." else "_" for c in job_id.strip())[:120] or "job"`). The result ZIP root contains `result_manifest.json` and `results/<safe-job>/...` directly, without an enclosing directory.
+
+Use this exact result-manifest shape, copying identity values from the supplied manifest and job (include one row per attempted job):
+```json
+{
+  "schema": 1,
+  "kind": "professor-contact-stage2-chatgpt-result",
+  "handoff_id": "<manifest.handoff_id>",
+  "source_fingerprint": "<manifest.source_fingerprint>",
+  "results": [{
+    "job_id": "<job.job_id>",
+    "item_key": "<job.item_key>",
+    "input_sha256": "<job.input_sha256>",
+    "status": "ok"
+  }]
+}
+```
+Use `partial` or `error` instead of `ok` when appropriate; do not invent identities or add `result_dir`.
 
 PDF fulltext jobs are not complete without their future-work payload and their facts draft. OCR-only and abstract-only jobs do not have a PDF-grounded future-work or facts contract (`expected.facts=false`): any external Future Work prose in their Markdown is discarded locally and cannot become a gap source, and no facts sidecar is fabricated for them. Do not return `_index.json`, `套磁候选输入.json`, or a ready-made `.future_work.json`/`.facts.json` as authoritative state. The local importer independently validates/finalizes PDF future-work evidence and facts drafts through the deterministic paper-analysis helpers and installs accepted results into the ordinary Stage-2 artifacts.
 """
