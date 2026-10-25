@@ -94,7 +94,7 @@ class Review4RegressionTests(unittest.TestCase):
         args.jobs = jobs
         args.professor = None
         support.add_paper_context(args, self.root)
-        return handoff.build_bundle(args)
+        return support.legacy_embedded_bundle(args, handoff)
 
     def _manifest(self, bundle):
         with zipfile.ZipFile(bundle["bundle_path"]) as zf:

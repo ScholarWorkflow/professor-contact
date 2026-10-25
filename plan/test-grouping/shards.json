@@ -256,6 +256,10 @@
      "seconds": 0.0,
      "tests": 21,
      "signals": {}
+    },
+    {
+     "name": "test_stage2_chatgpt_handoff_text",
+     "stage": "stage2"
     }
    ]
   },

@@ -234,6 +234,18 @@ def _verify_manifest_integrity(manifest: dict[str, Any]) -> None:
         elif future_work is not None:
             raise ValueError("external_result_hash_mismatch")
 
+        if 'source_mode' in job and (carrier != 'pdf' or job['source_mode'] != 'local'):
+            raise ValueError('external_result_hash_mismatch')
+        transport = job.get('text_transport')
+        if transport is not None:
+            expected_path = f"papers/{_impl._safe_component(item_key)}/paper.txt"
+            if (job.get('source_mode') != 'local' or not isinstance(transport, dict)
+                or transport.get('path') != expected_path or not _is_sha256(transport.get('sha256'))
+                or transport.get('format') != 'pdf-pages-v1'
+                or type(transport.get('page_count')) is not int or transport['page_count'] < 1
+                or not isinstance(transport.get('missing_text_pages'), list)
+                or any(type(p) is not int or p < 1 or p > transport['page_count'] for p in transport['missing_text_pages'])):
+                raise ValueError('external_result_hash_mismatch')
         expected_job_id = _expected_job_id(job)
         if job.get("job_id") != expected_job_id or expected_job_id in job_ids:
             raise ValueError("external_result_hash_mismatch")
@@ -296,6 +308,10 @@ def _build_manifest(professor: str, normalized_jobs: list[dict[str, Any]]) -> di
                 "ocr_required_pages": required_pages,
                 "selection_contract": "ocr-excerpt-v1" if required_pages else "exact-items-v1",
             }
+        if job.get('source_mode') == 'local':
+            entry['source_mode'] = 'local'
+        if job.get('text_transport'):
+            entry['text_transport'] = job['text_transport']
         entry["job_id"] = _expected_job_id(entry)
         jobs.append(entry)
 
@@ -319,9 +335,9 @@ def _validate_manifest(value: Any, kind: str) -> dict[str, Any]:
     return manifest
 
 
-def _verify_bundled_input(bundle_root: Path, job: dict[str, Any]) -> Path:
-    path = _ORIG_VERIFY_BUNDLED_INPUT(bundle_root, job)
-    job_json = path.parent / "job.json"
+def _verify_bundled_input(bundle_root: Path, job: dict[str, Any], source_path: Path | None = None) -> Path:
+    path = _ORIG_VERIFY_BUNDLED_INPUT(bundle_root, job, source_path)
+    job_json = (bundle_root / job["input_path"]).parent / "job.json"
     try:
         if not job_json.is_file() or _impl._load_json(job_json) != job:
             raise ValueError("external_result_hash_mismatch")
@@ -406,16 +422,20 @@ def _current_handoff_manifest_unlocked(professor_dir: Path) -> dict[str, Any]:
     ):
         raise ValueError("stage2_plan_stale")
     bundle = root / f"stage2-{handoff_id}.zip"
-    if not bundle.is_file():
+    record = root / f"stage2-{handoff_id}.local.json"
+    if not record.is_file() and not bundle.is_file():
         raise ValueError("stage2_plan_stale")
     try:
-        with zipfile.ZipFile(bundle) as archive:
-            manifests = [info for info in archive.infolist() if info.filename == "manifest.json"]
-            if len(manifests) != 1 or manifests[0].file_size > 10 * 1024 * 1024:
-                raise ValueError("stage2_plan_stale")
-            payload = json.loads(archive.read(manifests[0]).decode("utf-8"))
+        if record.is_file():
+            payload = _impl._load_json(record)["manifest"]
+        else:
+            with zipfile.ZipFile(bundle) as archive:
+                manifests = [info for info in archive.infolist() if info.filename == "manifest.json"]
+                if len(manifests) != 1 or manifests[0].file_size > 10 * 1024 * 1024:
+                    raise ValueError("stage2_plan_stale")
+                payload = json.loads(archive.read(manifests[0]).decode("utf-8"))
         manifest = _validate_manifest(payload, _impl.BUNDLE_KIND)
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError, zipfile.BadZipFile, ValueError) as error:
+    except (OSError, KeyError, TypeError, UnicodeDecodeError, json.JSONDecodeError, zipfile.BadZipFile, ValueError) as error:
         if isinstance(error, ValueError) and str(error) == "stage2_plan_stale":
             raise
         raise ValueError("stage2_plan_stale") from error
@@ -713,12 +733,12 @@ Read `context.json`, then its `skill` and `agent` files in full. They are verbat
 Web adaptation: use the bundled inputs and perform the semantic analysis described by that agent (parallel roles when available, otherwise the same roles sequentially). Registered local agents, fixed Nix launchers, uv/MCP, local caches and helper execution are local-runtime operations; do not claim they ran on the web. Return drafts under the paths below. The local importer handles validation, sidecar finalization and installation. The transport's existing exact-items/OCR selection contract below remains applicable; broader source-selection behavior in an installed agent does not enlarge this handoff's candidate set. Report unavailable evidence or capabilities as partial/error.
 
 For each `manifest.json.jobs[]` entry:
-1. Analyze only the bundled `input_path`; do not use Zotero/MCP or invent missing local context.
-2. Preserve `job_id`, `item_key`, `input_sha256`, direction IDs, and target identity exactly.
+1. For PDF jobs, read `text_transport.path`: it contains the original text with physical PDF page markers. `input_path` names the original PDF logically; the PDF stays local and is not in this ZIP. Other jobs use `input_path`. Do not use Zotero/MCP or invent missing local context. Disclose `text_transport.missing_text_pages` and any needed diagrams/tables/formulas unavailable in text; return partial/error when these prevent supported conclusions.
+2. Preserve `job_id`, `item_key`, `input_sha256`, direction IDs, and target identity exactly. For PDF jobs input_sha256 identifies the original PDF, while text_transport.sha256 identifies text bytes; do not replace either or request the original PDF for local import. New text-only jobs do not ask you to OCR images that were not supplied.
 3. Write the ordinary paper-analysis Markdown template to `results/<safe-job>/analysis.md`, where `<safe-job>` is the deterministic safe form of that exact `job_id`; do not add or override a `result_dir` field in the result row.
 4. For every PDF job with `expected.future_work=true`, follow `future_work.selection_contract` exactly:
    - `exact-items-v1`: return `future_work_items.json` selected/translated only from the bundled exact candidates. `id` may be omitted; the local helper derives/verifies it.
-   - `ocr-excerpt-v1`: OCR every page in `future_work.ocr_required_pages` into `future_work_ocr.json` as `{\"pages\":{\"N\":\"text\"}}`. Return `future_work_selections.json` for selections whose page IS in `ocr_required_pages`, using only `{page,quote_excerpt,translation_zh,source}`; the list may be empty, but the file must be present. Do NOT guess candidate ids for OCR pages. If you also select any bundled exact candidate from a readable page whose page is NOT in `ocr_required_pages`, return those readable-page selections in `future_work_items.json` using the ordinary exact-item fields. The local importer runs `merge-ocr`, keeps the readable-page candidates, uniquely binds OCR page+excerpt selections to regenerated candidates, combines both selection sets, then runs `validate` and `finalize`.
+   - Legacy full-PDF bundles only: `ocr-excerpt-v1`: OCR every page in `future_work.ocr_required_pages` into `future_work_ocr.json` as `{\"pages\":{\"N\":\"text\"}}`. Return `future_work_selections.json` for selections whose page IS in `ocr_required_pages`, using only `{page,quote_excerpt,translation_zh,source}`; the list may be empty, but the file must be present. Do NOT guess candidate ids for OCR pages. If you also select any bundled exact candidate from a readable page whose page is NOT in `ocr_required_pages`, return those readable-page selections in `future_work_items.json` using the ordinary exact-item fields. The local importer runs `merge-ocr`, keeps the readable-page candidates, uniquely binds OCR page+excerpt selections to regenerated candidates, combines both selection sets, then runs `validate` and `finalize`.
 5. For every PDF job with `expected.facts=true`, also return `facts.json`: the compact structured-facts draft already established during the same analysis pass — `paper` (title/authors/year/venue/doi), `research_problem`, `research_object`, `approach`, `findings[]`, `contributions[]`, `topic_terms[]`, `limitations[]`, optional `source_anchors` and `confidence`. Never include `future_work_ids`; the local importer joins them from the validated future-work sidecar. Never re-read the paper a second time just to build the draft.
 6. Bind completed rows in `result_manifest.json` with schema/kind/handoff/source/job/item/input hash and `status=ok|partial|error`.
 
@@ -756,6 +776,8 @@ def _install_job(
     with _professor_lock(professor_dir):
         if _active_local_lease_unlocked(professor_dir) is not None:
             raise ValueError("stage2_writer_busy")
+        if job.get('source_mode') == 'local':
+            _impl._local_source(professor_dir, manifest, job)
         return _ORIG_INSTALL_JOB(
             professor_dir, manifest, job, staged_analysis, staged_sidecar, staged_facts
         )

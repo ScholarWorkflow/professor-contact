@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import importlib.util
 import json
 import os
 import shutil
@@ -20,6 +21,10 @@ import tempfile
 import zipfile
 from pathlib import Path, PurePosixPath
 from typing import Any
+
+_TEXT_SPEC = importlib.util.spec_from_file_location('_stage2_handoff_text', Path(__file__).with_name('_stage2_handoff_text.py'))
+_text = importlib.util.module_from_spec(_TEXT_SPEC)
+_TEXT_SPEC.loader.exec_module(_text)
 
 BUNDLE_SCHEMA = 1
 BUNDLE_KIND = "professor-contact-stage2-chatgpt-handoff"
@@ -221,19 +226,40 @@ def _latest_matches(professor_dir: Path, manifest: dict[str, Any]) -> bool:
     )
 
 
-def _verify_bundled_input(bundle_root: Path, job: dict[str, Any]) -> Path:
+def _verify_bundled_input(bundle_root: Path, job: dict[str, Any], source_path: Path | None = None) -> Path:
     """Bind manifest input_sha256 to the actual bytes extracted from the ZIP."""
     try:
         rel = _portable_relpath(str(job.get("input_path") or ""), "input_path")
     except ValueError as error:
         raise ValueError("external_result_hash_mismatch") from error
-    path = bundle_root / Path(*PurePosixPath(rel).parts)
+    path = source_path if source_path is not None else bundle_root / Path(*PurePosixPath(rel).parts)
     expected = job.get("input_sha256")
     if not isinstance(expected, str) or not expected or not path.is_file():
         raise ValueError("external_result_hash_mismatch")
     if _sha256_file(path) != expected:
         raise ValueError("external_result_hash_mismatch")
+    transport = job.get('text_transport')
+    if job.get('source_mode') == 'local' and not transport:
+        raise ValueError('external_result_hash_mismatch: text transport unavailable')
+    if transport:
+        text_path = bundle_root / transport['path']
+        if not text_path.is_file() or _sha256_file(text_path) != transport['sha256']:
+            raise ValueError('external_result_hash_mismatch')
     return path
+
+
+def _local_source(professor_dir: Path, manifest: dict, job: dict) -> Path:
+    record_path = professor_dir / '论文分析' / '_chatgpt_handoff' / f"stage2-{manifest['handoff_id']}.local.json"
+    try:
+        record = _load_json(record_path)
+        if record.get('manifest') != manifest:
+            raise ValueError('local manifest mismatch')
+        source = Path(record['sources'][job['item_key']])
+        if not source.is_absolute() or not source.is_file() or _sha256_file(source) != job['input_sha256']:
+            raise ValueError('original PDF missing or changed')
+        return source
+    except (OSError, KeyError, TypeError, ValueError) as error:
+        raise ValueError('external_result_hash_mismatch: local PDF source missing or changed') from error
 
 
 def _validate_future_work_inputs(result: dict[str, Any]) -> None:
@@ -448,78 +474,77 @@ def build_bundle(args: argparse.Namespace) -> dict[str, Any]:
     # A handoff is a content-addressed logical set, not an ordered queue. Zotero
     # enumeration/caller ordering must therefore not affect manifest/fingerprint/ZIP bytes.
     normalized.sort(key=lambda job: job["item_key"])
-    manifest = _build_manifest(professor, normalized)
-    context, context_files = instruction_context(
-        getattr(args, "paper_analysis_skill_dir", None),
-        getattr(args, "paper_analysis_agent", None),
-    )
-
+    context, context_files = instruction_context(args.paper_analysis_skill_dir, args.paper_analysis_agent)
     root = professor_dir / "论文分析" / "_chatgpt_handoff"
-    bundle_dir = root / f"stage2-{manifest['handoff_id']}"
-    zip_path = root / f"stage2-{manifest['handoff_id']}.zip"
     root.mkdir(parents=True, exist_ok=True)
-    if bundle_dir.exists():
-        shutil.rmtree(bundle_dir)
-    bundle_dir.mkdir(parents=True)
-    _atomic_json(bundle_dir / "manifest.json", manifest)
-    _atomic_write(bundle_dir / "instructions.md", _instructions().encode("utf-8"))
-
-    _atomic_json(bundle_dir / "context.json", context)
-    for rel, data in context_files.items():
-        _atomic_write(bundle_dir / rel, data)
-
-    by_item = {job["item_key"]: job for job in normalized}
-    for entry in manifest["jobs"]:
-        job = by_item[entry["item_key"]]
-        local = bundle_dir / Path(*PurePosixPath(entry["input_path"]).parts)
-        local.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(job["input_path_local"], local)
-        if _sha256_file(local) != entry["input_sha256"]:
-            raise ValueError("external_result_hash_mismatch: packaged carrier differs from captured source hash")
-        _atomic_json(local.parent / "job.json", entry)
-        if entry.get("future_work"):
-            fw = entry["future_work"]
-            for src_field, rel, hash_field in (
-                ("future_work_prepare_local", fw["prepare_path"], "prepare_sha256"),
-                ("future_work_candidates_local", fw["candidates_path"], "candidates_sha256"),
-            ):
-                dest = bundle_dir / Path(*PurePosixPath(rel).parts)
-                dest.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copyfile(str(job[src_field]), dest)
-                if _sha256_file(dest) != fw[hash_field]:
-                    raise ValueError("external_future_work_invalid: packaged future-work input hash mismatch")
-
-    _atomic_json(root / "_latest.json", {
-        "schema": 1,
-        "handoff_id": manifest["handoff_id"],
-        "source_fingerprint": manifest["source_fingerprint"],
-    })
-    fd, temp_zip = tempfile.mkstemp(prefix=f".{zip_path.name}.", dir=root)
-    os.close(fd)
-    try:
-        with zipfile.ZipFile(temp_zip, "w") as zf:
-            files = sorted(
-                (p for p in bundle_dir.rglob("*") if p.is_file()),
-                key=lambda p: p.relative_to(bundle_dir).as_posix(),
-            )
-            for path in files:
-                _zip_add_file(zf, path.relative_to(bundle_dir).as_posix(), path)
-        os.replace(temp_zip, zip_path)
-    except BaseException:
-        try:
-            os.unlink(temp_zip)
-        except FileNotFoundError:
-            pass
-        raise
-    return {
-        "status": "ready",
-        "reason_code": None,
-        "handoff_id": manifest["handoff_id"],
-        "source_fingerprint": manifest["source_fingerprint"],
-        "bundle_path": str(zip_path),
-        "bundle_dir": str(bundle_dir),
-        "jobs": len(manifest["jobs"]),
-    }
+    preparation = []
+    text_files = {}
+    with tempfile.TemporaryDirectory(prefix=".stage2-text-", dir=root) as temporary:
+        staging = Path(temporary)
+        for job in normalized:
+            if job['carrier'] != 'pdf':
+                continue
+            job['source_mode'] = 'local'
+            try:
+                data, pages, reason = _text.prepare_text(job, Path(args.paper_analysis_skill_dir),
+                    staging / _safe_component(job['item_key']), _run_future_work)
+            except (OSError, ValueError) as error:
+                data, pages, reason = None, [], 'text_preparation_unavailable'
+            if reason:
+                preparation.append({'item_key': job['item_key'], 'pages': pages, 'reason': reason})
+            else:
+                rel = f"papers/{_safe_component(job['item_key'])}/paper.txt"
+                job['text_transport'] = {'path': rel, 'sha256': hashlib.sha256(data).hexdigest(),
+                    'page_count': _load_json(Path(job['future_work_prepare_local']))['page_count'],
+                    'format': 'pdf-pages-v1', 'missing_text_pages': pages}
+                text_files[rel] = data
+        manifest = _build_manifest(professor, normalized)
+        bundle_dir = root / f"stage2-{manifest['handoff_id']}"
+        zip_path = root / f"stage2-{manifest['handoff_id']}.zip"
+        record_path = root / f"stage2-{manifest['handoff_id']}.local.json"
+        files = {'manifest.json': _json_bytes(manifest), 'instructions.md': _instructions().encode('utf-8'),
+                 'context.json': _json_bytes(context), **context_files, **text_files}
+        by_item = {job['item_key']: job for job in normalized}
+        sources = {}
+        for entry in manifest['jobs']:
+            job = by_item[entry['item_key']]
+            source = Path(job['input_path_local'])
+            # Original source is hashed in place; no PDF bytes enter files/staging/ZIP.
+            if _sha256_file(source) != entry['input_sha256']:
+                raise ValueError('external_result_hash_mismatch: source changed during preparation')
+            if job['carrier'] == 'pdf':
+                sources[entry['item_key']] = str(source)
+            else:
+                files[entry['input_path']] = source.read_bytes()
+                if hashlib.sha256(files[entry['input_path']]).hexdigest() != entry['input_sha256']:
+                    raise ValueError('external_result_hash_mismatch')
+            files[str(PurePosixPath(entry['input_path']).parent / 'job.json')] = _json_bytes(entry)
+            if entry.get('future_work'):
+                fw = entry['future_work']
+                for field, rel, digest in (
+                    ('future_work_prepare_local', fw['prepare_path'], fw['prepare_sha256']),
+                    ('future_work_candidates_local', fw['candidates_path'], fw['candidates_sha256'])):
+                    data = Path(job[field]).read_bytes()
+                    if hashlib.sha256(data).hexdigest() != digest:
+                        raise ValueError('external_future_work_invalid')
+                    files[rel] = data
+        # Explicit files only: never collect cache/debug or local-source records.
+        if not preparation:
+            temp_zip = staging / 'upload.zip'
+            with zipfile.ZipFile(temp_zip, 'w') as archive:
+                for rel, data in sorted(files.items()):
+                    _zip_add_bytes(archive, rel, data)
+            os.replace(temp_zip, zip_path)
+            for rel, data in files.items():
+                _atomic_write(bundle_dir / rel, data)
+        _atomic_json(record_path, {'schema': 1, 'manifest': manifest, 'sources': sources})
+        _atomic_json(root / '_latest.json', {'schema': 1, 'handoff_id': manifest['handoff_id'],
+                                            'source_fingerprint': manifest['source_fingerprint']})
+    return {'status': 'ready', 'reason_code': None, 'handoff_id': manifest['handoff_id'],
+            'source_fingerprint': manifest['source_fingerprint'], 'upload_ready': not preparation,
+            'bundle_path': str(zip_path) if not preparation else None,
+            'local_manifest_path': str(record_path), 'bundle_dir': str(bundle_dir) if not preparation else None,
+            'text_preparation': preparation, 'jobs': len(manifest['jobs'])}
 
 
 def _check_zip(zf: zipfile.ZipFile) -> None:
@@ -909,7 +934,8 @@ def import_result(args: argparse.Namespace) -> dict[str, Any]:
         for jid, row in result_map.items():
             job = job_map[jid]
             try:
-                bundled_input = _verify_bundled_input(bundle_root, job)
+                source_path = _local_source(professor_dir, manifest, job) if job.get('source_mode') == 'local' else None
+                bundled_input = _verify_bundled_input(bundle_root, job, source_path)
             except (OSError, ValueError):
                 invalid.append({"job_id": jid, "reason_code": "external_result_hash_mismatch"})
                 continue
