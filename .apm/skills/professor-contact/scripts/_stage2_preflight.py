@@ -39,7 +39,8 @@ STAGE2_LEVEL_STATISTICS_VERSION = 1
 # v2 (stage2-u1-r5): the marker also certifies the unified current/old paper
 # reference authority, the renderer map as the only direction authority, and
 # the lossless raw-byte acceptance/read contract.
-STAGE2_U1_DISPLAY_VERSION = 2
+# v3: source item_key citations share the trusted-title display contract.
+STAGE2_U1_DISPLAY_VERSION = 3
 
 # v2: issue #7 resolved directions become part of the Stage-2 contract the
 # preflight must prove — provisional→resolved set mapping in cache.preflight,
@@ -1682,3 +1683,4 @@ def build(*, fail, soft_exit, emit, read_json_file, atomic_json, sha256_obj, sha
         stage2_plan_bind_preflight=stage2_plan_bind_preflight,
         cmd_stage2_plan=cmd_stage2_plan,
     )
+

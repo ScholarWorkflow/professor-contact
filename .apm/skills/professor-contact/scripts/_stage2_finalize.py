@@ -481,7 +481,8 @@ def build(*, Stage2Context,
         for gap in direction.get("gap_shortlist") or []:
             if not isinstance(gap, dict):
                 continue
-            declared = [key for key in gap.get("candidate_paper_ids") or []
+            declared = [key for key in [gap.get("item_key"),
+                                       *(gap.get("candidate_paper_ids") or [])]
                         if isinstance(key, str) and key]
             for field in ("evidence", "completed_part", "remaining_gap"):
                 text = gap.get(field)
@@ -498,7 +499,8 @@ def build(*, Stage2Context,
             completed = item.get("completed_by_item_key")
             if isinstance(completed, str) and completed:
                 keys.add(completed)
-            declared = [key for key in item.get("candidate_paper_ids") or []
+            declared = [key for key in [item.get("item_key"),
+                                       *(item.get("candidate_paper_ids") or [])]
                         if isinstance(key, str) and key]
             text = item.get("evidence")
             if isinstance(text, str):
@@ -2039,3 +2041,4 @@ def build(*, Stage2Context,
         cmd_stage2_finalize=cmd_stage2_finalize,
         cmd_stage2_refresh_level=cmd_stage2_refresh_level,
     )
+
