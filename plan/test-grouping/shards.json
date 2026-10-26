@@ -665,6 +665,10 @@
      }
     },
     {
+     "name": "test_stage2_chatgpt_handoff_source",
+     "stage": "stage2"
+    },
+    {
      "name": "test_stage2_preflight_malformed",
      "stage": "stage2",
      "seconds": 4.2,
