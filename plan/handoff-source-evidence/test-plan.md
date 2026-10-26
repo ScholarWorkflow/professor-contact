@@ -27,6 +27,7 @@
    - 接线变量：`CONTACT_PAPER_ANALYSIS_SKILL`、`CONTACT_PAPER_ANALYSIS_AGENT`、`CONTACT_PAPER_ANALYSIS_PYTHON`。测试模块把解析到的解释器同步到产品已有的 `CONTACT_PAPER_PYTHON`，供 `_run_future_work` 调用同目录 `facts.py`。三者任一缺失时模块以 SkipTest 记未执行，不记通过；已设置但路径无效时按准备失败报错。store 路径丢失时按同一 flake.lock revision 重新求值，不换用其它 helper 版本。此为运行资源接线，不增加另一次真实 E2E证明。
 4. T1–T4 模块入口（T4 exact 在同一模块，见第 5 步）。复用第 1 步的 `RUN`，变量取第 3 节实际值：
    ```bash
+   set -o pipefail
    : "${RUN:=$(mktemp -d /tmp/contact-source-evidence.XXXXXX)}"
    export CONTACT_PAPER_ANALYSIS_SKILL=/nix/store/vvdass0s4x1b2h46sqk29dq7rdbjbmr8-paper-analysis-0.1.0/payload/skills/paper-analysis
    export CONTACT_PAPER_ANALYSIS_AGENT=/nix/store/vvdass0s4x1b2h46sqk29dq7rdbjbmr8-paper-analysis-0.1.0/codex/agents/paper-analysis.toml
@@ -39,6 +40,7 @@
    断言直接读 zipfile/JSON 和目标文件：新 contract、预期原话/页/ID/hash/facts关系、无PDF、必要拒绝和输入不变。JSON正式摘要用jq；不写额外采集器。
 5. T4 exact 在同一新模块：沿用旧 embedded bundle构造（`_stage2_handoff_test_support.legacy_embedded_bundle(..., selection_contract="exact-items-v1")`），用T1中合法旧候选和真实helper，断言正式sidecar保留引用/页/ID，且候选外引文仍被旧协议拒绝；不采用原 `test_legacy_bundle_without_context_still_imports` 的空items与永远成功helper作为非空兼容证据。旧 hybrid 只执行：
    ```bash
+   set -o pipefail
    PYTHONPATH=.apm/skills/professor-contact/tests "$CONTACT_PAPER_ANALYSIS_PYTHON" -B -m unittest -v \
      test_stage2_chatgpt_handoff_review3.Review3RegressionTests.test_ocr_required_selection_rebinds_after_merge_without_external_candidate_id \
      2>&1 | tee "$RUN/legacy-hybrid.out"
