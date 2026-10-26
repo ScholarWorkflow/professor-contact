@@ -22,7 +22,8 @@ def _red_line_key(text: str) -> str:
     return re.sub(r"\s+", "", str(text or "")).casefold()
 
 
-def _candidate_red_lines(candidate: dict, shared_red_lines: set) -> list:
+def _candidate_red_lines(candidate: dict, shared_red_lines: set,
+                         shared_candidate_lines: set | None = None) -> list:
     """Deterministic red-line presentation (style rule C10 lives in the runner).
 
     Range labels and duplication are rendering decisions, so the renderer owns
@@ -34,17 +35,36 @@ def _candidate_red_lines(candidate: dict, shared_red_lines: set) -> list:
     for text in candidate.get("red_lines") or []:
         value = str(text).strip()
         key = _red_line_key(value)
-        if not value or key in seen:
+        if not value or key in seen or value in (shared_candidate_lines or ()):
             continue
         seen.add(key)
         out.append(value)
     return out
 
 
+def _shared_candidate_red_lines(candidates: list, section_lines: set) -> list:
+    """Exact sibling duplicates, counted once per candidate with their own scope.
+
+    Similar wording is not merged. A reminder shared by candidates 2 and 3 is
+    not promoted to a fact about candidate 1 or any other direction.
+    """
+    owners = {}
+    for number, candidate in enumerate(candidates, start=1):
+        seen = set()
+        for text in candidate.get("red_lines") or []:
+            value = str(text).strip()
+            if not value or value in seen or _red_line_key(value) in section_lines:
+                continue
+            seen.add(value)
+            owners.setdefault(value, []).append(number)
+    return [(value, numbers) for value, numbers in owners.items() if len(numbers) >= 2]
+
+
 def _render_idea_block(lines: list, number: int, heading_label: str,
                        candidate: dict, paper_index: dict,
                        group_id: str | None = None,
-                       shared_red_lines: set | None = None) -> None:
+                       shared_red_lines: set | None = None,
+                       shared_candidate_lines: set | None = None) -> None:
     """Render one idea (per-direction candidate or explicit cross-direction
     idea) with its machine meta comment and full body (issue #8 §7.2: meta
     carries direction_ids provenance and exact gap_refs triples)."""
@@ -91,7 +111,7 @@ def _render_idea_block(lines: list, number: int, heading_label: str,
         fit_note = (fit_note + " " if fit_note else "") + "⚠️ 此论文教授为中间作者"
     lines.append(f"**贴合度**：{candidate.get('fit')} — {fit_note or '—'}")
     lines.append("")
-    red_lines = _candidate_red_lines(candidate, shared_red_lines)
+    red_lines = _candidate_red_lines(candidate, shared_red_lines, shared_candidate_lines)
     if red_lines:
         lines.append(f"**红线**：{'；'.join(f'【候选 {number}】{text}' for text in red_lines)}")
         lines.append("")
@@ -122,6 +142,17 @@ def render_candidates_md(professor: str, category: str, direction_entries: list,
         f"> {now_utc()} ｜ profile：{'有' if profile_fp else '无'}{'（未按个人资料校准）' if not profile_fp else ''} ｜ 由 contact_state 确定性渲染；方向脉络与 future work 原文见同目录《套磁候选分析.md》，本文件不复述",
         "",
     ]
+    global_lines = {}
+    for entry in direction_entries:
+        for row in entry.get("red_lines", []):
+            text = str(row.get("text") or "").strip()
+            key = _red_line_key(text)
+            if key and row.get("scope") == "global":
+                global_lines.setdefault(key, text)
+    for text in global_lines.values():
+        lines.append(f"> 【全局】{text}")
+    if global_lines:
+        lines.append("")
     for entry in direction_entries:
         credibility = entry.get("credibility") or {}
         verdict = credibility.get("verdict") or "未判定"
@@ -131,11 +162,22 @@ def render_candidates_md(professor: str, category: str, direction_entries: list,
         lines.append(_stage3_scope_marker({"kind": "direction", "direction_id": direction_id}))
         lines.append("")
         lines.append(f"> 方向 ID：{direction_id} ｜ 脉络、论文一览、用户笔记 → 见《套磁候选分析.md》。")
-        red_lines = [r for r in entry.get("red_lines", []) if r.get("scope") != "global"]
-        shared_red_lines = {_red_line_key(r.get("text")) for r in red_lines}
+        red_lines = []
+        shared_red_lines = set(global_lines)
+        for row in entry.get("red_lines", []):
+            key = _red_line_key(row.get("text"))
+            if row.get("scope") != "global" and key and key not in shared_red_lines:
+                red_lines.append(row)
+                shared_red_lines.add(key)
         if red_lines:
             rendered = "；".join(f"【方向】{r.get('text', '').strip()}" for r in red_lines)
             lines.append(f"> 方向级共享红线（只在这里写一次）：{rendered}")
+        candidates = entry.get("candidates") or []
+        sibling_lines = _shared_candidate_red_lines(candidates, shared_red_lines)
+        for text, numbers in sibling_lines:
+            label = "、".join(map(str, numbers))
+            lines.append(f"> 共享红线（候选 {label}）：{text}")
+        shared_candidate_lines = {text for text, _numbers in sibling_lines}
         if verdict in ("勉强", "疑似幻觉"):
             lines.append("> ⚠️ 该方向的归类目前不够可靠。建议先重新整理这位教授的研究方向，再决定是否继续使用这个方向；下方候选仍只依据论文实际内容生成。")
         lines.append("")
@@ -151,13 +193,13 @@ def render_candidates_md(professor: str, category: str, direction_entries: list,
             if variants:
                 lines.append(f"- **替代表述变体**：{'；'.join(variants)}")
             lines.append("")
-        candidates = entry.get("candidates") or []
         paper_index = {}
         for d in (entry.get("_pack_papers") or []):
             paper_index[d["item_key"]] = d
         for number, candidate in enumerate(candidates, start=1):
             _render_idea_block(lines, number, "候选", candidate, paper_index,
-                               shared_red_lines=shared_red_lines)
+                               shared_red_lines=shared_red_lines,
+                               shared_candidate_lines=shared_candidate_lines)
         if entry.get("priority"):
             lines.append("## 推荐优先级")
             lines.append("")
@@ -181,7 +223,8 @@ def render_candidates_md(professor: str, category: str, direction_entries: list,
             paper_index[d["item_key"]] = d
         for number, candidate in enumerate(entries, start=1):
             _render_idea_block(lines, number, "跨方向候选", candidate, paper_index,
-                               group_id=group.get("group_id"))
+                               group_id=group.get("group_id"),
+                               shared_red_lines=set(global_lines))
     return "\n".join(lines).rstrip() + "\n"
 
 
@@ -207,3 +250,4 @@ def render_candidates_overview(entries: list, program_root: Path,
         lines.append(f"| {group.get('professor')} | 跨方向：{label} | {count} | 显式跨方向组（group_id {group.get('group_id')}） | [{candidates_md}]({group.get('_candidates_md_rel') or '—'}) |")
     lines.append("")
     return "\n".join(lines) + "\n"
+

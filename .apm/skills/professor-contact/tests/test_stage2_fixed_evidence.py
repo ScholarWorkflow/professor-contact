@@ -42,7 +42,7 @@ DISPLAY_ONLY_LINK = (
 DISPLAY_ONLY_EVIDENCE = (
     f"显示参考 zotero://select/library/items/{DISPLAY_ONLY_KEY}，证据原句保留。")
 DISPLAY_ONLY_RENDERED = f"- 后续论文依据：显示参考 {DISPLAY_ONLY_LINK}，证据原句保留。"
-U1_TARGET_DISPLAY_VERSION = 2
+U1_TARGET_DISPLAY_VERSION = 3
 GENERATED_STAMP_RE = re.compile(
     (r"(?m)^> (\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z) ｜ 数据来源：")
     .encode("utf-8"))
@@ -1557,6 +1557,41 @@ class FixedEvidenceBase(BaseEnv):
         self.assertEqual(Path(valid_report).read_bytes(), valid_report_bytes)
 
 
+class SourcePaperCitationTests(FixedEvidenceBase):
+    def test_source_identity_is_rendered_without_later_candidates(self):
+        evidence = "AAAA1111（2021）：库内没有更晚论文；ZXCV1234 是普通文字。"
+        self.generate_pack({
+            "AAAA1111": {
+                "status": "unknown", "candidate_paper_ids": [],
+                "evidence": evidence,
+            },
+        })
+        pack = self.pack()
+        gap = next(gap for direction in pack["directions"]
+                   for gap in direction["gap_shortlist"]
+                   if gap["item_key"] == "AAAA1111")
+        self.assertEqual(gap["evidence"], evidence)
+        self.assertEqual(gap["candidate_paper_ids"], [])
+        body = self.document()["body"]
+        self.assertIn("zotero://select/library/items/AAAA1111", body)
+        self.assertNotIn("后续论文依据：AAAA1111", body)
+        self.assertIn("ZXCV1234 是普通文字", body)
+
+    def test_blacklist_source_identity_uses_the_same_display_rule(self):
+        self.generate_pack({
+            "AAAA1111": {
+                "status": "done_by_self", "candidate_paper_ids": [],
+                "evidence": "AAAA1111 原论文已经包含该结果。",
+            },
+        })
+        body = self.document()["body"]
+        self.assertNotIn("AAAA1111 原论文已经包含该结果", body)
+        self.assertIn(
+            "](zotero://select/library/items/AAAA1111) 原论文已经包含该结果", body)
+
+
+
 if __name__ == "__main__":
     import unittest
     unittest.main()
+

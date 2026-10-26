@@ -849,5 +849,83 @@ class Stage3DirectionGroupTests(Stage3DirectionGroupBase):
         self.assert_no_program_level_authority()
 
 
+class SharedRedlineTests(unittest.TestCase):
+    def render(self, directions):
+        return contact_state._stage3_render.render_candidates_md(
+            "Synthetic professor", "Synthetic category", directions,
+            "profile", "state", Path("/tmp/synthetic-professor"),
+            now_utc=lambda: "2026-01-01T00:00:00Z")
+
+    def direction(self, name, *warnings):
+        return {"direction_id": name, "name_ja": name, "name_zh": name,
+                "red_lines": list(warnings), "candidates": []}
+
+    def test_direction_specific_warning_keeps_its_scope(self):
+        warning = {"scope": "direction", "text": "此方向只依据历史论文。"}
+        body = self.render([self.direction("A", warning), self.direction("B")])
+        self.assertEqual(body.count(warning["text"]), 1)
+        self.assertIn("方向级共享红线", body)
+        self.assertNotIn("【全局】", body)
+
+    def candidate(self, number, *warnings):
+        return {"id": f"A_{number}", "kind": "direction", "direction_ids": ["A"],
+                "title": f"合成候选{number}", "research_question": "比较两组输入。",
+                "papers": [], "gap_refs": [], "red_lines": list(warnings)}
+
+    def test_identical_sibling_warnings_appear_once_with_exact_candidate_scope(self):
+        for owners in ((2, 3), (1, 2, 3)):
+            with self.subTest(owners=owners):
+                shared = "合成历史计划的后续情况未确认。"
+                direction = self.direction("A")
+                direction["candidates"] = [self.candidate(
+                    number, f"候选{number}的独有提醒。", *([shared] if number in owners else []))
+                    for number in (1, 2, 3)]
+                directions = [direction]
+                original = copy.deepcopy(directions)
+                body = self.render(directions)
+                self.assertEqual(body.count(shared), 1)
+                label = "、".join(map(str, owners))
+                self.assertIn(f"> 共享红线（候选 {label}）：{shared}", body)
+                self.assertLess(body.index(shared), body.index("### 候选 1"))
+                self.assertGreater(body.index(shared), body.index("## A"))
+                for number in (1, 2, 3):
+                    self.assertIn(f"【候选 {number}】候选{number}的独有提醒。", body)
+                self.assertEqual(directions, original)
+
+    def test_similar_wording_and_one_candidate_duplicates_are_not_merged_across_candidates(self):
+        first = "合成计划的后续情况未确认。"
+        second = "合成计划的后续情况尚未核对。"
+        direction = self.direction("A")
+        direction["candidates"] = [self.candidate(1, first, first), self.candidate(2, second)]
+        original = copy.deepcopy(direction)
+        body = self.render([direction])
+        self.assertEqual(body.count(first), 1)
+        self.assertEqual(body.count(second), 1)
+        self.assertIn(f"【候选 1】{first}", body)
+        self.assertIn(f"【候选 2】{second}", body)
+        self.assertNotIn("共享红线（候选", body)
+        self.assertEqual(direction, original)
+
+    def test_explicit_global_warning_is_not_omitted(self):
+        # New focused regression; the attachment's method was truncated.
+        warning = {"scope": "global", "text": "不补造论文结果。"}
+        directions = [self.direction("A", warning), self.direction("B", warning)]
+        original = copy.deepcopy(directions)
+        body = self.render(directions)
+        self.assertEqual(body.count(warning["text"]), 1)
+        self.assertIn("> 【全局】" + warning["text"], body)
+        self.assertEqual(directions, original)
+
+    def test_identical_direction_text_does_not_gain_global_scope(self):
+        warning = {"scope": "direction", "text": "只能引用已有材料。"}
+        directions = [self.direction("A", warning), self.direction("B", warning)]
+        original = copy.deepcopy(directions)
+        body = self.render(directions)
+        self.assertEqual(body.count(warning["text"]), 2)
+        self.assertNotIn("【全局】", body)
+        self.assertEqual(directions, original)
+
+
 if __name__ == "__main__":
     unittest.main()
+

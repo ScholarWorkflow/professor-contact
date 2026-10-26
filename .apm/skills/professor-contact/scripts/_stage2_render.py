@@ -896,7 +896,8 @@ def build(*, fail,
                         ("（置信度 ", generator(did, card_id, "label")),
                         (str(gap.get("confidence")), source(did, card_id, "confidence")),
                         ("）", generator(did, card_id, "label")))
-                declared = list(gap.get("candidate_paper_ids") or [])
+                declared = list(dict.fromkeys(
+                    [gap["item_key"], *(gap.get("candidate_paper_ids") or [])]))
                 evidence = citation_segments(
                     gap.get("evidence") or "—", declared, did, card_id, "evidence")
                 doc.add(("- 后续论文依据：", generator(did, card_id, "label")),
@@ -940,7 +941,8 @@ def build(*, fail,
                 for item in d["completed_gap_blacklist"]:
                     completed = item.get("completed_by_item_key")
                     blacklist_id = item.get("gap_id")
-                    declared = list(item.get("candidate_paper_ids") or [])
+                    declared = list(dict.fromkeys(
+                        [item["item_key"], *(item.get("candidate_paper_ids") or [])]))
                     if isinstance(completed, str) and completed:
                         declared.append(completed)
                     evidence = citation_segments(
@@ -1039,3 +1041,4 @@ def build(*, fail,
                 render_analysis_document=render_analysis_document,
                 render_analysis_md=render_analysis_md,
     )
+
