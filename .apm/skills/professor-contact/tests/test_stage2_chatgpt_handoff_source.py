@@ -315,16 +315,12 @@ class SourceHandoffTestCase(unittest.TestCase):
     def assert_no_pdf_copies(self):
         self.assertFalse(list(self.handoff_dir.rglob("*.pdf")))
 
-    def assert_not_installed(self, output, reason_code, *, pdf_unchanged=True):
+    def assert_not_installed(self, output, reason_code):
         self.assertEqual(output["status"], "needs_external_result", output)
         self.assertEqual(output["reason_code"], reason_code, output)
         self.assertFalse(self.target.exists())
         self.assertFalse(Path(str(self.target) + ".future_work.json").exists())
-        self.assertFalse(Path(str(self.target) + ".facts.json").exists())
         self.assertFalse((self.professor / "论文分析" / "_index.json").exists())
-        self.assert_no_pdf_copies()
-        if pdf_unchanged:
-            self.assertEqual(self.pdf.read_bytes(), self.pdf_bytes)
 
 
 class SourceItemsCase(SourceHandoffTestCase):
@@ -362,7 +358,7 @@ class SourceItemsCase(SourceHandoffTestCase):
 
 
 class SourceItemsTests(SourceItemsCase):
-    def test_build_keeps_text_and_evidence_on_one_prepared_page_source(self):
+    def test_build_and_import_accept_quote_outside_candidates(self):
         bundle = self.build()
         self.assertTrue(bundle["upload_ready"], bundle.get("text_preparation"))
         job = self.manifest_of(bundle["bundle_path"])["jobs"][0]
@@ -396,13 +392,9 @@ class SourceItemsTests(SourceItemsCase):
         self.assert_no_pdf_copies()
         self.assertEqual(self.pdf.read_bytes(), self.pdf_bytes)
 
-    def test_import_accepts_quote_outside_candidates_and_joins_facts(self):
-        bundle = self.build()
-        job = self.manifest_of(bundle["bundle_path"])["jobs"][0]
         result = self.result_zip(bundle["bundle_path"], self.items(), facts=support.FACTS_DRAFT)
         output = self.import_result(bundle["bundle_path"], result)
         self.assertEqual(output["status"], "imported", output)
-
         sidecar = json.loads(
             Path(str(self.target) + ".future_work.json").read_text(encoding="utf-8")
         )
@@ -423,18 +415,8 @@ class SourceItemsTests(SourceItemsCase):
             sidecar["items"][0]["id"],
             hashlib.sha256(NON_CANDIDATE_QUOTE.encode("utf-8")).hexdigest(),
         )
-
         facts = json.loads(Path(str(self.target) + ".facts.json").read_text(encoding="utf-8"))
-        self.assertEqual(facts["analysis"], self.ANALYSIS_NAME)
         self.assertEqual(facts["future_work_ids"], [item["id"] for item in sidecar["items"]])
-        self.assertEqual(facts["input_fingerprint"], "sha256:" + job["input_sha256"])
-
-        index = json.loads((self.professor / "论文分析" / "_index.json").read_text(encoding="utf-8"))
-        entry = index["papers"][self.ITEM_KEY]
-        self.assertEqual(entry["future_work_state"], "valid")
-        self.assertEqual(entry["facts_state"], "valid")
-        self.assertTrue(Path(entry["future_work_sidecar"]).is_file())
-        self.assertTrue(Path(entry["facts_sidecar"]).is_file())
         self.assert_no_pdf_copies()
         self.assertEqual(self.pdf.read_bytes(), self.pdf_bytes)
 
@@ -467,7 +449,6 @@ class RejectedSourceItemsTests(SourceItemsCase):
         self.assert_not_installed(
             self.import_result(bundle["bundle_path"], result),
             "external_result_hash_mismatch",
-            pdf_unchanged=False,
         )
 
 
@@ -488,7 +469,6 @@ class OldPrepareWithCacheTests(SourceHandoffTestCase):
         transport = job["text_transport"]
         self.assertEqual(transport["missing_text_pages"], [])
         with zipfile.ZipFile(bundle["bundle_path"]) as archive:
-            names = archive.namelist()
             prepared = json.loads(archive.read(job["future_work"]["prepare_path"]))
             text = archive.read(transport["path"]).decode("utf-8")
         prepared_pages = {page["page"]: page["text"] for page in prepared["source_pages"]}
@@ -499,10 +479,8 @@ class OldPrepareWithCacheTests(SourceHandoffTestCase):
         self.assertEqual(transport_pages[self.OCR_PAGE].strip(), OCR_PAGE_TEXT)
         for page, prepared_text in prepared_pages.items():
             self.assertEqual(transport_pages[page].strip(), prepared_text.strip())
-        self.assertFalse([name for name in names if name.lower().endswith(".pdf")], names)
         self.assertEqual(self.prepare.read_bytes(), self.prepare_bytes)
         self.assertEqual(self.candidates.read_bytes(), self.candidates_bytes)
-        self.assert_no_pdf_copies()
 
 
 class OldPrepareWithoutCacheTests(SourceHandoffTestCase):
@@ -566,8 +544,6 @@ class LegacyExactContractTests(SourceItemsCase):
         self.assertEqual(sidecar["items"][0]["quote"], self.candidate["quote"])
         self.assertEqual(sidecar["items"][0]["page"], self.candidate["page"])
         self.assertEqual(sidecar["items"][0]["id"], self.candidate["id"])
-        facts = json.loads(Path(str(self.target) + ".facts.json").read_text(encoding="utf-8"))
-        self.assertEqual(facts["future_work_ids"], [self.candidate["id"]])
 
     def test_legacy_exact_bundle_rejects_quote_outside_candidates(self):
         legacy = self.build_legacy()

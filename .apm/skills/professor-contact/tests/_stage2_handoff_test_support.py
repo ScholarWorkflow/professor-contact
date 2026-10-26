@@ -142,9 +142,10 @@ def legacy_embedded_bundle(args, handoff, *, selection_contract=None):
 
     ``selection_contract`` rewrites the future-work contract so a caller can
     build one specific pre-text package (for example the legacy exact-items-v1
-    candidate-only protocol).  Bundled prepare/candidates bytes come from the
-    built bundle directory when it exists, so the rewritten manifest hashes
-    stay bound to the exact embedded evidence.
+    candidate-only protocol).  That rewritten shape also embeds the evidence
+    bytes the build hashed, so its manifest stays bound to the exact bundled
+    prepare/candidates; the default path keeps reading the caller's original
+    files.
     """
     import json
     import zipfile
@@ -152,6 +153,7 @@ def legacy_embedded_bundle(args, handoff, *, selection_contract=None):
     record = json.loads(Path(result['local_manifest_path']).read_text())
     manifest = record['manifest']
     bundle_dir = Path(result['bundle_dir']) if result.get('bundle_dir') else None
+    use_bundled_evidence = selection_contract is not None
     for job in manifest['jobs']:
         job.pop('source_mode', None)
         job.pop('text_transport', None)
@@ -177,7 +179,7 @@ def legacy_embedded_bundle(args, handoff, *, selection_contract=None):
                 ('candidates_path', 'future_work_candidates'),
             ):
                 rel = future_work[field]
-                bundled = bundle_dir / rel if bundle_dir is not None else None
+                bundled = bundle_dir / rel if use_bundled_evidence and bundle_dir is not None else None
                 source = bundled if bundled is not None and bundled.is_file() else Path(spec[local_field])
                 files[rel] = source.read_bytes()
     with zipfile.ZipFile(archive_path, 'w') as zf:

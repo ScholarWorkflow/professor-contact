@@ -25,12 +25,12 @@
    - agent：`/nix/store/vvdass0s4x1b2h46sqk29dq7rdbjbmr8-paper-analysis-0.1.0/codex/agents/paper-analysis.toml`。
    - 解释器：`/nix/store/447smjkzgapdxqrcdg8r8kf8j1a1jrxc-python3-3.14.7-env/bin/python3`（Python 3.14.7；`scholar-workflow-pdfx 0.1.0`、`pymupdf 1.27.2.3`），即该 paper-analysis 包 `agent-env.json` 的 runtimePackages 解释器。测试进程和 helper 使用同一解释器，并用它在临时目录生成合成 PDF。
    - 接线变量：`CONTACT_PAPER_ANALYSIS_SKILL`、`CONTACT_PAPER_ANALYSIS_AGENT`、`CONTACT_PAPER_ANALYSIS_PYTHON`。测试模块把解析到的解释器同步到产品已有的 `CONTACT_PAPER_PYTHON`，供 `_run_future_work` 调用同目录 `facts.py`。三者任一缺失时模块以 SkipTest 记未执行，不记通过；已设置但路径无效时按准备失败报错。store 路径丢失时按同一 flake.lock revision 重新求值，不换用其它 helper 版本。此为运行资源接线，不增加另一次真实 E2E证明。
-4. T1–T4 模块入口（T4 exact 在同一模块，见第 5 步）。先导出第 3 节三个变量：
+4. T1–T4 模块入口（T4 exact 在同一模块，见第 5 步）。复用第 1 步的 `RUN`，变量取第 3 节实际值：
    ```bash
-   RUN=$(mktemp -d /tmp/contact-source-evidence.XXXXXX)
-   export CONTACT_PAPER_ANALYSIS_SKILL="<第3节 skill 路径>"
-   export CONTACT_PAPER_ANALYSIS_AGENT="<第3节 agent 路径>"
-   export CONTACT_PAPER_ANALYSIS_PYTHON="<第3节解释器>"
+   : "${RUN:=$(mktemp -d /tmp/contact-source-evidence.XXXXXX)}"
+   export CONTACT_PAPER_ANALYSIS_SKILL=/nix/store/vvdass0s4x1b2h46sqk29dq7rdbjbmr8-paper-analysis-0.1.0/payload/skills/paper-analysis
+   export CONTACT_PAPER_ANALYSIS_AGENT=/nix/store/vvdass0s4x1b2h46sqk29dq7rdbjbmr8-paper-analysis-0.1.0/codex/agents/paper-analysis.toml
+   export CONTACT_PAPER_ANALYSIS_PYTHON=/nix/store/447smjkzgapdxqrcdg8r8kf8j1a1jrxc-python3-3.14.7-env/bin/python3
    export CONTACT_SOURCE_TEST_RUN_ROOT="$RUN/tmp"
    "$CONTACT_PAPER_ANALYSIS_PYTHON" -B -m unittest discover \
      -s .apm/skills/professor-contact/tests \
@@ -40,14 +40,15 @@
 5. T4 exact 在同一新模块：沿用旧 embedded bundle构造（`_stage2_handoff_test_support.legacy_embedded_bundle(..., selection_contract="exact-items-v1")`），用T1中合法旧候选和真实helper，断言正式sidecar保留引用/页/ID，且候选外引文仍被旧协议拒绝；不采用原 `test_legacy_bundle_without_context_still_imports` 的空items与永远成功helper作为非空兼容证据。旧 hybrid 只执行：
    ```bash
    PYTHONPATH=.apm/skills/professor-contact/tests "$CONTACT_PAPER_ANALYSIS_PYTHON" -B -m unittest -v \
-     test_stage2_chatgpt_handoff_review3.Review3RegressionTests.test_ocr_required_selection_rebinds_after_merge_without_external_candidate_id
+     test_stage2_chatgpt_handoff_review3.Review3RegressionTests.test_ocr_required_selection_rebinds_after_merge_without_external_candidate_id \
+     2>&1 | tee "$RUN/legacy-hybrid.out"
    ```
    测试专用旧 embedded fixture不改变新产品默认。旧hybrid行为未改且已有适用结果时引用原记录免重跑，说明适用性。
 6. T5 人工比较以下材料，确认任意已读正文中的作者明示可以选择、局限性不得推断为承诺：
    - 生成说明：`.apm/skills/professor-contact/scripts/stage2_chatgpt_handoff.py` 的 `_instructions()`（新契约正文可选、旧协议只作旧包兼容说明）。
    - 两 runtime 调用说明与全局原则：`packages/professor-contact-codex/.apm/agents/professor-contact-analyzer.agent.md`、`packages/professor-contact-opencode/.apm/agents/professor-contact-analyzer.agent.md` 的 Step 4.5 A/C、future work 与局限的原则段和禁止事项。
    - SKILL 的 handoff 简短说明：`.apm/skills/professor-contact/SKILL.md`。
-   人工一致性阅读已足够，不额外运行旧 workflow assertion。本模块已登记 `plan/test-grouping/shards.json` 的 shard4（stage2）；用既有 `python3 scripts/check_test_shards.py` 检查索引，不跑全部 shards。
+   T5 只读上述文字；`实际入口传完整 prepare` 与 ZIP/临时目录无 PDF 上传由 T1 的 build/import 断言覆盖，T5 不重复取代码级证据。人工一致性阅读已足够，不额外运行旧 workflow assertion。本模块已登记 `plan/test-grouping/shards.json` 的 shard4（stage2）；用既有 `python3 scripts/check_test_shards.py` 检查索引，不跑全部 shards。
 7. 保存首轮及修正尝试标准输出于 RUN（如 `$RUN/source-items.out`），提交必要脱敏结果到本目录；每项记录通过/业务失败/无法判断/未执行。文档SHA不触发重跑；修复仅重跑受影响项。
 
 ## 准备与预检记录（2026-10-27）
@@ -55,7 +56,7 @@
 - 目标版本：contact `2866b1cdfa39f8a9ee19796cf063cfc4ef756c19`（PR #143 head）；paper-analysis helper 与解释器见第 3 节实际值。
 - 已交付准备产物：
   - `.apm/skills/professor-contact/tests/test_stage2_chatgpt_handoff_source.py`：T1、T2（有/无必需页缓存两个准备路径）、T3（错页/改写原话/源 PDF 变化三个变体）、T4（旧 exact 非空候选与候选外拒绝）。
-  - `.apm/skills/professor-contact/tests/_stage2_handoff_test_support.py`：`legacy_embedded_bundle` 新增可选 `selection_contract` 参数，并优先从 `bundle_dir` 读取 prepare/candidates 字节；默认参数与原调用行为不变。
+  - `.apm/skills/professor-contact/tests/_stage2_handoff_test_support.py`：`legacy_embedded_bundle` 新增可选 `selection_contract` 参数；仅在该参数传入时优先从 `bundle_dir` 读取 prepare/candidates 字节，默认参数与原调用行为不变。
   - `plan/test-grouping/shards.json`：新模块登记到 shard4（stage2）。
 - 有限预检（临时目录 `/tmp/pr143-test-prep-20261027`，使用第 3 节解释器；未调用 contact build/import 正式入口，未执行必测用例）：
   - 三个 helper 脚本与解释器可用；helper `prepare` 在 5 页合成 PDF 上产出 `source_pages`/`page_quality`（5 页 trusted、`ocr_required_pages` 为空），候选外句不在 `candidates.json`。
