@@ -130,6 +130,7 @@ git rev-parse HEAD > "$run_dir/target-version.txt"
 - 为确认失败原因做过一次试跑（不是结果，也不是第三关）：6 个 selector 报 7 个 failure，全部是产品缺失——T1-接受与 T2 净 180 报 `interest total 260 exceeds hard cap 200`（净 180 应无 problem）；T1-规则报旧规则文本不含免计措辞；T2 的 181 报 `interest total 261`（无 181）、200 报硬拒绝（应为 WARNING）、201 报 `interest total 281`（无 201）；T4 的 `message` 是 `interest total 281 exceeds hard cap 200`（无 201）。T3 两个 selector 在基线上通过，属保持行为项，不构成 R1 证据。日志留在 `/tmp/interest-title-length-prep.20261028`。
 - 该试跑属于准备期越界：它调用了必测清单里的正式 selector 和 `stage5-finalize` 入口，超出本角色「不执行正式用例」的边界。此处如实披露，不据此声称任何结果或关口状态；第二关前不再调用目标命令，第三关仍须由执行者按本 recipe 首次正式执行。
 - 仍缺的输入：产品侧标题免计计数与 `model_input.rules.interest` 新口径尚未实现，因此 T1/T2/T4 在准备基线上按产品缺失失败是预期结果。下一负责人：本地执行工程师。
+- 提交后自动 CI（PR #150，shard3）与上述预期一致：`Ran 286 tests`，7 个 failure，全部来自本模块且原因相同——T1-接受与 T2 净 180 报 `interest total 260 exceeds hard cap 200`；T1-规则为旧规则措辞；T2 的 181 报 261、200 报硬拒绝、201 报 281；T4 的 `message` 报 281。T3 两个 selector 为 `ok`。这与准备期试跑的 7 个 failure 逐项相同，属产品缺失，不是测试资产缺陷；登记 shard 后该分片在产品落地前会保持红灯，见 §4 的 R2。
 
 ## 3. 证据与状态
 
