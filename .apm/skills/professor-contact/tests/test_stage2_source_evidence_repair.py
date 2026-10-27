@@ -23,7 +23,8 @@ permits dropping one of these semantics.
   ``completed_part`` -> cache ``completed_part`` and displayed
   ``remaining_gap`` -> cache ``remaining_gap``.
 - A changed write returns ``status="needs_refresh"`` plus the affected
-  direction/gap rows and never claims PASS.  It writes only the freshness
+  direction/gap rows and never claims PASS.  Each affected row carries the
+  direction and the gap in the same record.  It writes only the freshness
   cache: the managed Markdown, the accepted input pack and the recorded
   validator keep their bytes.
 - The repaired text reaches the report only through ordinary
@@ -35,8 +36,10 @@ permits dropping one of these semantics.
   validation round.
 - Rejections happen before any write: another field's finding, a quote or
   generator-owned finding, a stale expectation or one bad row in a batch leave
-  every file byte-identical.  A no-op replacement changes nothing and cannot
-  reset recorded rounds.
+  every file byte-identical.  A refusal reports the real owner in ``owners``,
+  and the name is read from that field only, so a stray occurrence elsewhere in
+  the payload cannot satisfy it.  A no-op replacement changes nothing and
+  cannot reset recorded rounds.
 
 Command availability and the two flag names need no separate assertion: every
 case below invokes ``stage2-repair-evidence`` with ``--professor-dir`` and
@@ -76,25 +79,6 @@ FINDINGS = {
     "quote": ("Future work will extend", "- 作者原话："),
     "label": ("后续论文依据", "- 后续论文依据："),
 }
-
-
-def _scalar_tokens(payload) -> set:
-    """Every scalar string in a parsed command payload.
-
-    Machine identifiers (gap id, field name, owner) are asserted through this
-    structural walk, never by matching the serialized JSON text.
-    """
-    tokens = set()
-    if isinstance(payload, dict):
-        for key, value in payload.items():
-            tokens.add(str(key))
-            tokens.update(_scalar_tokens(value))
-    elif isinstance(payload, list):
-        for value in payload:
-            tokens.update(_scalar_tokens(value))
-    elif payload is not None:
-        tokens.add(str(payload))
-    return tokens
 
 
 class SourceEvidenceRepairFixture(unittest.TestCase):
@@ -312,6 +296,83 @@ class SourceEvidenceRepairFixture(unittest.TestCase):
         self.assertEqual(finalized["status"], "ok", finalized)
         return facts_path, results
 
+    def affected_records(self, payload):
+        """The affected rows of a successful repair, as records.
+
+        EP2 fixes an affected direction/gap list, so each row has to carry both
+        ids.  Reading them per record is what keeps two unrelated rows from
+        satisfying a check that only looks for the two values somewhere.
+        """
+        records = payload.get("affected")
+        self.assertIsInstance(records, list, payload)
+        return [record for record in records if isinstance(record, dict)]
+
+    def affected_for(self, payload, direction_id, gap_id):
+        """Affected rows that name this direction and this gap in one record."""
+        return [record for record in self.affected_records(payload)
+                if record.get("direction_id") == direction_id
+                and record.get("gap_id") == gap_id]
+
+    def owners_named(self, payload):
+        """The owner names a refusal reports in its ``owners`` field.
+
+        EP2 requires a rejection to return the actual owner, so the name has to
+        come from ``owners`` itself and not from anywhere else in the payload.
+        The value may be a list of names, a ``field -> owner`` map or a list of
+        ``{field, owner}`` records; the recipe does not fix that shape, so every
+        form is read here.
+        """
+        owners = payload.get("owners")
+        self.assertIsNotNone(owners, payload)
+        names = set()
+
+        def collect(value):
+            if isinstance(value, str):
+                names.add(value)
+            elif isinstance(value, dict):
+                if isinstance(value.get("owner"), str):
+                    names.add(value["owner"])
+                for nested in value.values():
+                    if not isinstance(nested, str):
+                        collect(nested)
+            elif isinstance(value, list):
+                for entry in value:
+                    collect(entry)
+
+        collect(owners)
+        self.assertTrue(names, payload)
+        return names
+
+    def cache_without_text(self, document, gap_id, fields=WHITELIST):
+        """A copy of the cache document with the authorized texts removed.
+
+        Comparing this projection before and after a repair proves that only
+        those texts moved: every other record, and every other field of the
+        same record, still has to be identical.
+        """
+        clone = json.loads(json.dumps(document))
+        entry = (clone.get("entries") or {}).get(gap_id)
+        if isinstance(entry, dict):
+            for field in fields:
+                entry.pop(field, None)
+        return clone
+
+    def non_goal_views(self, direction_id="DIR00001"):
+        """The accepted structures a wording repair is not allowed to touch."""
+        direction = self.direction_entry(direction_id)
+        return {
+            "excluded": json.loads(json.dumps(direction.get("gaps_excluded"))),
+            "shortlist_ids": [row["gap_id"] for row in direction["gap_shortlist"]],
+            "blacklist_ids": [row["gap_id"] for row in direction["completed_gap_blacklist"]],
+            "supporting_item_keys": json.loads(
+                json.dumps(direction.get("supporting_item_keys"))),
+            "relevant_keys": json.loads(json.dumps(direction.get("relevant_keys"))),
+            "named_keys": json.loads(json.dumps(direction.get("named_keys"))),
+            "status": direction.get("status"),
+            "direction_id": direction.get("direction_id"),
+            "collection_key": direction.get("collection_key"),
+        }
+
     def direction_entry(self, direction_id="DIR00001"):
         return next(direction for direction in self.pack()["directions"]
                     if direction["direction_id"] == direction_id)
@@ -348,6 +409,9 @@ class SourceEvidenceRepairTests(SourceEvidenceRepairFixture):
         for field in WHITELIST:
             self.assertNotEqual(old[field], new[field], (field, old[field]))
         protected = self.protected_snapshot()
+        cache_before = self.cache_document()
+        views_before = self.non_goal_views()
+        narrative_before = json.loads(json.dumps(self.direction_entry()["narrative"]))
 
         payload = self.repair([
             self.repair_row("model_evidence", old["model_evidence"],
@@ -360,12 +424,9 @@ class SourceEvidenceRepairTests(SourceEvidenceRepairFixture):
 
         # A changed write is a refresh request, never a passing result.
         self.assertEqual(payload["status"], "needs_refresh", payload)
-        affected = payload.get("affected")
-        self.assertIsInstance(affected, list, payload)
-        # EP2 fixes the affected direction/gap rows; it does not fix a field
-        # column, so the field name is not required here.
-        self.assertIn(gap, _scalar_tokens(affected), payload)
-        self.assertIn("DIR00001", _scalar_tokens(affected), payload)
+        # The affected list is read per record: one row must name both this
+        # direction and this gap, so two unrelated rows cannot satisfy it.
+        self.assertTrue(self.affected_for(payload, "DIR00001", gap), payload)
 
         after = self.cache_entry(gap)
         for field in WHITELIST:
@@ -396,6 +457,17 @@ class SourceEvidenceRepairTests(SourceEvidenceRepairFixture):
         self.assertEqual(row["remaining_gap"], new["remaining_gap"], row)
         for field in ("status", "confidence", "evaluated_at", "candidate_paper_ids"):
             self.assertEqual(row[field], before[field], (field, row[field]))
+
+        # Nothing outside the three authorized strings may move.  The whole
+        # cache document is compared with only those three fields removed from
+        # the one authorized record, so a change to another gap, another field
+        # of the same record, or the document envelope fails here.
+        self.assertEqual(self.cache_without_text(self.cache_document(), gap),
+                         self.cache_without_text(cache_before, gap))
+        # The unselected-gap list, the row membership and the accepted narrative
+        # are outside this repair and must come through untouched.
+        self.assertEqual(self.non_goal_views(), views_before)
+        self.assertEqual(self.direction_entry()["narrative"], narrative_before)
 
         body = self.document()["body"]
         self.assertIn("后续工作由", body)
@@ -451,6 +523,10 @@ class SourceEvidenceRepairTests(SourceEvidenceRepairFixture):
         self.assertEqual(list(fixed), ["DIR00001"], fixed)
         self.assertEqual([row["field"] for row in fixed["DIR00001"]], ["evidence"], fixed)
         gap = self.gap_id("AAAA1111")
+        narratives_before = {
+            direction_id: json.loads(json.dumps(self.direction_entry(direction_id)["narrative"]))
+            for direction_id in ("DIR00001", "DIR00002")}
+        cache_before = self.cache_document()
         old = self.cache_entry(gap)["model_evidence"]
         new = old.replace("后续由", "后续工作由")
         payload = self.repair([self.repair_row("model_evidence", old, new)])
@@ -466,15 +542,21 @@ class SourceEvidenceRepairTests(SourceEvidenceRepairFixture):
         for direction_id in ("DIR00001", "DIR00002"):
             self.assertEqual(self.shortlist_row(gap, direction_id)["evidence"], new,
                              direction_id)
+            # Reuse carried each accepted narrative through verbatim; comparing
+            # the whole object catches a partial rewrite that a substring check
+            # would miss.
+            self.assertEqual(self.direction_entry(direction_id)["narrative"],
+                             narratives_before[direction_id], direction_id)
+        # Only the repaired field may move in the cache, for every direction.
+        self.assertEqual(
+            self.cache_without_text(self.cache_document(), gap, ("model_evidence",)),
+            self.cache_without_text(cache_before, gap, ("model_evidence",)))
         lines = [line for line in self.document()["body"].splitlines()
                  if line.startswith("- 后续论文依据：")]
         self.assertEqual(len(lines), 2, lines)
         for line in lines:
             self.assertIn("后续工作由", line)
             self.assertNotIn("后续由 ", line)
-        # Reuse carried the accepted narrative untouched.
-        narrative = self.direction_entry()["narrative"]["positioning"][0]["text"]
-        self.assertIn("合成输入比较", narrative)
 
     # -- R-B: ineligible, stale and partial batches --------------------------
 
@@ -502,12 +584,13 @@ class SourceEvidenceRepairTests(SourceEvidenceRepairFixture):
         gap = quote_env.gap_id("AAAA1111")
         entry = quote_env.cache_entry(gap)
         protected = quote_env.all_files_snapshot()
-        quote_env.rejected([
+        payload = quote_env.rejected([
             quote_env.repair_row("model_evidence", entry["model_evidence"],
                                  entry["model_evidence"].replace("后续由", "后续工作由"))])
         # A quote's owner is the source owner as well, so naming that owner is
-        # not authority to rewrite the cache: the row still has to be refused,
-        # and the refusal must not change a byte.
+        # not authority to rewrite the cache.  The name is read from ``owners``
+        # only, so a stray occurrence elsewhere in the payload cannot satisfy it.
+        self.assertIn("source", quote_env.owners_named(payload), payload)
         self.assertEqual(quote_env.all_files_snapshot(), protected)
 
         label_env = self.fresh_repair_env()
@@ -521,7 +604,7 @@ class SourceEvidenceRepairTests(SourceEvidenceRepairFixture):
                                  entry["model_evidence"].replace("后续由", "后续工作由"))])
         # The template/label owner is the generator, so the caller must be sent
         # there instead of being told to repair the source text.
-        self.assertIn("generator", _scalar_tokens(payload), payload)
+        self.assertIn("generator", label_env.owners_named(payload), payload)
         self.assertEqual(label_env.all_files_snapshot(), protected)
 
     def test_r_b_stale_expectations_are_rejected_before_writing(self):
