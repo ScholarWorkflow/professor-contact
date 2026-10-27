@@ -16,7 +16,7 @@
 - `_impl` 的 build 原位 hash PDF、上传无 PDF；import 绑定当前 local record、source/transport hash、本地 baseline 与 writer guard，facts 由同一安装 helper 基于原 PDF finalize。这些行为保持。
 - Nix baseline 的 paper-analysis 锁定 `c140658cc60f9d9c3d17008cbab0b599f40c8e46`；已读取该 revision 的 future_work.py，包含 SourceLocator 正文接口，因此此次不预设必须更新锁文件。APM 调用仍使用显式提供的同一安装 skill/helper；用户自定义 override 的旧版本不能凭 master 状态当作已升级。
 
-实际只读样本：TB5Z8XNL（20261026 奈良包，和田）prepare 有 source_pages，候选页 4/27/28/29，正文 24–25 有作者待研究事项；U8PH7T7A（松原）候选 16–18，正文 15 明写未来加入 outlier robustness，旧 prepare 无 source_pages。未运行本地 PDF 校验，也未重跑模型；只确认候选遗漏与准备材料差异。私人原文与批次结果不入 Git。
+实际只读样本：样本 A 的 prepare 含 `source_pages`，候选页为 4/27/28/29，正文第 24–25 页有作者明示的后续研究；样本 B 的旧 prepare 缺少 `source_pages`，候选页为 16–18，正文第 15 页有作者明示的后续研究。未运行本地 PDF 校验，也未重跑模型；只确认候选遗漏与准备材料差异。私人原文与批次结果不入 Git。
 
 因果链：运输说明及导入将候选封闭 → 新包声明正文证据契约并携带与运输原文一致的完整同源 prepare → 原分析角色从正文给完整引文/物理页 → 原 helper 本地核验 → 正式 sidecar/facts 可以包含候选外真实引文。
 
