@@ -1,7 +1,7 @@
 """TP1 T2-T6 checks for direction-scoped experience materials.
 
 Prepared by the local test engineer from
-``plan/direction-experience-materials/test-plan.md`` (TP1.2).  The product
+``plan/direction-experience-materials/test-plan.md`` (TP1.3).  The product
 feature is not implemented in this commit: every case drives the planned
 public entry points (``contact_state.py direction-materials-save`` and the
 Stage-4/Stage-5 commands that must carry the frozen slice) and reads the
@@ -633,20 +633,16 @@ class DirectionMaterialsSaveGuardTests(_DirectionMaterialsBase):
         self.assertEqual(self.materials_path().read_bytes(), broken)
         self.materials_path().write_bytes(updated)
 
-        # (6) A same-named direction in another professor is a different owner:
-        # this professor's material id can never address that professor's file.
+        # (6) A same-named direction in another professor stays professor-local.
+        # Do not require material_id uniqueness across different professors.
         other = self.clone_professor("別 教授")
         other_saved = self.save_ok(direction_id=DIRECTION_A, answer=ANSWER_B,
                                    expect_missing=True, professor_dir=other)
-        other_before = self.materials_path(other).read_bytes()
-        cross = self.save(direction_id=DIRECTION_A, material_id=material_id,
-                          answer=ANSWER_A_V3,
-                          expected_sha256=digest(self.materials_path(other)),
-                          professor_dir=other)
-        self.assertNotEqual(cross.returncode, 0)
-        self.assertEqual(self.materials_path(other).read_bytes(), other_before)
+        other_entries = material_entries(self.materials(other), DIRECTION_A)
+        self.assertEqual(len(other_entries), 1, other_entries)
+        self.assertEqual(other_entries[0]["material_id"], other_saved["material_id"])
+        self.assertEqual(other_entries[0]["answer"], ANSWER_B)
         self.assertEqual(self.materials_path().read_bytes(), updated)
-        self.assertNotEqual(other_saved["material_id"], material_id)
 
 
 if __name__ == "__main__":
