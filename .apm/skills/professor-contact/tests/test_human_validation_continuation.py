@@ -501,8 +501,10 @@ class Stage2ContinuationTests(ContinuationContractMixin, Stage2Fixture):
         self.assertEqual(self.record(first)["round"], 1)
         self.correct(first, FIRST, SECOND, "continuation-fixed-rewrite")
         fixed_line = self.physical_line("评估时间：", expected=2)[0]
-        second = self.write_report("continuation-fixed-2.json", [
-            self.blocking_issue("评估时间：", fixed_line)])
+        structural_issue = self.blocking_issue("评估时间：", fixed_line)
+        # Simulate a structural owner finding; the timestamp is only its locator.
+        structural_issue["rule"] = "C9"
+        second = self.write_report("continuation-fixed-2.json", [structural_issue])
         terminal = self.record(second)
         self.assertEqual(terminal["round"], 2, terminal)
         self.assertTrue(terminal["terminal"], terminal)
