@@ -415,6 +415,29 @@ def build(*, read_json_file,
         first = sources[0]
         return str(first.get("url") or first.get("note") or "—")
 
+    def direction_material_label(email: dict, source_id: str) -> str:
+        """Human-readable provenance for one frozen user-material source.
+
+        The bare machine id is only the pack's join key; the md source table is
+        the pre-send audit surface, so it shows the material id plus the user's
+        own answer (truncated, never rewritten). An id outside the frozen slice
+        keeps the raw value instead of inventing a citation.
+        """
+        parts = source_id.split(":", 2)
+        direction_id = parts[1] if len(parts) > 1 else ""
+        material_id = parts[2] if len(parts) > 2 else ""
+        entry = next((row for row in email.get("direction_materials") or []
+                      if isinstance(row, dict)
+                      and row.get("direction_id") == direction_id
+                      and row.get("material_id") == material_id), None)
+        if entry is None:
+            return f"[用户素材] {source_id}"
+        answer = re.sub(r"\s+", " ", str(entry.get("answer") or "")).strip()
+        answer = answer.replace("|", "｜")
+        if len(answer) > 36:
+            answer = answer[:36] + "…"
+        return f"[用户素材] 方向素材 {material_id}：「{answer}」"
+
     def render_source_table(email: dict, raw: dict) -> list:
         label = {"user_note": "用户 note（原文）", "template": "[模板] 固定文本",
                  "profile.interest": "[生成] 用户意图层（profile）"}
@@ -439,6 +462,8 @@ def build(*, read_json_file,
                     names.append(f"[生成] 后续论文《{paper_titles.get(sid[6:], sid[6:])}》")
                 elif sid.startswith("idea:"):
                     names.append("[生成] 选中想法（idea_zh）")
+                elif sid.startswith("direction_material:"):
+                    names.append(direction_material_label(email, sid))
                 else:
                     names.append(sid)
             rows.append(f"| {output_names.get(output, output)} | {'；'.join(names)} |")
@@ -512,6 +537,7 @@ def build(*, read_json_file,
                 render_checklist_table=render_checklist_table,
                 cell_source=cell_source,
                 render_source_table=render_source_table,
+                direction_material_label=direction_material_label,
                 render_followup_source_table=render_followup_source_table,
                 render_fact_check_card=render_fact_check_card,
     )

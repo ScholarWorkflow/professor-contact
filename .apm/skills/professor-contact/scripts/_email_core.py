@@ -19,7 +19,8 @@ def build(*, fail,
           direction_machine_id,
           direction_papers,
           EMAIL_SOURCE_HASH_FIELDS,
-          sha256_obj):
+          sha256_obj,
+          direction_material_source):
     def email_source_hash(entry: dict) -> str:
         """Return the canonical Stage-4 → Stage-5 fact hash for one email row."""
         return sha256_obj({key: entry[key] for key in EMAIL_SOURCE_HASH_FIELDS})
@@ -29,7 +30,8 @@ def build(*, fail,
                             profile_fp: str | None, papers_override: list[str] | None = None,
                             contact_evidence: dict | None = None,
                             group_entry: dict | None = None,
-                            participant_directions: list[dict] | None = None) -> dict:
+                            participant_directions: list[dict] | None = None,
+                            direction_materials: dict | None = None) -> dict:
         """Compile one v2 email entry (issue #8 §8.2).
 
         Identity: direction_ids provenance (sorted, so A+B == B+A) and an email_id
@@ -142,6 +144,20 @@ def build(*, fail,
         for gap in gaps_out:
             allowed.add(f"gap:{gap['gap_id']}")
             allowed.add(f"later:{gap['item_key']}")
+        # EP1.2: freeze the CURRENT slice of the selected direction(s) into this
+        # email. The frozen rows (never a live re-read) are what Stage 5 hands to
+        # the model and validator, and each row's stable source id is the only
+        # legal way to cite the user's own experience.
+        materials_out = []
+        for material_direction_id in direction_ids:
+            for material in (direction_materials or {}).get(material_direction_id) or []:
+                material_id = material["material_id"]
+                materials_out.append({"direction_id": material_direction_id,
+                                      "material_id": material_id,
+                                      "question": material.get("question") or "",
+                                      "answer": material["answer"]})
+                allowed.add(direction_material_source(material_direction_id,
+                                                      material_id))
         idea_block = {"id": idea.get("id"), "title": idea.get("title"),
                       "idea_zh": idea.get("idea_zh") or ""}
         email_id = f"{pack.get('professor')}::{'+'.join(direction_ids)}::{idea.get('id')}"
@@ -171,6 +187,7 @@ def build(*, fail,
                              "candidate_state": idea.get("_state_fingerprint")},
             "user_supplement": note or "",
             "contact_evidence": contact_evidence,
+            "direction_materials": materials_out,
             "cross_direction": (
                 {"group_id": group_entry.get("group_id"),
                  "direction_ids": list(group_entry.get("direction_ids") or []),
