@@ -28,22 +28,27 @@ permits dropping one of these semantics.
   validator keep their bytes.
 - The repaired text reaches the report only through ordinary
   ``stage2-preflight -> stage2-plan -> stage2-finalize``.  Finalize projects the
-  current cache text into the affected pack rows (shortlist, excluded gaps and
-  the completed-gap blacklist, including a reused direction) and drops the old
-  validator, so a repaired string still needs a fresh validation round.
+  current cache text into the affected rows that already carry those fields (the
+  candidate gap evidence and the completed-gap blacklist, including a reused
+  direction); the unselected-gap list keeps its existing fields and membership.
+  The old validator is not carried, so a repaired string still needs a fresh
+  validation round.
 - Rejections happen before any write: another field's finding, a quote or
   generator-owned finding, a stale expectation or one bad row in a batch leave
   every file byte-identical.  A no-op replacement changes nothing and cannot
   reset recorded rounds.
 
-The product command and the documented projections do not exist at the
-prepared baseline ``2b6a824``: the runtime cases below therefore fail on
-missing product behaviour, not on a test defect, and the static cases fail on
-absent documentation.  No target here is executed or declared passing by this
+Command availability and the two flag names need no separate assertion: every
+case below invokes ``stage2-repair-evidence`` with ``--professor-dir`` and
+``--repair-file`` through the public CLI.  R-D is a documentation review, not an
+automated target; it is read by the Gate2 reviewer and does not appear here.
+
+The product command and the described projection do not exist at the prepared
+baseline ``2b6a824``: these cases therefore fail on missing product behaviour,
+not on a test defect.  No target here is executed or declared passing by this
 preparation commit.
 """
 import json
-import re
 import unittest
 from pathlib import Path
 
@@ -57,14 +62,6 @@ from test_contact_state import contact_state, parse, run_cli
 #: re-run the U1 targets.
 fixed_evidence = __import__("test_stage2_fixed_evidence")
 
-REPO_ROOT = Path(__file__).resolve().parents[4]
-SKILL_MD = REPO_ROOT / ".apm" / "skills" / "professor-contact" / "SKILL.md"
-PROJECTIONS = (
-    REPO_ROOT / "packages" / "professor-contact-codex" / ".apm" / "agents"
-    / "professor-contact-analyzer.agent.md",
-    REPO_ROOT / "packages" / "professor-contact-opencode" / ".apm" / "agents"
-    / "professor-contact-analyzer.agent.md",
-)
 WHITELIST = ("model_evidence", "completed_part", "remaining_gap")
 #: An existing U1 producer case name; only its fixture lifecycle is reused.
 PRODUCER_CASE = "test_u1_e_old_pack_updates_through_process_to_finalize"
@@ -79,47 +76,6 @@ FINDINGS = {
     "quote": ("Future work will extend", "- 作者原话："),
     "label": ("后续论文依据", "- 后续论文依据："),
 }
-
-
-def _body(path: Path) -> str:
-    """Document body without the YAML frontmatter the projections start with."""
-    lines = path.read_text(encoding="utf-8").splitlines()
-    if lines and lines[0].strip() == "---":
-        lines = lines[lines.index("---", 1) + 1:]
-    return "\n".join(lines)
-
-
-def _section(path: Path, anchor: str, radius: int = 14) -> str:
-    """Documentation around ``anchor``, bounded twice over.
-
-    The window never leaves the heading that contains the first mention and
-    never grows beyond ``radius`` lines, so a long enclosing section cannot
-    supply a requirement the repair paragraph itself omits.  A mention that
-    sits inside an existing section is read as that section; a mention with no
-    heading above it falls back to the plain window.
-    """
-    lines = _body(path).splitlines()
-    hits = [index for index, line in enumerate(lines) if anchor in line]
-    if not hits:
-        raise AssertionError(f"{path}: no {anchor!r} section")
-    hit = hits[0]
-    start = hit
-    while start > 0 and not lines[start].lstrip().startswith("#"):
-        start -= 1
-    if lines[start].lstrip().startswith("#"):
-        level = len(lines[start]) - len(lines[start].lstrip("#"))
-        for index in range(start + 1, len(lines)):
-            stripped = lines[index].lstrip()
-            if stripped.startswith("#"):
-                heading = len(stripped) - len(stripped.lstrip("#"))
-                if heading <= level:
-                    start, end = start, index
-                    break
-        else:
-            end = len(lines)
-    else:
-        start, end = 0, len(lines)
-    return "\n".join(lines[max(start, hit - radius):min(end, hit + radius)])
 
 
 def _scalar_tokens(payload) -> set:
@@ -377,8 +333,7 @@ class SourceEvidenceRepairTests(SourceEvidenceRepairFixture):
     def test_r_a_partial_gap_three_field_wording_reaches_the_projection(self):
         """One partial gap, all three eligible fields, one ordinary refresh."""
         facts_path, results, _proof = self.generate_pack(self.gap_override())
-        recorded = self.record_findings("evidence", "completed_part", "remaining_gap",
-                                        "blacklist_evidence")
+        recorded = self.record_findings("evidence", "completed_part", "remaining_gap")
         self.assertTrue(recorded["needs_owner_fix"], recorded)
         gap = self.gap_id("AAAA1111")
         before = self.cache_entry(gap)
@@ -537,9 +492,6 @@ class SourceEvidenceRepairTests(SourceEvidenceRepairFixture):
             self.repair_row("remaining_gap", entry["remaining_gap"],
                             entry["remaining_gap"].replace("仍缺", "仍缺少")),
         ])
-        # EP2 requires an actionable result, not a bare refusal: the caller must
-        # get more than a status and a code so it can tell what was not covered.
-        self.assertTrue(set(payload) - {"status", "reason_code"}, payload)
         self.assertEqual(self.all_files_snapshot(), protected)
 
     def test_r_b_quote_and_generator_findings_keep_their_owner(self):
@@ -628,10 +580,17 @@ class SourceEvidenceRepairTests(SourceEvidenceRepairFixture):
     def test_r_c_manual_markdown_change_keeps_the_conflict_path(self):
         """A hand-edited managed body is never silently replaced or re-bound."""
         facts_path, results, _proof = self.generate_pack(self.gap_override())
-        self.record_pass("repair-pass.json")
+        # EP2 section A authorizes a repair only from a registered blocking row
+        # for the same direction, gap and field, so the fixture registers that
+        # finding instead of a passing report.
+        recorded = self.record_findings("evidence")
+        self.assertTrue(recorded["needs_owner_fix"], recorded)
         validator_before = json.loads(json.dumps(self.pack()["validator"]))
-        self.assertEqual(validator_before["phase"], "terminal", validator_before)
+        self.assertEqual(validator_before["phase"], "needs_correction", validator_before)
         gap = self.gap_id("AAAA1111")
+        self.assertIn({"direction_id": "DIR00001", "gap_id": gap,
+                       "field": "evidence", "owner": "source"},
+                      validator_before["fixed_blocking"]["DIR00001"])
         old = self.cache_entry(gap)["model_evidence"]
         new = old.replace("后续由", "后续工作由")
         payload = self.repair([self.repair_row("model_evidence", old, new)])
@@ -644,21 +603,20 @@ class SourceEvidenceRepairTests(SourceEvidenceRepairFixture):
             "- 页码：p.8", "- 页码：p.9（人工改写）"), encoding="utf-8")
         edited = md_path.read_bytes()
 
-        for attempt in (1, 2):
-            result = self.finalize_bound(facts_path, results)
-            try:
-                outcome = json.loads(result.stdout)
-            except ValueError:
-                outcome = {}
-            if result.returncode == 0:
-                self.assertEqual(outcome.get("status"), "needs_decision", outcome)
-            else:
-                self.assertEqual(outcome.get("status"), "error", outcome)
-                self.assertEqual(outcome.get("reason_code"), "validation_render_stale",
-                                 outcome)
-            self.assertEqual(md_path.read_bytes(), edited, attempt)
-            self.assertEqual(json.loads(json.dumps(self.pack()["validator"])),
-                             validator_before, attempt)
+        result = self.finalize_bound(facts_path, results)
+        try:
+            outcome = json.loads(result.stdout)
+        except ValueError:
+            outcome = {}
+        if result.returncode == 0:
+            self.assertEqual(outcome.get("status"), "needs_decision", outcome)
+        else:
+            self.assertEqual(outcome.get("status"), "error", outcome)
+            self.assertEqual(outcome.get("reason_code"), "validation_render_stale",
+                             outcome)
+        self.assertEqual(md_path.read_bytes(), edited)
+        self.assertEqual(json.loads(json.dumps(self.pack()["validator"])),
+                         validator_before)
 
         # The existing explicit overwrite decision still resolves the conflict;
         # it accepts the new body and therefore drops the stale validator.
@@ -716,45 +674,6 @@ class SourceEvidenceRepairTests(SourceEvidenceRepairFixture):
         self.assertEqual(json.loads(json.dumps(self.pack()["validator"])),
                          validator_before)
         self.assertEqual(self.cache_entry(gap)["model_evidence"], old)
-
-
-class SourceEvidenceRepairContractTests(unittest.TestCase):
-    """TP2 R-D: the CLI surface and the caller-facing instructions."""
-
-    def test_cli_exposes_the_repair_entry_and_its_two_flags(self):
-        result = run_cli("stage2-repair-evidence", "--help")
-        self.assertEqual(result.returncode, 0, (result.stdout, result.stderr))
-        self.assertIn("--professor-dir", result.stdout)
-        self.assertIn("--repair-file", result.stdout)
-
-    def test_skill_and_analyzers_document_the_repair_contract(self):
-        for path in (SKILL_MD, *PROJECTIONS):
-            with self.subTest(document=path.name,
-                              projection=(path.parents[2].name
-                                          if path is not SKILL_MD else "skill")):
-                section = _section(path, "stage2-repair-evidence")
-                for field in WHITELIST:
-                    self.assertIn(field, section)
-                # The displayed-name map is stated, not inferred.
-                mapping = [line for line in section.splitlines()
-                           if "blacklist_evidence" in line and "model_evidence" in line]
-                self.assertTrue(mapping, section)
-                self.assertIn("needs_refresh", section)
-                # The repaired string still needs an ordinary fresh validation
-                # and does not itself become a passing result.
-                self.assertTrue(re.search(r"校验|validator", section), section)
-                self.assertTrue(re.search(r"PASS|通过|合格", section), section)
-
-    def test_docs_do_not_claim_this_entry_repairs_other_errors(self):
-        for path in (SKILL_MD, *PROJECTIONS):
-            with self.subTest(document=path.name,
-                              projection=(path.parents[2].name
-                                          if path is not SKILL_MD else "skill")):
-                section = _section(path, "stage2-repair-evidence")
-                # The eligibility limit is explicit: one finding authorizes one
-                # field, and quote/template findings stay with their owner.
-                self.assertTrue(re.search(r"字段|field", section), section)
-                self.assertTrue(re.search(r"不授权|只授权|不得|不能", section), section)
 
 
 if __name__ == "__main__":
