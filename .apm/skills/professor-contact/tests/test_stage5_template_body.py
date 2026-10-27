@@ -12,6 +12,20 @@ SPEC.loader.exec_module(runner)
 
 
 class TestStage5TemplateBody(unittest.TestCase):
+    def test_followup_date_is_formatted_only_for_body(self):
+        for original, expected in (("2026-10-01", "2026年10月1日"),
+                                   ("2026年10月1日", "2026年10月1日"),
+                                   (None, "")):
+            with self.subTest(original=original):
+                choices = {"initial_sent_date": original}
+                draft, protected, _ = runner.assemble_followup_draft(
+                    {"email_id": "synthetic-email"}, choices, {},
+                    "先日{{初回送信日}}にご連絡しました。")
+                self.assertIn(f"先日{expected}にご連絡しました。", draft)
+                if expected:
+                    self.assertIn(expected, protected)
+                self.assertEqual(choices, {"initial_sent_date": original})
+
     def assemble(self, template, *, followup=False, **choices):
         email = {"email_id": "synthetic-email", "professor": "試験 教授"}
         choices = {"signature_name": "試験 太郎", "initial_sent_date": "2026年10月1日",
@@ -83,3 +97,4 @@ class TestStage5TemplateBody(unittest.TestCase):
                 with self.subTest(followup=followup, template=template):
                     with contextlib.redirect_stdout(io.StringIO()), self.assertRaises(SystemExit):
                         self.assemble(template, followup=followup)
+
