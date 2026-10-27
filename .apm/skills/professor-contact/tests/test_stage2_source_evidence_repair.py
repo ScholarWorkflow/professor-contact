@@ -331,9 +331,17 @@ class SourceEvidenceRepairFixture(unittest.TestCase):
                 names.add(value)
             elif isinstance(value, dict):
                 if isinstance(value.get("owner"), str):
+                    # A {field, owner} or {fields, owner} record.
                     names.add(value["owner"])
+                    return
+                # A {field: owner} map whose values are the owner names.  A
+                # record-shaped mapping keeps its field keys out of the names.
+                record_like = "field" in value or "fields" in value
                 for nested in value.values():
-                    if not isinstance(nested, str):
+                    if isinstance(nested, str):
+                        if not record_like:
+                            names.add(nested)
+                    else:
                         collect(nested)
             elif isinstance(value, list):
                 for entry in value:
