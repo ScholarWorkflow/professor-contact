@@ -10,6 +10,7 @@ instance (which would fork the business-failure state).
 """
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
 import types
@@ -19,7 +20,25 @@ from typing import Any
 
 CANDIDATE_META_PREFIX = "<!-- candidate_meta: "
 STAGE3_SCOPE_PREFIX = "<!-- stage3_scope: "
+# The DEFAULT bound only. The effective bound of a cycle is the shared
+# `round_limit` (this base plus every round a human explicitly granted), so no
+# round decision may compare against this constant directly.
 STAGE3_VALIDATION_MAX_ROUNDS = 2
+
+# The continuation policy (effective round limit, recorded round) is shared with
+# the Stage-2 helpers and the Stage-3 record entry.  It is loaded by path because
+# this directory is not guaranteed to be on ``sys.path``.
+_VALIDATION_CONTINUATION_PATH = Path(__file__).with_name("_validation_continuation.py")
+_VALIDATION_CONTINUATION_SPEC = importlib.util.spec_from_file_location(
+    "_validation_continuation", _VALIDATION_CONTINUATION_PATH)
+if _VALIDATION_CONTINUATION_SPEC is None or _VALIDATION_CONTINUATION_SPEC.loader is None:
+    raise RuntimeError(
+        f"cannot load validation continuation helpers: {_VALIDATION_CONTINUATION_PATH}")
+_validation_continuation = importlib.util.module_from_spec(_VALIDATION_CONTINUATION_SPEC)
+_VALIDATION_CONTINUATION_SPEC.loader.exec_module(_validation_continuation)
+
+round_limit = _validation_continuation.round_limit
+recorded_round = _validation_continuation.recorded_round
 
 def _stage3_marker_payload(text: str, prefix: str, *, fail) -> dict:
     try:
@@ -235,27 +254,36 @@ def _require_stage3_handoff_round(state: dict, render_sha: str,
     committed ``validator`` block — never the emptiness of a temporary
     directory.  A caller cannot reopen round 1 over a recorded round, cannot
     start round 2 without a previous round whose open findings were corrected
-    and committed under the existing correction constraints, and cannot pass
-    ``round=2`` to bypass an owed correction.
+    and committed under the existing correction constraints, and cannot pass a
+    later round to bypass an owed correction.
+
+    The bound is the cycle's effective limit: the default two rounds, plus every
+    additional round the human explicitly granted on this exact exhausted state.
+    A round past that limit, or a round that skips the next one, is refused
+    before any handoff file exists.
     """
     validator = state.get("validator") if isinstance(state.get("validator"), dict) else {}
-    raw_round = validator.get("round")
-    if isinstance(raw_round, bool) or not isinstance(raw_round, int):
-        raw_round = 0
+    current = recorded_round(validator)
+    limit = round_limit(validator)
     pending = validator.get("pending") if isinstance(validator.get("pending"), dict) else {}
     if requested_round == 1:
-        if raw_round >= 1:
+        if current >= 1:
             fail("validation_round_already_recorded",
                  f"this professor already has a recorded Stage-3 validator round "
-                 f"{raw_round}; a first validation round cannot be prepared again")
+                 f"{current}; a first validation round cannot be prepared again")
         return
-    if raw_round == 0:
+    if current == 0:
         fail("validation_round_sequence_invalid",
-             "round 2 needs a recorded previous round whose findings were corrected")
-    if raw_round >= STAGE3_VALIDATION_MAX_ROUNDS:
+             f"round {requested_round} needs a recorded previous round whose findings "
+             "were corrected")
+    if requested_round > limit:
         fail("validation_rounds_exhausted",
-             f"Stage-3 style validation is bounded to {STAGE3_VALIDATION_MAX_ROUNDS} rounds; "
+             f"Stage-3 style validation is bounded to {limit} round(s) for this cycle; "
              "the terminal record already exists")
+    if requested_round != current + 1:
+        fail("validation_round_sequence_invalid",
+             f"round {requested_round} skips the next recorded round {current + 1}; "
+             "every round is recorded in order")
     if validator.get("raw_verdict") != "fail":
         fail("validation_rounds_exhausted",
              "the previous validator round recorded no correction: the terminal "
@@ -263,7 +291,7 @@ def _require_stage3_handoff_round(state: dict, render_sha: str,
     if pending:
         fail("validation_correction_required",
              "complete the recorded Stage-3 correction with stage3-plan/finalize "
-             "--validation-file before preparing round 2")
+             f"--validation-file before preparing round {requested_round}")
     if validator.get("render_sha256") != render_sha:
         fail("validation_round_sequence_invalid",
              "the committed correction round does not carry the current render")

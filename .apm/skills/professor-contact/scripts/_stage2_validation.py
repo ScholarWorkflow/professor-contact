@@ -11,10 +11,37 @@ never builds a second failure channel.
 from __future__ import annotations
 
 import copy
+import importlib.util
 import json
 import re
 from pathlib import Path
 import types
+
+
+# The human-authorized continuation policy is shared with Stage 3 and the
+# preflight gate, so it lives in its own sibling module.  It is loaded by path
+# for the same reason the runner does: neither the runner nor this helper may
+# assume the scripts directory is on ``sys.path``.
+_VALIDATION_CONTINUATION_PATH = Path(__file__).with_name("_validation_continuation.py")
+_VALIDATION_CONTINUATION_SPEC = importlib.util.spec_from_file_location(
+    "_validation_continuation", _VALIDATION_CONTINUATION_PATH)
+if _VALIDATION_CONTINUATION_SPEC is None or _VALIDATION_CONTINUATION_SPEC.loader is None:
+    raise RuntimeError(
+        f"cannot load validation continuation helpers: {_VALIDATION_CONTINUATION_PATH}")
+_validation_continuation = importlib.util.module_from_spec(_VALIDATION_CONTINUATION_SPEC)
+_VALIDATION_CONTINUATION_SPEC.loader.exec_module(_validation_continuation)
+
+BASE_ROUND_LIMIT = _validation_continuation.BASE_ROUND_LIMIT
+CONTINUATION_FIELD = _validation_continuation.CONTINUATION_FIELD
+HISTORY_FIELD = _validation_continuation.HISTORY_FIELD
+FAIL_AFTER_MAX = _validation_continuation.FAIL_AFTER_MAX
+round_limit = _validation_continuation.round_limit
+recorded_round = _validation_continuation.recorded_round
+terminal_failure_label = _validation_continuation.terminal_failure_label
+grant_chain_error = _validation_continuation.grant_chain_error
+limit_at_round = _validation_continuation.limit_at_round
+remember_round = _validation_continuation.remember_round
+history_row = _validation_continuation.history_row
 
 
 def build(*, Stage2Context,
@@ -520,8 +547,9 @@ def build(*, Stage2Context,
             return None, "validator_container"
         if validator.get("schema") != 2:
             return None, "validator_schema"
-        recorded_round = validator.get("round")
-        if isinstance(recorded_round, bool) or recorded_round not in (1, 2):
+        recorded = recorded_round(validator)
+        limit = round_limit(validator)
+        if recorded < 1 or recorded > limit:
             return None, "validator_round"
         phase = validator.get("phase")
         if phase not in ("needs_correction", "awaiting_second_validation", "terminal"):
@@ -541,15 +569,38 @@ def build(*, Stage2Context,
         for did, row in results.items():
             if did not in allowed or not isinstance(row, dict):
                 return None, "validator_results"
+            # `needs_correction` is the historical round-1 label; the extended
+            # cycle keeps the same vocabulary plus its own exhaustion label.
             if row.get("result") not in ("pass", "skipped", "needs_correction",
-                                         "fail_after_2_rounds"):
+                                         "fail_after_2_rounds",
+                                         "fail_after_max_rounds"):
                 return None, "validator_result_value"
             row_round = row.get("rounds")
-            if isinstance(row_round, bool) or row_round not in (1, 2):
+            if isinstance(row_round, bool) or not isinstance(row_round, int) \
+                    or not 1 <= row_round <= limit:
                 return None, "validator_result_rounds"
-            if row_round > recorded_round or (row.get("result") == "fail_after_2_rounds"
-                                               and (recorded_round != 2 or row_round != 2)):
+            if row_round > recorded:
                 return None, "validator_result_rounds"
+            # A recorded failure names the bound it actually exhausted.  A later
+            # grant raises the cycle's limit but never rewrites that history, so
+            # the row is compared with the bound in force AT ITS OWN ROUND, not
+            # with the cycle's current limit.
+            bound = limit_at_round(validator, row_round)
+            if bound is None:
+                return None, "validator_result_rounds"
+            if row.get("result") == "fail_after_2_rounds":
+                # The historical label belongs to a genuinely unextended
+                # two-round exhaustion only.
+                if row_round != BASE_ROUND_LIMIT or bound != BASE_ROUND_LIMIT:
+                    return None, "validator_result_rounds"
+            if row.get("result") == "fail_after_max_rounds":
+                max_rounds = row.get("max_rounds")
+                # The extended label is legal only where a recorded grant really
+                # raised the bound that this round exhausted.
+                if isinstance(max_rounds, bool) or not isinstance(max_rounds, int) \
+                        or max_rounds <= BASE_ROUND_LIMIT or max_rounds != bound \
+                        or row_round != max_rounds:
+                    return None, "validator_result_rounds"
             if not isinstance(row.get("issues"), list):
                 return None, "validator_result_issues"
         corrected = validator.get("correction_applied_direction_ids")
@@ -558,14 +609,18 @@ def build(*, Stage2Context,
                 or len(set(corrected)) != len(corrected):
             return None, "validator_corrections"
         unresolved = [did for did in pending if did not in set(corrected)]
+        # An open correction can be any recorded round of the cycle: the first
+        # round of an unextended cycle, or a later round a human grant reopened.
+        # A later round whose recorded jobs are all applied keeps the phase until
+        # the next record replaces it, so only round 1 requires open work here.
         if phase == "needs_correction":
-            if recorded_round != 1 or not pending or not unresolved:
+            if not pending or (recorded == 1 and not unresolved):
                 return None, "validator_phase_state"
         elif phase == "awaiting_second_validation":
-            if recorded_round != 1 or not pending or unresolved:
+            if recorded != 1 or not pending or unresolved:
                 return None, "validator_phase_state"
         else:
-            if recorded_round == 1 and pending:
+            if recorded == 1 and pending:
                 return None, "validator_terminal_pending"
             if any(row.get("result") == "needs_correction" for row in results.values()):
                 return None, "validator_terminal_result"
@@ -591,8 +646,8 @@ def build(*, Stage2Context,
         if validator.get("schema") != 2:
             fail("validation_evidence_not_recorded",
                  "record the raw style-validator report with stage2-record-validation first")
-        recorded_round = validator.get("round")
-        if isinstance(recorded_round, bool) or recorded_round not in (1, 2):
+        current_round = recorded_round(validator)
+        if current_round < 1:
             fail("validation_evidence_not_recorded", "recorded Stage-2 validation round is malformed")
         try:
             raw = validation_path.read_bytes()
@@ -629,10 +684,15 @@ def build(*, Stage2Context,
         phase = validator.get("phase")
         if phase not in ("needs_correction", "awaiting_second_validation", "terminal"):
             fail("validation_evidence_not_recorded", "recorded Stage-2 validation phase is invalid")
-        if (phase in ("needs_correction", "awaiting_second_validation") and recorded_round != 1) \
+        # A correction phase may belong to any recorded round of the cycle: the
+        # first round of an unextended cycle, or a later round a human grant
+        # reopened.  `awaiting_second_validation` stays the round-1-only state the
+        # refine writes, so an extended cycle keeps `needs_correction` while its
+        # correction jobs are being completed.
+        if (phase == "awaiting_second_validation" and current_round != 1) \
                 or (phase == "awaiting_second_validation" and not pending):
             fail("validation_evidence_not_recorded", "recorded Stage-2 phase and round do not agree")
-        if phase == "needs_correction" and not unresolved:
+        if phase == "needs_correction" and current_round == 1 and not unresolved:
             fail("validation_evidence_not_recorded", "recorded correction phase has no open directions")
         if phase == "awaiting_second_validation" and unresolved:
             fail("validation_evidence_not_recorded", "recorded correction is not complete")
@@ -983,7 +1043,14 @@ def build(*, Stage2Context,
         applied.update(rewrites)
         updated_validator["correction_applied_direction_ids"] = sorted(applied)
         still_open = set(pending) - applied
-        updated_validator["phase"] = "needs_correction" if still_open else "awaiting_second_validation"
+        # Only the round-1 record can be waiting for its second round; a granted
+        # cycle's later record has no "second validation" left to await, so a
+        # completed correction there simply keeps the current phase until the
+        # next record replaces it.
+        if still_open:
+            updated_validator["phase"] = "needs_correction"
+        elif recorded_round(validator) == 1:
+            updated_validator["phase"] = "awaiting_second_validation"
         updated_validator["render_sha256"] = md_result["sha256"]
         updated_validator["pack_sha256"] = stage2_pack_content_fingerprint(updated_pack)
         updated_validator["updated_at"] = now_utc()
@@ -1000,39 +1067,53 @@ def build(*, Stage2Context,
         if error or pack is None:
             fail("missing_input_pack", f"input pack unreadable: {professor_dir / INPUT_PACK}")
         previous = pack.get("validator") if isinstance(pack.get("validator"), dict) else {}
-        previous_round = previous.get("round", 0)
-        if isinstance(previous_round, bool) or not isinstance(previous_round, int) or previous_round < 0:
+        previous_round = recorded_round(previous)
+        if previous.get("round") is not None and previous_round == 0:
             fail("validation_evidence_not_recorded", "existing Stage-2 validator round is malformed")
+        # The effective limit is never read from a block that does not form a
+        # valid, ordered grant chain: a fabricated limit must not admit a round.
+        chain_error = grant_chain_error(previous)
+        if chain_error:
+            fail("validation_evidence_not_recorded",
+                 f"recorded Stage-2 continuation is not a valid grant chain: {chain_error}")
+        limit = round_limit(previous)
         round_no = 1
         previous_pending = previous.get("pending") if isinstance(previous.get("pending"), dict) else {}
         state_error = None
         if previous.get("schema") == 2:
-            if previous_round >= 2:
+            if previous_round >= limit:
                 state_error = ("validation_rounds_exhausted",
-                               "Stage-2 style validation is bounded to two rounds; "
-                               "the terminal record already exists")
+                               f"Stage-2 style validation is bounded to {limit} round(s) for "
+                               "this cycle; the terminal record already exists")
+            elif previous_round < 1 \
+                    or previous.get("phase") not in ("needs_correction",
+                                                     "awaiting_second_validation") \
+                    or not isinstance(previous.get("correction_applied_direction_ids"), list) \
+                    or any(not isinstance(did, str)
+                           for did in previous.get("correction_applied_direction_ids")) \
+                    or set(previous_pending) - set(
+                        previous.get("correction_applied_direction_ids") or []):
+                state_error = ("validation_correction_required",
+                               "complete all recorded Stage-2 correction jobs before "
+                               "recording the next round")
             else:
-                corrected = previous.get("correction_applied_direction_ids")
-                if previous_round != 1 or previous.get("phase") != "awaiting_second_validation" \
-                        or not isinstance(corrected, list) \
-                        or any(not isinstance(did, str) for did in corrected) \
-                        or set(previous_pending) - set(corrected):
-                    state_error = ("validation_correction_required",
-                                   "complete all recorded Stage-2 correction jobs before "
-                                   "recording the second round")
-                else:
-                    round_no = 2
+                round_no = previous_round + 1
 
-        evidence = stage2_validation_report(Path(args.validation_file), professor_dir, pack,
-                                            require_repairable=(state_error is None and round_no == 1))
+        evidence = stage2_validation_report(
+            Path(args.validation_file), professor_dir, pack,
+            require_repairable=(state_error is None and round_no == 1))
         if state_error:
             fail(*state_error)
-        if round_no == 2:
+        if round_no > 1:
             old_render, _body = stage2_bound_render(professor_dir, pack)
             if old_render != previous.get("render_sha256") \
                     or stage2_pack_content_fingerprint(pack) != previous.get("pack_sha256"):
                 fail("validation_evidence_not_recorded",
                      "the managed render or input pack changed after Stage-2 correction")
+        # An extended cycle fails at its own limit, and only then: an unextended
+        # cycle keeps the historical two-round label.
+        exhausted = round_no >= limit
+        failure_label = terminal_failure_label(previous) if exhausted else "needs_correction"
         directions = pack.get("directions", [])
         results = {}
         at = now_utc()
@@ -1040,10 +1121,12 @@ def build(*, Stage2Context,
             did = direction_machine_id(direction)
             issues = evidence["issues_by_direction"].get(did, [])
             blocking = evidence["blocking_by_direction"].get(did, [])
-            result = ("fail_after_2_rounds" if round_no == 2 else "needs_correction") \
-                if blocking else "pass"
-            results[did] = {"result": result, "rounds": round_no, "issues": issues,
-                            "validated_at": at}
+            result = failure_label if blocking else "pass"
+            row = {"result": result, "rounds": round_no, "issues": issues,
+                   "validated_at": at}
+            if result == FAIL_AFTER_MAX:
+                row["max_rounds"] = limit
+            results[did] = row
         pending = {did: issues for did, issues in evidence["blocking_by_direction"].items()}
         fixed_blocking = {}
         for did, entries in evidence.get("fixed_blocking_by_direction", {}).items():
@@ -1058,36 +1141,52 @@ def build(*, Stage2Context,
                                  "field": owner.get("field"), "owner": owner.get("owner")})
             if rows:
                 fixed_blocking[did] = rows
-        phase = "needs_correction" if round_no == 1 and pending else "terminal"
-        if round_no == 2:
-            phase = "terminal"
+        phase = "terminal" if exhausted or not pending else "needs_correction"
+        # The content fingerprint ignores the validator block itself, so the
+        # binding of this round can be computed before the block is built.
+        pack_sha = stage2_pack_content_fingerprint(pack)
         updated = dict(pack)
         validator = {
             "schema": 2,
             "round": round_no,
+            "round_limit": limit,
             "phase": phase,
             "render_sha256": evidence["render_sha256"],
             "validation_render_sha256": evidence["render_sha256"],
             "validation_sha256": evidence["validation_sha256"],
-            "pack_sha256": None,
+            "pack_sha256": pack_sha,
             "raw_verdict": evidence["verdict"],
             "notes": evidence["notes"],
             "issues": evidence["issues"],
             "results": results,
             "pending": pending,
             "fixed_blocking": fixed_blocking,
-            "correction_applied_direction_ids": sorted(
-                previous.get("correction_applied_direction_ids") or []) if round_no == 2 else [],
+            # A terminal record keeps the cycle's cumulative correction set (the
+            # historical round-2 shape).  A record that leaves an open correction
+            # starts that round's own correction set at empty: the earlier round's
+            # rewrites were already proven by the render this report validated.
+            "correction_applied_direction_ids": (
+                sorted(previous.get("correction_applied_direction_ids") or [])
+                if exhausted else []),
             "updated_at": at,
         }
+        if previous.get(CONTINUATION_FIELD) is not None:
+            validator[CONTINUATION_FIELD] = copy.deepcopy(previous[CONTINUATION_FIELD])
+        validator[HISTORY_FIELD] = remember_round(previous, history_row(
+            round_no=round_no, results=results,
+            render_sha256=evidence["render_sha256"],
+            validation_file=str(Path(args.validation_file)),
+            validation_sha256=evidence["validation_sha256"],
+            recorded_at=at, pack_sha256=pack_sha,
+            max_rounds=limit if exhausted else None))
         updated["validator"] = validator
-        validator["pack_sha256"] = stage2_pack_content_fingerprint(updated)
         atomic_json(professor_dir / INPUT_PACK, updated)
         status = "needs_correction" if phase == "needs_correction" else "ok"
         emit({"status": status, "pack_path": str(professor_dir / INPUT_PACK),
               "updated": sorted(results), "round": round_no,
+              "round_limit": limit, "remaining": max(limit - round_no, 0),
               "raw_verdict": evidence["verdict"], "render_sha256": evidence["render_sha256"],
-              "needs_correction": bool(pending and round_no == 1),
+              "needs_correction": phase == "needs_correction",
               "fixed_blocking": fixed_blocking,
               "needs_owner_fix": bool(fixed_blocking),
               "terminal": phase == "terminal"})
