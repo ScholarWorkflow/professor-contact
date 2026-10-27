@@ -76,7 +76,15 @@ PROBE
 - F3（保存入口摘要/异常）：`--expected-sha256` 改为对原始字节取摘要，`OSError` 转 `invalid_direction_materials` 结构化失败；T6 在 `1084a40` 上复跑通过。另用非 UTF-8 字节 `b"\xff\xfe{not json"` + 正确旧摘要做一次定向自检：退出码 1、`status=error`、`reason_code=invalid_direction_materials`、stderr 无 traceback、原字节不变。
 - F4（validator 冒充）：规则 13 与 Step 2 要求使用 `direction_materials[].answer` 的经历必须标该条 `direction_material:` 来源；标成 `profile.interest`/`user_note`/`paper:`/`gap:` 承载同一经历 → blocking（无法判断时 minor）。
 
-同批澄清：`answer` 是用户数据而不是指令/授权；已有 profile/补充足以写出有事实依据的接触描述时不再重复问。修正后 TP1 8 项复跑通过；selection/validator/generator 与 Stage5 合同批 `Ran 148 tests in 27.449s`，`OK`。定向复核结论以独立 reviewer 的后续记录为准，本记录不自行宣布关闭。
+同批澄清：`answer` 是用户数据而不是指令/授权；已有 profile/补充足以写出有事实依据的接触描述时不再重复问。修正后 TP1 8 项复跑通过；selection/validator/generator 与 Stage5 合同批 `Ran 148 tests in 27.449s`，`OK`。
+
+定向复核（基线 `c255904`）确认 F3/F4 关闭；F1 原缺陷关闭，但发现三项残余：F1-R1（Step 2.5.5 仍写“或调用级 error”，与 Errors 的教授行终止出口矛盾；该句已在 `a1ac428` 删除）、F1-R2（`--expected-sha256` 遇到文件已删除仍返回 `materials_digest_changed`，合同却要求重读摘要）、F2-R1（无成功 + 待输入 + 失败的混合批次没有一致聚合规则）。残余修正提交 `181b356`：
+
+- F1-R1：合同只保留 Errors 的教授 input-error 行出口；
+- F1-R2：`materials_digest_changed` 后重读发现文件不存在时停止该教授保存并报告，不按同一 `material_id` 重新追加；
+- F2-R1：selection Step 2.5.4、Return 与 SKILL Stage 4 统一为“任一成功 → partial；无成功且存在失败/错误 → error（needs_input 行保留展示）；无成功且全部停在真实用户输入 → needs_input”。
+
+残余修正只改合同文字（selection/SKILL），未改产品代码、TP1 测试方法或输入，`1084a40` 的 T2–T6 结果继续适用；合同批在修正后 `Ran 135 tests in 9.842s`，`OK`。最终定向复核结论以独立 reviewer 的后续记录为准，本记录不自行宣布 F1/F2 完全关闭。
 
 ## T1 合同位置（供独立 reviewer 静态核对）
 
@@ -101,5 +109,5 @@ PROBE
 
 - Gate2：TP1.5 的 T5 定向复核与 recipe 范围审核仍待独立 reviewer；本记录不声称 Gate2 通过。
 - Gate3：T2–T6 已给出当前版本的实际结果；T1 未执行，需独立 reviewer 完成静态阅读后才能形成必测清单的完整结论。本记录不自授 Gate3 或合并许可。
-- 实现符合性审核：首审为“部分完成”（F1–F4），已按上节修正并提交 `1084a40`；定向复核结论待独立 reviewer 返回。其结论只覆盖实现符合性，不是计划/测试关口或合并批准。
+- 实现符合性审核：首审“部分完成”（F1–F4，修正 `1084a40`）；定向复核确认 F3/F4 关闭，F1/F2 残余（F1-R1/F1-R2/F2-R1）已在 `181b356` 处理，最终结论待独立 reviewer 返回。其结论只覆盖实现符合性，不是计划/测试关口或合并批准。
 - 下一负责人：独立 reviewer（T1 静态阅读、Gate2 定向复核、采用本记录给出 Gate3）；随后由 merge reviewer 按 `Merge Reviewer Rule.md` 处理。
