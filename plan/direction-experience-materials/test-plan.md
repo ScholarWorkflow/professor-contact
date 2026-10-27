@@ -101,7 +101,7 @@ PROBE
 - 准备时 PR head：`37dc2b92a2145ad8dfcd4edd5aa9ca6692e60934`（仅计划，无产品实现）。
 - 交付资产：
   - `.apm/skills/professor-contact/tests/test_direction_materials.py`：T2–T6 共 8 项，复用 `test_contact_state.py` 的 `BaseEnv`/`run_cli`、`_stage5_issue59_test_support.py` 的证据与核验写入器、`_stage4_handoff_test_support.py` 的行读取器；不新增运行平台。
-  - `plan/test-grouping/shards.json`：模块登记到 shard3，stage 记为 `mixed:stage4+stage5`，`seconds` 记实测 22.7s（同一跳过路径测两次：20.4s／25.0s），`tests` 记 8，`signals` 按文档规则记 stage3 3、stage4 3、stage5 6（CLI 子命令字符串权重 3）；分片与全库合计按清单逐项求和后为 85 个模块、1116 项用例、468.7s。`python3 scripts/check_test_shards.py` 返回 `OK: 85 test modules across 4 shards, each with a stage`。
+  - `plan/test-grouping/shards.json`：模块登记到 shard3，stage 记为 `mixed:stage4+stage5`，`seconds` 记实测 22.7s（同一跳过路径测两次：20.4s／25.0s），`tests` 记 8，`signals` 按文档规则记 stage3 3、stage4 3、stage5 6（CLI 子命令字符串权重 3）；分片与全库合计按清单逐项求和后为 85 个模块、1140 项用例、468.7s（三个原先缺 `tests` 字段的模块已按其 `unittest` 收集数补齐 8／8／8）；各分片的 `stages` 也改为按 `stage` 字段逐模块计数，使 README 的“模块数”与“阶段构成”两列一致。`python3 scripts/check_test_shards.py` 返回 `OK: 85 test modules across 4 shards, each with a stage`。
   - `plan/test-grouping/README.md`：按清单重新生成分片统计与逐模块表（85 行），并注明基线 `6e624e0` 的 1025 项／416.0s 实测未随新模块重算。
 - 有限预检（临时目录 `/tmp/pr149-prep-20261027`，未执行必测用例的断言）：
   - 解释器可用（Python 3.14.7）；模块 `py_compile` 通过，`unittest` 收集到 8 项。
@@ -130,7 +130,7 @@ Gate1/设计由独立审核记录给结论；Gate2待独立 reviewer 审核本 r
 
 TP1.2（本地测试工程师，2026-10-27）：按 §2 补齐可执行 recipe（受测入口、素材文件与来源 ID、冻结字段、保存入口标志与输出、解释器、隔离目录、命令、逐项目标映射、夹具构成），新增 T2–T6 的 8 项 producer 测试，并把模块连同 `seconds`/`tests`/`signals` 登记进 shard3、按清单重新生成 `plan/test-grouping/README.md` 的表。必测清单 T1–T6 与检查入口未改，没有新增测试目标或样本矩阵；产品实现与正式结果仍待完成。
 
-TP1.2 复审修正（同一提交内）：按独立实现符合性审核 F1–F3 补齐分片清单的规模与信号字段并重生成 README；F5 把 T3 的来源断言从“素材 ID 出现在正文”收紧为“① 行来源列不等于裸机器 ID”；F6 的越界目录同时覆盖 program_root 之外与 `教授研究` 之外两种；F7 更正模块 docstring 的计划版本。必测目标与样本数量不变。
+TP1.2 复审修正（同一提交内）：按独立实现符合性审核 F1–F3 补齐分片清单的规模与信号字段并重生成 README；F5 把 T3 的来源断言从“素材 ID 出现在正文”收紧为“① 行来源列不等于裸机器 ID”；F6 的越界目录同时覆盖 program_root 之外与 `教授研究` 之外两种；F7 更正模块 docstring 的计划版本。第二轮复审 N1–N3 又修：README 补充 `mixed:` 标签与“仅夹具阶段不计入标签”的规则说明；`shards.json` 的 `stages` 改为按 `stage` 逐模块计数并补齐三个模块的 `tests`，`totals.tests` 由 1116 修正为 1140；README 写明用例数的求和口径。必测目标与样本数量不变。
 
 TP1.1：按独立审核补齐T4同一更新序列中“Stage4已重冻但模型结果仍旧”的拒绝预期；未新增编号、样本矩阵或真实模型测试。其余目标和Gate2/Gate3待办不变。
 
