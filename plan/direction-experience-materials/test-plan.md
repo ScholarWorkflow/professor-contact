@@ -1,6 +1,6 @@
 # 方向真实素材：测试计划
 
-- Test plan revision: TP1.2；2026-10-27；对应 [EP1.1/R1](execution-plan.md)。
+- Test plan revision: TP1.3；2026-10-28；对应 [EP1.1/R1](execution-plan.md)。
 - Target repository baseline: ScholarWorkflow/professor-contact `b67dd3ca4d29dfc78f57988564b219c71b582674`。
 - Proposed review status: pending。测试资产与可执行 recipe 已按本计划准备；产品新能力尚未实现，T1–T6 全部未执行，不声明 PASS。第一关由独立 reviewer 确认清单；第二关待审核本轮 recipe 的可执行性与范围；第三关未执行。
 - 本文件是唯一完整测试计划与步骤承载位置，不另建问卷评估、采集器、判定器或证据账本。
@@ -27,7 +27,7 @@ T1规则观察不是模型行为实测；T2–T6合成数据验证正式产品�
 | 受测仓库 | `ScholarWorkflow/professor-contact`，从 `main` 的 `b67dd3c` 之后的产品实现提交检出；执行时用 `git rev-parse HEAD` 记录实际提交 |
 | 测试模块 | `.apm/skills/professor-contact/tests/test_direction_materials.py`（新增 8 项） |
 | 解释器 | `/nix/store/0kcws5blwbdyxqxjd1w8hjipz61xny3k-python3-3.14.7/bin/python3`（Python 3.14.7）。该路径不存在时改用本机已装的 Python 3.12+，并在执行记录写明实际路径 |
-| 工作目录 | 受测 checkout 的 `.apm/skills/professor-contact/tests` |
+| 工作目录 | 起始于受测 checkout 仓库根目录；执行步骤 1 的 `cd` 后进入 `.apm/skills/professor-contact/tests` |
 | 隔离目录 | `RUN=$(mktemp -d /tmp/contact-direction-materials.XXXXXX)`；`TMPDIR="$RUN/tmp"`，所有合成教授、素材、邮件和状态只落在该目录下 |
 | 外部依赖 | 无。不读真实 profile/邮件/用户素材，不连 Zotero、浏览器、MCP，不需要安装、模型 provider 或 eval 服务 |
 | 素材保存入口 | `contact_state.py direction-materials-save`（EP1.1 的拟名；实现可一致重命名，重命名时本表与测试模块须在同一提交内同步） |
@@ -52,6 +52,8 @@ T1规则观察不是模型行为实测；T2–T6合成数据验证正式产品�
 | T6 保存入口防错归属/覆盖 | `DirectionMaterialsSaveGuardTests.test_t6_save_rejects_foreign_binding_and_stale_digest` |
 
 T1 无测试方法：由独立 reviewer 一次静态阅读实现后的 selection/coordinator/generator 合同与 `pending_materials` 接线，记录具体文件与字段位置。
+
+下列命令从受测 checkout 仓库根目录开始，在同一个 Bash 会话中依次运行；步骤 1 切换目录后，步骤 2 与单项复跑沿用该目录及已设置的变量。
 
 1. 正式执行前先确认受测版本包含测试模块与产品入口：
 
@@ -127,6 +129,8 @@ PROBE
 Gate1/设计由独立审核记录给结论；Gate2待独立 reviewer 审核本 recipe 的可执行性与范围；Gate3待有效结果。产品实施与正式执行均非本 PR 交付，本轮不声明可合并或已完成产品。
 
 ## 修订记录
+
+TP1.3（2026-10-28）：修正 §2 命令的起始目录与执行顺序；T6 删除跨教授 `material_id` 全局不同的断言，以及基于该假设的跨教授拒绝步骤，改为检查同名方向在两个教授目录各自保存且互不改写。必测 T1–T6 与 8 项测试方法不变；沿用已通过的第一关口，第二关口待复审，第三关口未执行。
 
 TP1.2（本地测试工程师，2026-10-27）：按 §2 补齐可执行 recipe（受测入口、素材文件与来源 ID、冻结字段、保存入口标志与输出、解释器、隔离目录、命令、逐项目标映射、夹具构成），新增 T2–T6 的 8 项 producer 测试，并把模块连同 `seconds`/`tests`/`signals` 登记进 shard3、按清单重新生成 `plan/test-grouping/README.md` 的表。必测清单 T1–T6 与检查入口未改，没有新增测试目标或样本矩阵；产品实现与正式结果仍待完成。
 
