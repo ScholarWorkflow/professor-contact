@@ -104,6 +104,16 @@ README 未把这两项列为通过条件；本记录不把它们算作本轮回�
 
 这三处变化对应执行计划 A.2、A.3 的明确要求（旧 prepare 用 `future_work.py prepare` 补齐；另一份全文缓存不得独立覆盖运输文字），不是放宽预期。
 
+## 补充：契约兼容性修订与最终候选
+
+首轮正式执行停在 `0149e18`，执行记录提交为 `dbfb109`。之后按执行计划 B.1“旧两个 contract 按原逻辑验”复核了 `_verify_manifest_integrity` 的接受集合，并提交 `0eed997`：
+
+- 旧 `exact-items-v1`（`required_pages` 为空）与 `ocr-excerpt-v1`（`required_pages` 非空）恢复为原规则，仍接受；因此基线实现产出、已声明 `exact-items-v1` 的旧文本包仍能按其候选封闭语义导入，不被新契约改写。
+- `source-items-v1` 仍只允许 local + `text_transport` + `required_pages` 已解决的 PDF job；未知 contract 仍拒绝。
+- `_build_manifest` 的选择逻辑未变：新文本包固定声明 `source-items-v1`。
+
+改动只影响 manifest 契约校验的接受集合，T1–T4 覆盖的行为未变；在该提交上重跑 `test_stage2_chatgpt_handoff_source.py`：`Ran 8 tests`、`OK`；handoff 既有 48 项仍只有上面那项 macOS 路径形式失败。CI（四个 shard 与聚合 `test`）在 `0eed997` 全部通过。最终候选为 `0eed997`。
+
 ## 未完成项与下一负责人
 
 - 已在被测提交上完成 T1–T5 与 shard 索引检查；T1–T4、shard 均通过，T5 通过人工阅读。
