@@ -8,6 +8,11 @@ as product-missing until it exempts a verbatim cited title. T3 guards the
 preserved behaviour: it holds on the prepared baseline and on the intended
 behaviour, and passing there is not evidence for R1.
 
+The T1 rule check is not a selector. Test plan revision TP2 replaced the old
+keyword-and-window matcher with a single manual reading of the generated
+``model_input.rules.interest`` text, so this module holds only deterministic
+count assertions and adds no natural-language judge.
+
 The module reuses the existing Stage-5 fixture and wrapper helpers through
 their module objects, so it adds no fixture, no installation and no model call.
 """
@@ -45,45 +50,6 @@ SURFACES = ("套磁邮件.md", "套磁邮件.txt", "套磁邮件状态.json")
 FIXED_MARKERS = ("FIXED-BEGIN", "FIXED-SELFINTRO", "FIXED-INTEREST",
                  "FIXED-FUTURE", "FIXED-LEARNING", "FIXED-END")
 
-#: The length requirement the rule must keep stating.
-COUNT_WORDS = ("180", "字数", "文字数", "总长")
-CLAUSE_SPLIT = re.compile(r"[；;。\n]")
-#: A title word and an exemption word in one clause, in either order. The gap
-#: allows a qualifier such as 「若与 papers[].title 逐字一致则」 but stops at a
-#: clause boundary so a title in one sentence cannot borrow another's rule.
-_TITLE = r"(?P<title>标题|タイトル|題名)"
-_EXEMPT = (r"(?P<exempt>不计入|不计|免计|不算|不纳入|不计算|不参与|不占用|不列入"
-           r"|排除|免除|除外|不含|以外|対象外|含めない|含まない|数えない"
-           r"|除く|カウントしない|計上しない|計上いたしません)")
-_GAP = r"[^、，,；;。\n]{0,30}?"
-TITLE_EXEMPTION = re.compile(_TITLE + _GAP + _EXEMPT)
-EXEMPTION_TITLE = re.compile(_EXEMPT + _GAP + _TITLE)
-#: 「标题内方法名除外」 and 「标题内的限定语链不计」 exempt something *inside* a
-#: title, so the window just before the exemption word decides the subject.
-INSIDE_TITLE = re.compile(r"(标题|タイトル|題名)(内|中|里|の内)")
-#: 「书名号内的论文标题不计」 and 「书名号以外的字符照常计数」 scope the symbols,
-#: they do not exempt them, so the same guard applies to the symbol check. The
-#: suffix may follow the symbol after a few characters, as in 「书名号以外的字符」.
-SCOPED_SYMBOL = re.compile(
-    r"(书名号|引号|标点|符号|括弧|括号|記号|句読点|「」)"
-    r"[^、，,；;。\n]{0,6}?(内|中|里|以内|以外|之外|の内|の外)")
-_SYMBOL = r"(?P<symbol>书名号|引号|标点|符号|括弧|括号|記号|句読点|「」)"
-#: The gap excludes brackets on both sides so a title exemption cannot reach
-#: across a parenthesis into the symbols mentioned outside it.
-_SYMBOL_GAP = r"[^、，,；;。（()）\n]{0,10}?"
-#: An exemption word near a bracket or punctuation word means those are
-#: exempted too, which contradicts the requirement that they keep counting.
-#: Both orders are checked because 「不计书名号与标点」 states the same thing.
-SYMBOL_EXEMPTION = re.compile(_SYMBOL + _SYMBOL_GAP + _EXEMPT)
-EXEMPTION_SYMBOL = re.compile(_EXEMPT + _SYMBOL_GAP + _SYMBOL)
-#: 「书名号与标点（均不计）」 states the same exemption inside a parenthetical,
-#: where the gap above deliberately refuses to reach.
-SYMBOL_PAREN_EXEMPTION = re.compile(
-    _SYMBOL + r"[^、，,；;。\n]{0,10}?[（(][^）)\n]{0,12}?" + _EXEMPT)
-#: A parenthetical may also name the symbols again after the title
-#: (「含标题与标点，均不计」), which puts them back inside the exemption.
-_PAREN_SYMBOL = re.compile(r"书名号|引号|标点|符号|括弧|括号|記号|句読点|「」")
-
 
 def _pad(text, length):
     """Grow ``text`` with neutral filler to exactly ``length`` characters."""
@@ -91,67 +57,6 @@ def _pad(text, length):
         raise AssertionError(f"{len(text)} characters already exceed {length}: {text}")
     need = length - len(text)
     return text + (FILLER * (need // len(FILLER) + 1))[:need]
-
-
-def _clauses(rule):
-    """Split a generated rule into clauses so wording must co-occur locally."""
-    return [clause for clause in CLAUSE_SPLIT.split(rule) if clause.strip()]
-
-
-def title_exemptions(rule):
-    """Return the clauses that exempt a cited title from the count.
-
-    This is an approximate reading of prose, not a semantic parser: it accepts
-    a title word and an exemption word in one clause, in either order, and
-    rejects a clause whose exemption is scoped inside a title
-    (「标题内方法名除外」). The test only asks that the generated rule state the
-    exemption at all; it does not certify the rule's wording.
-    """
-    found = []
-    for clause in _clauses(rule):
-        for pattern in (TITLE_EXEMPTION, EXEMPTION_TITLE):
-            for match in pattern.finditer(clause):
-                before = clause[max(0, match.start("exempt") - 10):match.start("exempt")]
-                if INSIDE_TITLE.search(before):
-                    continue
-                found.append(clause)
-    return found
-
-
-def symbol_exemptions(rule):
-    """Return the clauses that also exempt the brackets or punctuation.
-
-    R1 keeps those characters counted, so a rule that exempts them contradicts
-    the behaviour under test. The check is one-directional on purpose: it looks
-    for an explicit exemption of a bracket or punctuation word and does not try
-    to confirm positive "still counted" wording, which prose can express in too
-    many ways to enumerate. A rule that never mentions the symbols at all
-    therefore passes — that is a known, deliberate limit of this check, recorded
-    in the test plan. A symbol word scoped by 内/中/里/以外 scopes the symbols
-    rather than exempting them, so those matches are skipped.
-    """
-    found = []
-    for clause in _clauses(rule):
-        for pattern in (SYMBOL_EXEMPTION, EXEMPTION_SYMBOL, SYMBOL_PAREN_EXEMPTION):
-            for match in pattern.finditer(clause):
-                start = match.start("symbol")
-                # Look at both sides of the symbol word: 「书名号以外」 puts the
-                # scope marker after it, 「标题内书名号除外」 puts the guard before.
-                window = clause[max(0, start - 12):start + 10]
-                if SCOPED_SYMBOL.search(window):
-                    continue
-                # A parenthetical after the symbols may explain that the *title*
-                # is exempt, which agrees with R1: 「标点照常计数（论文标题不计）」.
-                # It does not agree when the parenthetical names the symbols again
-                # after the title: 「含标题与标点，均不计」 exempts both.
-                if pattern is SYMBOL_PAREN_EXEMPTION:
-                    inside = clause[start:match.start("exempt")]
-                    title_at = min((inside.find(word) for word in ("标题", "タイトル", "題名")
-                                    if word in inside), default=-1)
-                    if title_at >= 0 and not _PAREN_SYMBOL.search(inside[title_at:]):
-                        continue
-                found.append(clause)
-    return found
 
 
 def interest_corpus(title, net):
@@ -260,17 +165,6 @@ class TestStage5InterestTitleLength(BaseEnv):
         for marker in FIXED_MARKERS:
             self.assertIn(marker, txt)
         self.assertIn(title, (self.prof_dir / "套磁邮件.md").read_text(encoding="utf-8"))
-
-    def test_t1_generated_rule_states_the_title_exemption(self):
-        self.prepare()
-        plan = parse(run_wrapper("stage5-plan", "--program-root", self.root,
-                                 "--email-pack", self.email_pack))
-        rule = plan["jobs"][0]["model_input"]["rules"]["interest"]
-        # The length requirement stays stated, the cited title is exempted, and
-        # the brackets and punctuation around it are not exempted with it.
-        self.assertTrue(any(word in rule for word in COUNT_WORDS), rule)
-        self.assertTrue(title_exemptions(rule), rule)
-        self.assertEqual(symbol_exemptions(rule), [], rule)
 
     def test_t2_net_body_thresholds_are_180_181_200_201(self):
         g1 = self.prepare()

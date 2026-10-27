@@ -22,8 +22,8 @@
 
 ### 2.1 已准备的资产
 
-- 新模块：`.apm/skills/professor-contact/tests/test_stage5_interest_title_length.py`，单类 `TestStage5InterestTitleLength`。当前文件含 6 个 selector，TP2 正式执行只使用其中 5 个（T1 接受一个、T2 一个含 4 个 `subTest`、T3 两个、T4 一个）；T1 生成规则改由 §2.4 的一次人工观察完成，不把它重复写成自动判定。现有 `test_t1_generated_rule_states_the_title_exemption` 的词表、正则及相邻字符窗口检查已被本计划废止，需由本地测试工程师在测试代码中移除或停用，不能作为 TP2 的通过条件。
-- 分片登记：`plan/test-grouping/shards.json` 的 shard3 已加入 `{"name": "test_stage5_interest_title_length", "stage": "stage5"}`；历史检查显示该模块可被收集。由于当前文件仍保留已废止的第六个 selector，自动 CI 在测试代码完成对齐前仍可能运行旧检查；其结果不能代表 TP2 的 T1-规则判定。
+- 新模块：`.apm/skills/professor-contact/tests/test_stage5_interest_title_length.py`，单类 `TestStage5InterestTitleLength`，5 个 selector（T1 接受一个、T2 一个含 4 个 `subTest`、T3 两个、T4 一个）；T1 生成规则由 §2.4 的一次人工观察完成，不重复写成自动判定。原 `test_t1_generated_rule_states_the_title_exemption` 及其词表、正则、相邻字符窗口检查已按 TP2 从测试模块移除；`COUNT_WORDS`、`CLAUSE_SPLIT`、`TITLE_EXEMPTION`、`EXEMPTION_TITLE`、`INSIDE_TITLE`、`SCOPED_SYMBOL`、`SYMBOL_EXEMPTION`、`EXEMPTION_SYMBOL`、`SYMBOL_PAREN_EXEMPTION`、`_PAREN_SYMBOL` 与 `_clauses`/`title_exemptions`/`symbol_exemptions` 一并删除，模块不再含自然语言判定器。
+- 分片登记：`plan/test-grouping/shards.json` 的 shard3 已加入 `{"name": "test_stage5_interest_title_length", "stage": "stage5"}`；测试代码对齐后该模块只收集上述 5 个确定性 selector，自动 CI 不再运行已废止的规则检查，其结果与 TP2 的 T1-规则判定无关。
 - 夹具复用：通过 `test_stage5_immutable` 的模块对象取 `helpers`/`BaseEnv`/`parse`/`run_wrapper`，再由 `helpers.TestStage5` 取 `prepare`/`raw_result`/`choices`，因此不重新收集 immutable 模块的既有用例（该模块当前实际收集 13 个；`shards.json` 的旧记录写 10 个，属既有漂移，本 PR 不改），也不新增夹具文件。`setUp` 只把 `AAAA1111` 的标题换成 80 字符的 `Synthetic comparison of input patterns across heterogeneous processing pipelines`，其余论文、gap、sidecar、verify 缓存、模板均由既有夹具生成。
 - 准备基线：`b36ed0613cbe5eeae950acdc4e8195ec0218537d`（本 PR 当前 head，产品尚未改动）；解释器 `/run/current-system/sw/bin/python3`（3.14.7）。
 
@@ -168,9 +168,9 @@ printf '%s\n' "$?" > "$run_dir/t1-rule.exit"
 不增加真实模型 eval、全教授流程、全仓回归、重复安装、来源认证、自建判定器或完整运行轨迹。生成规则是否使用新口径以 model_input/契约核对，确定性计数以现有框架断言；不是文风质量测试。
 
 - 第一关（必测清单）：通过，见同目录 `review.md`。该记录里的 TP1 SHA-256 `6348e4da…` 对应 recipe 补齐前的版本；本文件 §1 逐字未改（该节内容 SHA-256 `473f1323…`），因此第一关结论继续适用，补齐 recipe 不重开第一关。
-- 第二关（具体步骤）：TP2 已改为 5 个确定性 selector 加一次规则原文人工观察；现有旧规则 selector 尚未从测试模块及自动 CI 中移除，测试代码需要按本计划对齐。第二关待独立审核，本计划不自行声明通过；TP1 的准备审核记录见 §4，不能代替 TP2 结论。
+- 第二关（具体步骤）：TP2 已改为 5 个确定性 selector 加一次规则原文人工观察；测试模块已按 TP2 对齐，旧规则 selector 及其词表／正则／窗口判定已删除，模块现只收集 5 个 selector。第二关待独立审核，本计划不自行声明通过；TP1 的准备审核记录见 §4，不能代替 TP2 结论。
 - 第三关（正式结果）：未执行；产品实现尚未交付，T1/T2/T4 当前按产品缺失失败。
-- 下一负责人：本地测试工程师移除或停用已废止的 T1 词表／正则 selector，使正式模块和 CI 与 TP2 一致；测试计划审核者复核受影响的第二关步骤；产品实现工程师落实 R1，执行工程师按 TP2 正式执行，结果审核者核对结果。
+- 下一负责人：测试计划审核者复核受影响的第二关步骤；产品实现工程师落实 R1，执行工程师按 TP2 正式执行，结果审核者核对结果。
 
 依据：[Test Engineer Rule](https://app.notion.com/p/3d80101a85f380d8a8f5ce528141e253) 与 [PROJECT_CONSENSUS](https://app.notion.com/p/3d60101a85f3815a8c43f271f2b4d91d)。仅复核受影响项；文档 SHA 改变本身不触发重跑。
 
@@ -195,6 +195,6 @@ printf '%s\n' "$?" > "$run_dir/t1-rule.exit"
 
 - **修订依据**：Test Engineer Rule 第 2 节要求每项目标采用一个足够的检查入口；第 3 节允许人工判断业务目标，并在现有断言或直接观察足够时禁止新增专用判定器。本次不更改第 1 节必测清单，已通过的第一关继续有效。
 - **本轮修正**：T1-生成规则只从正式 `stage5-plan` 输出读取 `model_input.rules.interest` 一次，按已批准的“标题免计、外围符号计数”要求直接人工判断。废止基于关键词、固定字符间隔和括号规则的自动近似判定，也不在 T4 静态核对中重复检验同一生成规则。
-- **实际文件状态**：本次只修改测试计划。测试模块仍存在被废止的 `test_t1_generated_rule_states_the_title_exemption`，分片自动执行仍可能收集它；本地测试工程师负责对齐测试代码，完成前不能把该 selector 或相关 CI 结果视为 TP2 的业务通过证据。
+- **实际文件状态**：TP2 修订本身只改测试计划；测试代码对齐随后由本地测试工程师完成——已删除 `test_t1_generated_rule_states_the_title_exemption` 及其词表、正则、相邻字符窗口判定（含 `COUNT_WORDS`、`CLAUSE_SPLIT`、`TITLE_EXEMPTION`、`EXEMPTION_TITLE`、`INSIDE_TITLE`、`SCOPED_SYMBOL`、`SYMBOL_EXEMPTION`、`EXEMPTION_SYMBOL`、`SYMBOL_PAREN_EXEMPTION`、`_PAREN_SYMBOL` 与 `_clauses`/`title_exemptions`/`symbol_exemptions`），模块现只收集 5 个确定性 selector，自动 CI 不再运行该规则检查。
 - **范围与风险**：T1–T4 的输入、接受／警告／拒绝、正文原样保留以及失败不覆盖现有邮件的目标不变；不增加真实模型运行、全流程回归或新的证明材料。此前“外侧符号计数”只有反向词表检查、可能误放行未说明符号的规则；现通过人工直接核对原文解决。TP1 的历史预检与旧版审核记录不被重写。
-- **未完成项**：第二关等待按 TP2 复核；本地测试工程师尚须去除废止 selector；产品标题免计实现未提交；第三关未执行。仅修改计划不代表测试已通过或 PR 可以合并。
+- **未完成项**：第二关等待按 TP2 复核；产品标题免计实现未提交；第三关未执行。测试代码已对齐 TP2。仅修改计划与测试代码不代表测试已通过或 PR 可以合并。
