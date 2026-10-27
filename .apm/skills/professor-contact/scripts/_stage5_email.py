@@ -22,7 +22,6 @@ import types
 
 def build(*, read_json_file,
           BATCH_RE,
-          CLOSING_RE,
           INTEREST_HARD_CAP,
           INTEREST_SOFT_CAP,
           fail,
@@ -117,17 +116,15 @@ def build(*, read_json_file,
         if raw.get("email_id") != email.get("email_id"):
             problems.append("email_id mismatch")
         sentences = raw.get("interest_sentences_ja")
-        if not isinstance(sentences, list) or len(sentences) != 4 or \
+        if not isinstance(sentences, list) or len(sentences) != 3 or \
                 not all(isinstance(s, str) and s.strip() for s in sentences):
-            problems.append("interest_sentences_ja must be 4 non-empty sentences")
+            problems.append("interest_sentences_ja must be 3 non-empty sentences")
             return problems
         total = sum(len(s) for s in sentences)
         if total > INTEREST_HARD_CAP:
             problems.append(f"interest total {total} exceeds hard cap {INTEREST_HARD_CAP}")
         elif total > INTEREST_SOFT_CAP:
             problems.append(f"WARNING interest total {total} exceeds soft cap {INTEREST_SOFT_CAP}")
-        if not CLOSING_RE.match(sentences[3].strip()):
-            problems.append("sentence ④ must be the fixed closing with a domain noun")
         if not (raw.get("future_aspiration_ja") or "").strip():
             problems.append("future_aspiration_ja required")
         learning = raw.get("learning_candidates")
@@ -161,8 +158,7 @@ def build(*, read_json_file,
                 problems.append(f"source_map {output}: empty source_ids")
                 continue
             if output == "④":
-                if set(source_ids) != {"template"}:
-                    problems.append("source_map ④ must be exactly ['template']")
+                problems.append("source_map ④ is retired; regenerate the three-part interest result")
                 continue
             if output == "③":
                 if not all(sid.startswith("gap:") for sid in source_ids):
@@ -178,7 +174,7 @@ def build(*, read_json_file,
             for sid in source_ids:
                 if sid not in allowed:
                     problems.append(f"source_map {output}: source {sid} not in allowed_sources")
-        for required in ("①", "②", "③", "④", "future"):
+        for required in ("①", "②", "③", "future"):
             if required not in covered:
                 problems.append(f"source_map missing output {required}")
         return problems
@@ -403,8 +399,8 @@ def build(*, read_json_file,
         paper_titles = {p["item_key"]: p.get("title") for p in email.get("papers", [])}
         gap_index = {g["gap_id"]: g for g in email.get("gaps", [])}
         rows = ["| 句 | 来源 |", "|---|---|"]
-        output_names = {"①": "兴趣段①自定位", "②": "兴趣段②点名+桥接",
-                        "③": "兴趣段③宽泛例子", "④": "兴趣段④软收束（模板固定）",
+        output_names = {"①": "兴趣段①真实关注", "②": "兴趣段②点名+桥接",
+                        "③": "兴趣段③宽泛例子",
                         "future": "未来志向句"}
         for entry in raw.get("source_map", []):
             output = entry.get("output")

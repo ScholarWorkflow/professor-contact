@@ -221,15 +221,13 @@ def issue59_result(gap_id, email_id=ISSUE59_EMAIL_ID, idea_id=ISSUE59_IDEA_ID):
             "interest_sentences_ja": [
                 "合成输入を比较する仕組みを、分かりやすく検証できる形にしたいと考えてきました。",
                 "先生のご論文「Synthetic comparison of input patterns」を拝読し、入力比較を広げる可能性に気づかされました。",
-                "例えば、別の合成入力でも同じ比較ができれば、といったことです。",
-                "このような比較場面は、まだ数多く存在すると感じております。"],
+                "例えば、別の合成入力でも同じ比較ができれば、といったことです。"],
             "future_aspiration_ja": "入力設計、評価実験、実データへの適用",
             "learning_candidates": ["比較手法の基礎知識の習得", "評価方法の基礎"],
             "source_map": [
                 {"output": "①", "source_ids": ["profile.interest"]},
                 {"output": "②", "source_ids": ["paper:AAAA1111"]},
                 {"output": "③", "source_ids": [f"gap:{gap_id}"]},
-                {"output": "④", "source_ids": ["template"]},
                 {"output": "future", "source_ids": [f"idea:{idea_id}"]}]}
 
 

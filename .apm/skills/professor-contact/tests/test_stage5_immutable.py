@@ -67,6 +67,58 @@ class TestStage5ImmutableTemplates(BaseEnv):
         self.assertIn("过稿: none", md)
         self.assertNotIn("过稿: humanizer-ja(business)", md)
 
+    def test_three_part_interest_plan_and_render(self):
+        g1 = self.prepare()
+        plan = parse(run_wrapper("stage5-plan", "--program-root", self.root,
+                                 "--email-pack", self.email_pack))
+        job = plan["jobs"][0]
+        self.assertEqual(len(job["result_schema"]["interest_sentences_ja"]), 3)
+        self.assertNotIn("④", json.dumps(job, ensure_ascii=False))
+        opening = job["model_input"]["rules"]["opening"]
+        self.assertIn("不把论文问题翻译成白话冒充个人兴趣", opening)
+        self.assertIn("没有依据时不声称听过、用过或读懂", opening)
+        raw, choice = self.write_inputs(g1)
+        result = json.loads(raw.read_text(encoding="utf-8"))
+        out = parse(run_wrapper("stage5-finalize", "--program-root", self.root,
+                                "--email-pack", self.email_pack,
+                                "--result", raw, "--choices", choice))
+        self.assertEqual(out["status"], "ok", out)
+        txt = (self.prof_dir / "套磁邮件.txt").read_text(encoding="utf-8")
+        md = (self.prof_dir / "套磁邮件.md").read_text(encoding="utf-8")
+        self.assertIn("\n".join(result["interest_sentences_ja"]), txt)
+        self.assertIn(result["future_aspiration_ja"], txt)
+        self.assertNotIn("まだ数多く存在すると感じております", txt)
+        self.assertNotIn("兴趣段④", md)
+
+    def test_legacy_four_part_result_is_rejected_without_rewriting_existing_email(self):
+        g1 = self.prepare()
+        raw, choice = self.write_inputs(g1)
+        args = ("stage5-finalize", "--program-root", self.root,
+                "--email-pack", self.email_pack, "--result", raw, "--choices", choice)
+        self.assertEqual(parse(run_wrapper(*args))["status"], "ok")
+        surfaces = [self.prof_dir / name for name in
+                    ("套磁邮件.md", "套磁邮件.txt", "套磁邮件状态.json")]
+        before = {p: p.read_bytes() for p in surfaces}
+        result = json.loads(raw.read_text(encoding="utf-8"))
+        result["interest_sentences_ja"].append(
+            "このような比較場面は、まだ数多く存在すると感じております。")
+        result["source_map"].append({"output": "④", "source_ids": ["template"]})
+        raw.write_text(json.dumps(result, ensure_ascii=False), encoding="utf-8")
+        rejected = run_wrapper(*args)
+        self.assertNotEqual(rejected.returncode, 0)
+        self.assertIn("must be 3 non-empty sentences", rejected.stdout)
+        self.assertEqual(before, {p: p.read_bytes() for p in surfaces})
+
+    def test_retired_source_row_is_not_silently_accepted(self):
+        g1 = self.prepare()
+        email = json.loads(self.email_pack.read_text(encoding="utf-8"))["emails"][0]
+        result = self.raw_result(g1)
+        result["source_map"].append({"output": "④", "source_ids": ["template"]})
+        problems = helpers.contact_state.validate_email_raw(email, result)
+        self.assertTrue(any("source_map ④ is retired" in p for p in problems), problems)
+        self.assertEqual(helpers.contact_state.INTEREST_SOFT_CAP, 180)
+        self.assertEqual(helpers.contact_state.INTEREST_HARD_CAP, 200)
+
     def test_dynamic_field_polish_provenance_is_explicit(self):
         g1 = self.prepare()
         raw, choice = self.write_inputs(g1)

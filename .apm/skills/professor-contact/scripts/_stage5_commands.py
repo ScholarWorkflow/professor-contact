@@ -125,13 +125,12 @@ def build(*, atomic_write,
                     "result_file": f"email-{sha256_text(email['email_id'])[:12]}.json",
                     "result_schema": {
                         "schema": 1, "kind": "email", "email_id": email["email_id"],
-                        "interest_sentences_ja": ["①自定位", "②点名+桥接", "③宽泛例子", "④软收束"],
+                        "interest_sentences_ja": ["①真实关注", "②点名+桥接", "③宽泛例子"],
                         "future_aspiration_ja": "…",
                         "learning_candidates": ["候补1", "候补2"],
                         "source_map": [{"output": "①", "source_ids": ["profile.interest"]},
                                        {"output": "②", "source_ids": ["paper:<item_key>"]},
                                        {"output": "③", "source_ids": ["gap:<gap_id>"]},
-                                       {"output": "④", "source_ids": ["template"]},
                                        {"output": "future", "source_ids": [f"idea:{email['idea']['id']}"]}]},
                     "model_input": {
                         "idea": email.get("idea"),
@@ -146,11 +145,12 @@ def build(*, atomic_write,
                         "user_supplement": email.get("user_supplement") or "",
                         "allowed_sources": email.get("allowed_sources"),
                         "rules": {
-                            "interest": "4 句、只写软层、总长 ≤180 日文字；①自定位（角色+信念，禁恭维）②点名+桥接（真实标题、共同主题逐篇成立）③宽泛例子（仅可用 gaps 里 status∈{open,partial,unknown} 的精确 gap；done_by_self 禁锚；partial 只谈 remaining_gap；引用教授原话式，不找碴）④固定句「このような<领域名词>は、まだ数多く存在すると感じております。」",
+                            "interest": "3 句、只写软层、总长 ≤180 日文字；①真实关注（普通发信人的接触、有限认识与自然好奇，禁恭维）②点名+桥接（真实标题、共同主题逐篇成立）③宽泛例子（仅可用 gaps 里 status∈{open,partial,unknown} 的精确 gap；done_by_self 禁锚；partial 只谈 remaining_gap；引用教授原话式，不找碴）",
+                            "opening": "从普通发信人对这件事的真实接触和认识写起，允许有限认识（如听说过、觉得有用但还不熟悉），再顺承自然的好奇；不替用户提出研究问题，不把论文问题翻译成白话冒充个人兴趣。根据已有 profile、用户笔记和补充表达，不编具体经历、应用名称、长期兴趣或研究能力；没有依据时不声称听过、用过或读懂。日语简洁礼貌，不固定身份、自定位或「私は」开头，也不固定成「听过但没用过」句型。",
                             "exclusions": "禁方法名/模型名/算法名（标题内除外）、指标数字、数据集名、组件名、公式、限定语链、年份叙事",
                             "future_aspiration": "宽泛方向表述+背景技能，禁具体技术栈，不用其他方向原句",
                             "learning": "2-3 个名词短语候选，贴近 profile 真实知识储备，交用户挑选",
-                            "source_map": "每句必须给来源；③只能用 gap:<id>；④只能 template；所有 source_ids ⊆ allowed_sources"}}})
+                            "source_map": "每句必须给来源；③只能用 gap:<id>；所有 source_ids ⊆ allowed_sources"}}})
             payload = {
                 "status": "ok", "email_pack": str(pack_path),
                 "emails": [e.get("email_id") for e in emails],

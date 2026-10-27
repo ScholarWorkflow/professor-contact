@@ -471,7 +471,6 @@ INTEREST_HARD_CAP = 200
 INTEREST_SOFT_CAP = 180
 VERIFY_TTL_DAYS = 30
 VERIFY_TIMESTAMP_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
-CLOSING_RE = re.compile(r"^このような.+は、まだ数多く存在すると感じております。$")
 BATCH_RE = re.compile(r"(冬季|夏季|[123]次募集|海外特別入試)")
 EXT_EVIDENCE_RE = re.compile(
     r"(extend(?:ed|s)?\s+(?:version|journal|conference|our|the)|journal version|"
@@ -1345,7 +1344,6 @@ DEFAULT_ALMA_MATER = "総合大学"
 _stage5_email = _stage5_email_module.build(
     read_json_file=read_json_file,
     BATCH_RE=BATCH_RE,
-    CLOSING_RE=CLOSING_RE,
     INTEREST_HARD_CAP=INTEREST_HARD_CAP,
     INTEREST_SOFT_CAP=INTEREST_SOFT_CAP,
     fail=fail,

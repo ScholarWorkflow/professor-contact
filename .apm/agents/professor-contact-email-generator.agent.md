@@ -45,7 +45,7 @@ At startup, read `docs/stage5-legacy-contract.md` relative to the `professor-con
 
 - input boundaries and allowed facts;
 - Stage 2.5 pre-send verification;
-- four-sentence interest contract, source_map, red lines and honesty constraints;
+- three-part interest contract, source_map, red lines and honesty constraints;
 - first-email and no-response follow-up generation;
 - user choices, validation loop and state recording;
 - output filenames, checklist, source table, fact-check card and atomic-write behavior.
@@ -216,7 +216,7 @@ The local `邮件输入.json` is schema 3: every `emails[]` entry carries `direc
 
 1. `套磁模板.md` and `套磁跟进模板.md` are **user-owned immutable inputs**. The user is responsible for preparing, editing or humanizing them before this workflow runs.
 2. Stage 5 must never run `humanizer-ja` over an assembled email, template text, Subject, header, signature, fixed request/closing text, or a follow-up body.
-3. Model-created dynamic fields are still limited to the reference contract: `interest_sentences_ja`, `future_aspiration_ja`, and `learning_candidates`. If optional polishing is configured, call `humanizer-ja` only on those dynamic strings **before** template assembly, then write the polished strings back into the result JSON. Do not change schema/kind/email_id/source_map, the required four-sentence structure, or sentence ④'s fixed contract.
+3. Model-created dynamic fields are still limited to the reference contract: `interest_sentences_ja`, `future_aspiration_ja`, and `learning_candidates`. If optional polishing is configured, call `humanizer-ja` only on those dynamic strings **before** template assembly, then write the polished strings back into the result JSON. Do not change schema/kind/email_id/source_map or the required three-part structure.
 4. User-selected choices such as `learning`, `signature_name`, first-choice wording, dates and explicit subjects are not humanized.
 5. After result JSON and choices are final, use the deterministic Stage 5 wrapper, passing the same `--email-pack` this run's `stage5-plan` used. Pass `--polish-mode dynamic-fields-only` only when the model-generated dynamic fields were actually polished; otherwise use the default `none`:
 
@@ -274,7 +274,7 @@ Stage 5 runs on both install targets with identical business rules; only the har
 ### humanizer-ja stage-5 constraints (both targets)
 
 - Before calling, state the `business` goal explicitly and attach the full dynamic-field context, so the humanizer's own clarifying questions are never treated as Stage 5's implicit user-input protocol. If a fact or choice needed for polishing is missing, block first under Stage 5's user-input rules — the humanizer never guesses.
-- Only the contract-allowed dynamic fields (`interest_sentences_ja`, `future_aspiration_ja`, `learning_candidates`) may be polished, before template assembly. After polishing, write the strings back into the result JSON and re-check before finalize: `schema`/`kind`/`email_id`/`source_map`, the facts and the four-sentence structure are unchanged; template fixed text stays byte-stable and never enters the humanizer. Only then run `stage5_immutable.py stage5-finalize` (with `--polish-mode dynamic-fields-only` when polish actually happened).
+- Only the contract-allowed dynamic fields (`interest_sentences_ja`, `future_aspiration_ja`, `learning_candidates`) may be polished, before template assembly. After polishing, write the strings back into the result JSON and re-check before finalize: `schema`/`kind`/`email_id`/`source_map`, the facts and the three-part structure are unchanged; template fixed text stays byte-stable and never enters the humanizer. Only then run `stage5_immutable.py stage5-finalize` (with `--polish-mode dynamic-fields-only` when polish actually happened).
 
 ## Contact-evidence-first email ladder (Issue #10)
 
