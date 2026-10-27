@@ -289,6 +289,20 @@ if _STAGE3_COMMANDS_SPEC is None or _STAGE3_COMMANDS_SPEC.loader is None:
 _stage3_commands_module = importlib.util.module_from_spec(_STAGE3_COMMANDS_SPEC)
 _STAGE3_COMMANDS_SPEC.loader.exec_module(_stage3_commands_module)
 
+# Human-authorized validation continuation: the shared round-limit/history policy
+# plus the two grant commands. Loaded by path for the same reason as every other
+# helper; the policy functions are module-level, the commands are bound to this
+# runner's own I/O helpers by one factory call further down.
+_VALIDATION_CONTINUATION_PATH = Path(__file__).with_name("_validation_continuation.py")
+_VALIDATION_CONTINUATION_SPEC = importlib.util.spec_from_file_location(
+    "_validation_continuation", _VALIDATION_CONTINUATION_PATH)
+if _VALIDATION_CONTINUATION_SPEC is None or _VALIDATION_CONTINUATION_SPEC.loader is None:
+    raise RuntimeError(
+        f"cannot load validation continuation helpers: {_VALIDATION_CONTINUATION_PATH}")
+_validation_continuation_module = importlib.util.module_from_spec(
+    _VALIDATION_CONTINUATION_SPEC)
+_VALIDATION_CONTINUATION_SPEC.loader.exec_module(_validation_continuation_module)
+
 # Stage-5 helper module: loaded by path next to this runner (the runner may be
 # executed directly or imported by path, so the scripts directory is not
 # guaranteed to be on sys.path). The factory call further down binds it to this
@@ -1069,7 +1083,6 @@ _stage3_validation = _stage3_validation_module.build(
     emit=emit,
     fail=fail,
     soft_exit=soft_exit,
-    STAGE3_VALIDATION_MAX_ROUNDS=STAGE3_VALIDATION_MAX_ROUNDS,
     scope_key=scope_key,
     _stage3_issue_scopes=_stage3_issue_scopes,
     _stage3_validation_files=_stage3_validation_files,
@@ -1588,6 +1601,34 @@ cmd_stage2_refine_finalize = _stage2_validation.cmd_stage2_refine_finalize
 cmd_stage2_record_validation = _stage2_validation.cmd_stage2_record_validation
 
 
+# Binding point for the human-authorized continuation commands. Both need the
+# Stage-2 legality/render helpers and the shared digest/write helpers above, so
+# the factory runs only after all of them exist. The policy functions stay
+# module-level in `_validation_continuation`; only the two commands are bound.
+_validation_continuation = _validation_continuation_module.build(
+    fail=fail,
+    emit=emit,
+    atomic_json=atomic_json,
+    sha256_bytes=sha256_bytes,
+    sha256_text=sha256_text,
+    now_utc=now_utc,
+    load_input_pack=load_input_pack,
+    load_candidate_state=load_candidate_state,
+    split_frontmatter=split_frontmatter,
+    direction_machine_id=direction_machine_id,
+    scope_key=scope_key,
+    stage2_validation_legality=stage2_validation_legality,
+    stage2_bound_render=stage2_bound_render,
+    stage2_pack_content_fingerprint=stage2_pack_content_fingerprint,
+    INPUT_PACK=INPUT_PACK,
+    CANDIDATE_STATE=CANDIDATE_STATE,
+    CANDIDATES_MD=CANDIDATES_MD,
+)
+
+cmd_stage2_continue_validation = _validation_continuation.cmd_stage2_continue_validation
+cmd_stage3_continue_validation = _validation_continuation.cmd_stage3_continue_validation
+
+
 def read_legacy_index(index_path: Path) -> tuple[dict | None, str | None]:
     data, error = read_json_file(index_path)
     if error:
@@ -1779,6 +1820,24 @@ migration_source_fingerprint = _migrate_commands.migration_source_fingerprint
 migrate_entry_for_professor = _migrate_commands.migrate_entry_for_professor
 cmd_migrate_plan = _migrate_commands.cmd_migrate_plan
 cmd_migrate_apply = _migrate_commands.cmd_migrate_apply
+
+
+def _stage3_round_argument(value: str) -> int:
+    """A Stage-3 handoff round: any positive round, not just the default two.
+
+    The effective bound is decided by the committed state (the default two plus
+    any recorded human grant), so the parser must not reject a later round
+    before the state can speak. Rounds 3+ are still refused there unless a grant
+    raised this cycle's limit, and a skipped round is refused by the sequence
+    check; the parser only rejects values that can never be a round.
+    """
+    try:
+        round_no = int(value)
+    except (TypeError, ValueError):
+        raise argparse.ArgumentTypeError(f"round must be an integer: {value!r}")
+    if round_no < 1:
+        raise argparse.ArgumentTypeError(f"round must be positive: {round_no}")
+    return round_no
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -1976,9 +2035,10 @@ def build_parser() -> argparse.ArgumentParser:
                    help="the captured invocation credential of the committed round")
     p.add_argument("--invocation-sha256", metavar="SHA256", required=True,
                    help="SHA-256 of the exact credential file bytes")
-    p.add_argument("--round", type=int, required=True, choices=(1, 2),
+    p.add_argument("--round", type=_stage3_round_argument, required=True,
                    help="the validation round to prepare; must match the professor's "
-                        "recorded validator facts, never the temp directory state")
+                        "recorded validator facts, never the temp directory state. "
+                        "Rounds past the default two require a recorded human grant.")
     p.set_defaults(func=cmd_stage3_prepare_validation)
 
     p = sub.add_parser("stage3-save-validation",
@@ -2107,6 +2167,34 @@ def build_parser() -> argparse.ArgumentParser:
                    help="digest returned by stage3-save-validation; proven over the exact "
                         "bytes this record parses")
     p.set_defaults(func=cmd_stage3_record_validation)
+
+    p = sub.add_parser("stage2-continue-validation",
+                       help="record a human-authorized number of additional Stage-2 "
+                            "validation rounds on an exhausted failing cycle")
+    p.add_argument("--professor-dir", required=True)
+    p.add_argument("--additional-rounds", type=int, required=True,
+                   help="the positive number of extra rounds the human authorized")
+    p.add_argument("--authorization", required=True,
+                   help="the human's own statement authorizing these extra rounds")
+    p.add_argument("--expected-round", type=int, required=True,
+                   help="the exhausted round the human decided on")
+    p.add_argument("--expected-state-sha256", required=True,
+                   help="SHA-256 of the exact stage state file the decision was made on")
+    p.set_defaults(func=cmd_stage2_continue_validation)
+
+    p = sub.add_parser("stage3-continue-validation",
+                       help="record a human-authorized number of additional Stage-3 "
+                            "validation rounds on an exhausted failing cycle")
+    p.add_argument("--professor-dir", required=True)
+    p.add_argument("--additional-rounds", type=int, required=True,
+                   help="the positive number of extra rounds the human authorized")
+    p.add_argument("--authorization", required=True,
+                   help="the human's own statement authorizing these extra rounds")
+    p.add_argument("--expected-round", type=int, required=True,
+                   help="the exhausted round the human decided on")
+    p.add_argument("--expected-state-sha256", required=True,
+                   help="SHA-256 of the exact stage state file the decision was made on")
+    p.set_defaults(func=cmd_stage3_continue_validation)
 
     p = sub.add_parser("migrate-v3")
     p.add_argument("--plan", action="store_true")

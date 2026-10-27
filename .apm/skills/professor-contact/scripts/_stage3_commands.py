@@ -12,12 +12,77 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
+import copy
+import importlib.util
 import json
 import os
+import re
 import sys
 import types
 
 
+# The continuation policy (replaced-cycle snapshots, history rows) is shared with
+# the Stage-2 helpers and the Stage-3 record entry.  It is loaded by path because
+# this directory is not guaranteed to be on ``sys.path``.
+_VALIDATION_CONTINUATION_PATH = Path(__file__).with_name("_validation_continuation.py")
+_VALIDATION_CONTINUATION_SPEC = importlib.util.spec_from_file_location(
+    "_validation_continuation", _VALIDATION_CONTINUATION_PATH)
+if _VALIDATION_CONTINUATION_SPEC is None or _VALIDATION_CONTINUATION_SPEC.loader is None:
+    raise RuntimeError(
+        f"cannot load validation continuation helpers: {_VALIDATION_CONTINUATION_PATH}")
+_validation_continuation = importlib.util.module_from_spec(_VALIDATION_CONTINUATION_SPEC)
+_VALIDATION_CONTINUATION_SPEC.loader.exec_module(_validation_continuation)
+
+CYCLE_HISTORY_FIELD = _validation_continuation.CYCLE_HISTORY_FIELD
+recorded_round = _validation_continuation.recorded_round
+snapshot_for_history = _validation_continuation.snapshot_for_history
+append_cycle_history = _validation_continuation.append_cycle_history
+
+# The renderer stamps the generation time into the candidate document header.
+# Two renders of identical accepted content differ only on that one token, so the
+# no-op comparison masks exactly it and nothing else — the same bounded exemption
+# the Stage-2 acceptance uses for its own generated source line.
+_STAGE3_GENERATED_TIMESTAMP_RE = re.compile(
+    r"^> (\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z) ｜ ")
+_STAGE3_GENERATED_TIME_PLACEHOLDER = "<generated-at>"
+
+
+def stage3_equivalent_render(old_body: str, new_body: str) -> bool:
+    """Compare two rendered bodies, ignoring only the generated timestamp value.
+
+    The exemption is limited to the single generated header line before the first
+    section heading, and then only to the timestamp token: every other byte,
+    including each line ending and the whole rest of the header, must be equal.
+    A body whose shape does not carry exactly one such line is never equivalent.
+    """
+    if old_body == new_body:
+        return True
+    old_lines = old_body.splitlines(keepends=True)
+    new_lines = new_body.splitlines(keepends=True)
+    if len(old_lines) != len(new_lines):
+        return False
+    first_section = next(
+        (index for index, line in enumerate(old_lines) if line.startswith("## ")),
+        len(old_lines))
+    stamp_index = None
+    for index in range(first_section):
+        if _STAGE3_GENERATED_TIMESTAMP_RE.match(old_lines[index]):
+            if stamp_index is not None:
+                return False
+            stamp_index = index
+    if stamp_index is None:
+        return False
+    old_match = _STAGE3_GENERATED_TIMESTAMP_RE.match(old_lines[stamp_index])
+    new_match = _STAGE3_GENERATED_TIMESTAMP_RE.match(new_lines[stamp_index])
+    if old_match is None or new_match is None:
+        return False
+    masked_old = list(old_lines)
+    masked_new = list(new_lines)
+    masked_old[stamp_index] = old_lines[stamp_index].replace(
+        old_match.group(1), _STAGE3_GENERATED_TIME_PLACEHOLDER, 1)
+    masked_new[stamp_index] = new_lines[stamp_index].replace(
+        new_match.group(1), _STAGE3_GENERATED_TIME_PLACEHOLDER, 1)
+    return "".join(masked_old) == "".join(masked_new)
 
 
 
@@ -864,6 +929,24 @@ def build(*, atomic_write,
         body = render_candidates_md(professor, category, md_entries,
                                     current_profile_fp, state_fingerprint, professor_dir,
                                     cross_groups=cross_md_groups)
+        # A rerender of unchanged accepted content differs only on the generated
+        # timestamp. Keep the already-accepted body bytes (and their digest) so a
+        # no-op rerun neither rewrites the document nor invalidates the recorded
+        # validator round that binds it.
+        previous_body = None
+        previous_sha = old_render.get(CANDIDATES_MD, {}).get("sha256")
+        if isinstance(previous_sha, str) and previous_sha and md_path.is_file() \
+                and not md_path.is_symlink():
+            try:
+                _header, previous_body = split_frontmatter(
+                    md_path.read_text(encoding="utf-8"))
+            except (OSError, UnicodeDecodeError):
+                previous_body = None
+            if previous_body is not None \
+                    and sha256_text(previous_body) != previous_sha:
+                previous_body = None
+        if previous_body is not None and stage3_equivalent_render(previous_body, body):
+            body = previous_body
         md_conflict = managed_conflict(
             md_path, body, old_render.get(CANDIDATES_MD, {}).get("sha256"), decision)
         if md_conflict:
@@ -889,6 +972,19 @@ def build(*, atomic_write,
                 correction=bool(correction), render_sha=body_sha)
             if retained:
                 new_state["validator"] = retained
+            # A genuine new generation replaces the whole cycle — even when some
+            # untouched scopes keep their recorded results.  The replaced record
+            # moves aside so an earlier failure stays provable after the new cycle
+            # starts again at the default two rounds.
+            if not correction and (retained is None or not recorded_round(retained)):
+                replaced = snapshot_for_history(state["validator"])
+                if replaced is not None:
+                    new_state[CYCLE_HISTORY_FIELD] = append_cycle_history(
+                        state, replaced)
+        if CYCLE_HISTORY_FIELD not in new_state \
+                and isinstance((state or {}).get(CYCLE_HISTORY_FIELD), list):
+            # Earlier replaced cycles stay visible across later cycles.
+            new_state[CYCLE_HISTORY_FIELD] = copy.deepcopy(state[CYCLE_HISTORY_FIELD])
         # Local transaction (issue #66 r10 §2): stage both files, install the
         # local Markdown first, and install the candidate state LAST — the state
         # replace is the only business commit point. The program level is NOT part

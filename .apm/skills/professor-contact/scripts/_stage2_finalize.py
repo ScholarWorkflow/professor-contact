@@ -11,12 +11,30 @@ never builds a second failure channel.
 from __future__ import annotations
 
 import copy
+import importlib.util
 import json
 import re
 import sys
 import types
 import uuid
 from pathlib import Path
+
+
+# The continuation policy (effective round limit, history rows, replaced-cycle
+# snapshots) is shared with the Stage-2 record/refine helpers and Stage 3.  It is
+# loaded by path because this directory is not guaranteed to be on sys.path.
+_VALIDATION_CONTINUATION_PATH = Path(__file__).with_name("_validation_continuation.py")
+_VALIDATION_CONTINUATION_SPEC = importlib.util.spec_from_file_location(
+    "_validation_continuation", _VALIDATION_CONTINUATION_PATH)
+if _VALIDATION_CONTINUATION_SPEC is None or _VALIDATION_CONTINUATION_SPEC.loader is None:
+    raise RuntimeError(
+        f"cannot load validation continuation helpers: {_VALIDATION_CONTINUATION_PATH}")
+_validation_continuation = importlib.util.module_from_spec(_VALIDATION_CONTINUATION_SPEC)
+_VALIDATION_CONTINUATION_SPEC.loader.exec_module(_validation_continuation)
+
+CYCLE_HISTORY_FIELD = _validation_continuation.CYCLE_HISTORY_FIELD
+append_cycle_history = _validation_continuation.append_cycle_history
+snapshot_for_history = _validation_continuation.snapshot_for_history
 
 
 def build(*, Stage2Context,
@@ -1420,6 +1438,16 @@ def build(*, Stage2Context,
                          target=str(md_path))
         elif not business_changed and body_equivalent and old_validator is not None:
             carried_validator = copy.deepcopy(old_validator)
+        # A genuine new generation replaces the whole cycle.  The replaced record
+        # (its grants, its per-round history and its last results) moves aside
+        # instead of disappearing: an earlier failure stays provable after the
+        # new cycle starts again at the default two rounds.  Only a legally
+        # recorded old cycle is worth keeping; malformed evidence is not.
+        replaced_cycle = None
+        if carried_validator is None and isinstance((raw_old_pack or {}).get("validator"), dict):
+            discarded, discarded_error = stage2_validation_legality(raw_old_pack)
+            if not discarded_error and discarded is not None:
+                replaced_cycle = snapshot_for_history(discarded)
 
         # The candidate is still in memory. Re-observe the same declared source
         # set before the first managed write; a source change during assembly or
@@ -1473,6 +1501,13 @@ def build(*, Stage2Context,
                 params=preflight_plan["preflight_inputs"]["params"],
                 current_year=ctx.current_year, ctx=ctx, cache_entries=cache_entries,
                 statistics_version=STAGE2_LEVEL_STATISTICS_VERSION)
+        # The replaced-cycle history is part of the accepted pack, so it is
+        # settled BEFORE the validator binding is recomputed over it.
+        if replaced_cycle is not None:
+            pack[CYCLE_HISTORY_FIELD] = append_cycle_history(old_pack, replaced_cycle)
+        elif isinstance((old_pack or {}).get(CYCLE_HISTORY_FIELD), list):
+            # A later cycle keeps the earlier replaced cycles visible.
+            pack[CYCLE_HISTORY_FIELD] = copy.deepcopy(old_pack[CYCLE_HISTORY_FIELD])
         if carried_validator is not None:
             carried_validator["pack_sha256"] = stage2_pack_content_fingerprint(pack)
             pack["validator"] = carried_validator
@@ -1974,6 +2009,22 @@ def build(*, Stage2Context,
                     carried["pack_sha256"] = stage2_pack_content_fingerprint(updated_pack)
                     updated_pack["validator"] = carried
                     validator_preserved = True
+            # The two branches are mutually exclusive by construction: a retained
+            # certification keeps the existing history untouched, an expired one
+            # appends the replaced cycle.
+            if not validator_preserved \
+                    and isinstance(old_validator, dict) and old_validator.get("schema") == 2:
+                # A level refresh that really expires the certification is never a
+                # new generation: the replaced cycle stays visible here too, so a
+                # level update can never erase a recorded failure.
+                replaced = snapshot_for_history(old_validator)
+                if replaced is not None:
+                    updated_pack[CYCLE_HISTORY_FIELD] = append_cycle_history(
+                        pack, replaced)
+            elif isinstance(pack.get(CYCLE_HISTORY_FIELD), list):
+                # Earlier replaced cycles survive a retained certification.
+                updated_pack[CYCLE_HISTORY_FIELD] = copy.deepcopy(
+                    pack[CYCLE_HISTORY_FIELD])
             # The pack is the acceptance record: the statistics marker and the
             # new level projections only become durable with this write, and a
             # failed write leaves the command explicitly unfinished (never a

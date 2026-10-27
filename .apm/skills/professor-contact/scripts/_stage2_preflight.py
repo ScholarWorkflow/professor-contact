@@ -13,11 +13,28 @@ from __future__ import annotations
 
 import json
 import copy
+import importlib.util
 import re
 import types
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
+
+
+# The continuation policy (effective round limit, recorded round, history rows)
+# is shared with the two stage helpers; it is loaded by path for the same reason
+# the runner does, since this directory is not guaranteed to be on sys.path.
+_VALIDATION_CONTINUATION_PATH = Path(__file__).with_name("_validation_continuation.py")
+_VALIDATION_CONTINUATION_SPEC = importlib.util.spec_from_file_location(
+    "_validation_continuation", _VALIDATION_CONTINUATION_PATH)
+if _VALIDATION_CONTINUATION_SPEC is None or _VALIDATION_CONTINUATION_SPEC.loader is None:
+    raise RuntimeError(
+        f"cannot load validation continuation helpers: {_VALIDATION_CONTINUATION_PATH}")
+_validation_continuation = importlib.util.module_from_spec(_VALIDATION_CONTINUATION_SPEC)
+_VALIDATION_CONTINUATION_SPEC.loader.exec_module(_validation_continuation)
+
+round_limit = _validation_continuation.round_limit
+recorded_round = _validation_continuation.recorded_round
 
 
 SIDECAR_EXTRACTOR_VERSIONS = ("future-work-v1", "legacy-markdown-v0")
@@ -791,7 +808,9 @@ def build(*, fail, soft_exit, emit, read_json_file, atomic_json, sha256_obj, sha
 
         Keeps the existing validator contract: only recorded terminal results
         (`pass`/`skipped`) count as accepted; missing results, malformed state and
-        `fail_after_2_rounds` force the slow path without redefining policy here.
+        a recorded failure (`fail_after_2_rounds`, or `fail_after_max_rounds` on a
+        cycle a human grant extended) force the slow path without redefining
+        policy here.
         """
         validator, legality_error = stage2_validation_legality(pack)
         if legality_error:
@@ -801,9 +820,10 @@ def build(*, fail, soft_exit, emit, read_json_file, atomic_json, sha256_obj, sha
             return "validator_not_accepted"
         if isinstance(validator, dict) and validator.get("schema") == 2:
             render_sha = validator.get("render_sha256")
-            recorded_round = validator.get("round")
+            current_round = recorded_round(validator)
+            limit = round_limit(validator)
             if validator.get("phase") != "terminal" \
-                    or isinstance(recorded_round, bool) or recorded_round not in (1, 2) \
+                    or not 1 <= current_round <= limit \
                     or validator.get("pack_sha256") != stage2_pack_content_fingerprint(pack):
                 return "validator_not_accepted"
             cache = pack.get("cache") if isinstance(pack, dict) else None

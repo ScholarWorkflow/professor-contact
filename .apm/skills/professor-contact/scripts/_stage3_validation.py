@@ -12,6 +12,8 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
+import copy
+import importlib.util
 import json
 import os
 import sys
@@ -19,6 +21,28 @@ import tempfile
 import types
 
 
+# The human-authorized continuation policy is shared with the Stage-2 helpers and
+# the Stage-3 handoff.  It is loaded by path for the same reason the runner does:
+# neither the runner nor this helper may assume this directory is on ``sys.path``.
+_VALIDATION_CONTINUATION_PATH = Path(__file__).with_name("_validation_continuation.py")
+_VALIDATION_CONTINUATION_SPEC = importlib.util.spec_from_file_location(
+    "_validation_continuation", _VALIDATION_CONTINUATION_PATH)
+if _VALIDATION_CONTINUATION_SPEC is None or _VALIDATION_CONTINUATION_SPEC.loader is None:
+    raise RuntimeError(
+        f"cannot load validation continuation helpers: {_VALIDATION_CONTINUATION_PATH}")
+_validation_continuation = importlib.util.module_from_spec(_VALIDATION_CONTINUATION_SPEC)
+_VALIDATION_CONTINUATION_SPEC.loader.exec_module(_validation_continuation)
+
+CONTINUATION_FIELD = _validation_continuation.CONTINUATION_FIELD
+HISTORY_FIELD = _validation_continuation.HISTORY_FIELD
+ROUND_LIMIT_FIELD = _validation_continuation.ROUND_LIMIT_FIELD
+FAIL_AFTER_MAX = _validation_continuation.FAIL_AFTER_MAX
+round_limit = _validation_continuation.round_limit
+recorded_round = _validation_continuation.recorded_round
+terminal_failure_label = _validation_continuation.terminal_failure_label
+history_rows = _validation_continuation.history_rows
+remember_round = _validation_continuation.remember_round
+history_row = _validation_continuation.history_row
 
 
 
@@ -26,7 +50,6 @@ def build(*, atomic_json,
           emit,
           fail,
           soft_exit,
-          STAGE3_VALIDATION_MAX_ROUNDS,
           scope_key,
           _stage3_issue_scopes,
           _stage3_validation_files,
@@ -226,15 +249,27 @@ def build(*, atomic_json,
         round keeps the round counter — the next recorded round is the terminal one
         for that render — while any other re-render starts a fresh bounded cycle.
         Records for scopes this run did not touch stay valid.
+
+        A correction keeps the whole cycle record (its effective limit, the human
+        grants and the per-round history) because the next record is the same
+        cycle's next round.  A genuine new generation starts the cycle again at the
+        default bound and inherits no grant: only the untouched scopes' results
+        survive, which is why the caller moves the replaced cycle aside.
         """
         results = {ident: row for ident, row in (old_validator.get("results") or {}).items()
                    if f"direction:{ident}" not in processed_scopes}
         groups = {ident: row for ident, row in (old_validator.get("groups") or {}).items()
                   if f"group:{ident}" not in processed_scopes}
+        if not processed_scopes and not correction:
+            # Nothing was regenerated.  When the render is also unchanged the
+            # recorded evidence still binds it, so the whole cycle record — round,
+            # limit, grants and history — survives a no-op rerender untouched.
+            if render_sha is not None and render_sha == old_validator.get("render_sha256"):
+                return copy.deepcopy(old_validator)
         if not results and not groups and not correction:
             return None
-        return {
-            "round": int(old_validator.get("round") or 0) if correction else 0,
+        carried = {
+            "round": recorded_round(old_validator) if correction else 0,
             "render_sha256": render_sha if correction else None,
             "raw_verdict": old_validator.get("raw_verdict") if correction else None,
             "results": results,
@@ -243,6 +278,12 @@ def build(*, atomic_json,
             "global": (old_validator.get("global") or []) if correction else [],
             "updated_at": old_validator.get("updated_at"),
         }
+        if correction:
+            carried[ROUND_LIMIT_FIELD] = round_limit(old_validator)
+            if old_validator.get(CONTINUATION_FIELD) is not None:
+                carried[CONTINUATION_FIELD] = old_validator[CONTINUATION_FIELD]
+            carried[HISTORY_FIELD] = history_rows(old_validator)
+        return carried
 
     def stage3_current_result(direction: dict) -> dict:
         return {
@@ -450,8 +491,8 @@ def build(*, atomic_json,
             if not isinstance(value, str) or not value.strip():
                 fail("invalid_handoff", f"handoff {name} is missing or not a path")
         round_no = metadata.get("round")
-        if isinstance(round_no, bool) or round_no not in (1, 2):
-            fail("invalid_handoff", f"handoff round must be 1 or 2: {round_no!r}")
+        if isinstance(round_no, bool) or not isinstance(round_no, int) or round_no < 1:
+            fail("invalid_handoff", f"handoff round must be a positive round: {round_no!r}")
         try:
             credential_raw = Path(metadata["invocation_file"]).read_bytes()
         except (OSError, ValueError):
@@ -787,9 +828,10 @@ def build(*, atomic_json,
             fail("missing_candidate_state",
                  f"candidate state unreadable: {professor_dir / CANDIDATE_STATE}")
         previous = state.get("validator") if isinstance(state.get("validator"), dict) else {}
-        raw_round = previous.get("round")
-        if isinstance(raw_round, bool) or not isinstance(raw_round, int):
-            raw_round = 0
+        raw_round = recorded_round(previous)
+        # The default bound plus every round the human explicitly granted on this
+        # exhausted cycle; a legacy state with no grant keeps exactly two.
+        limit = round_limit(previous)
         previous_pending = (
             previous.get("pending") if isinstance(previous.get("pending"), dict) else {}
         )
@@ -830,15 +872,18 @@ def build(*, atomic_json,
             fail("validation_round_sequence_invalid",
                  f"the recorded round {round_no} does not match the handoff round "
                  f"{metadata['round']}")
-        if round_no > STAGE3_VALIDATION_MAX_ROUNDS:
+        if round_no > limit:
             fail("validation_rounds_exhausted",
-                 f"Stage-3 style validation is bounded to {STAGE3_VALIDATION_MAX_ROUNDS} rounds; "
-                 "the terminal record already exists")
+                 f"Stage-3 style validation is bounded to {limit} round(s) for this "
+                 "cycle; the terminal record already exists")
         results = dict(previous.get("results") or {}) if isinstance(previous.get("results"), dict) else {}
         groups = dict(previous.get("groups") or {}) if isinstance(previous.get("groups"), dict) else {}
         pending = dict(previous.get("pending") or {}) if isinstance(previous.get("pending"), dict) else {}
         at = now_utc()
-        exhausted = round_no >= STAGE3_VALIDATION_MAX_ROUNDS
+        exhausted = round_no >= limit
+        # A failure at the cycle's real bound carries the exhaustion label; every
+        # earlier failing round stays a plain `fail` that still needs correction.
+        failure_label = terminal_failure_label(previous) if exhausted else "fail"
         summary = []
         global_issues = (evidence["failed"].get("global") or {}).get("issues") or []
         if global_issues:
@@ -863,8 +908,7 @@ def build(*, atomic_json,
             row = evidence["failed"].get(key) or {}
             issues = row.get("issues") or []
             record = {
-                "result": "pass" if not issues else (
-                    "fail_after_2_rounds" if exhausted else "fail"),
+                "result": "pass" if not issues else failure_label,
                 "rounds": round_no,
                 "issues": issues,
                 "candidate_ids": row.get("candidate_ids") or [],
@@ -872,6 +916,8 @@ def build(*, atomic_json,
                 "render_sha256": evidence["render_sha256"],
                 "validated_at": at,
             }
+            if record["result"] == FAIL_AFTER_MAX:
+                record["max_rounds"] = limit
             target = results if kind == "direction" else groups
             if issues and not exhausted:
                 target.pop(ident, None)
@@ -882,8 +928,9 @@ def build(*, atomic_json,
             summary.append({"scope": key, "result": record["result"], "rounds": round_no,
                             "blocking": len(issues)})
         updated = dict(state)
-        updated["validator"] = {
+        validator = {
             "round": round_no,
+            ROUND_LIMIT_FIELD: limit,
             "render_sha256": evidence["render_sha256"],
             "raw_verdict": evidence["verdict"],
             "results": results,
@@ -892,9 +939,40 @@ def build(*, atomic_json,
             "global": (evidence["failed"].get("global") or {}).get("issues") or [],
             "updated_at": at,
         }
+        if previous.get(CONTINUATION_FIELD) is not None:
+            validator[CONTINUATION_FIELD] = copy.deepcopy(previous[CONTINUATION_FIELD])
+        # The history row records this round's own results only, together with the
+        # render and source bindings it was produced from and the raw report it
+        # was parsed out of.  A later round never rewrites an earlier row, and a
+        # failing scope that moved into ``pending`` still keeps its row here.
+        round_results = {ident: copy.deepcopy(record)
+                         for ident, record in results.items()
+                         if record.get("rounds") == round_no}
+        round_results.update({f"group:{ident}": copy.deepcopy(record)
+                              for ident, record in groups.items()
+                              if record.get("rounds") == round_no})
+        for key, record in pending.items():
+            if not isinstance(record, dict) or record.get("rounds") != round_no:
+                continue
+            scope = record.get("scope") if isinstance(record.get("scope"), dict) else {}
+            if scope.get("kind") == "group":
+                round_results[f"group:{scope.get('group_id')}"] = copy.deepcopy(record)
+            elif scope.get("direction_id"):
+                round_results[scope["direction_id"]] = copy.deepcopy(record)
+        validator[HISTORY_FIELD] = remember_round(previous, history_row(
+            round_no=round_no, results=round_results,
+            render_sha256=evidence["render_sha256"],
+            validation_file=str(validation_path),
+            validation_sha256=evidence["validation_input_sha256"],
+            recorded_at=at,
+            input_fingerprints=copy.deepcopy(state.get("input_fingerprints") or {}),
+            max_rounds=limit if exhausted else None))
+        updated["validator"] = validator
         atomic_json(professor_dir / CANDIDATE_STATE, updated)
         emit({"status": "ok", "state_path": str(professor_dir / CANDIDATE_STATE),
-              "round": round_no, "raw_verdict": evidence["verdict"],
+              "round": round_no, "round_limit": limit,
+              "remaining": max(limit - round_no, 0),
+              "raw_verdict": evidence["verdict"],
               "render_sha256": evidence["render_sha256"], "scopes": summary,
               "validation_input_sha256": evidence["validation_input_sha256"],
               "needs_correction": bool(pending),
