@@ -1,0 +1,126 @@
+# Source evidence repair — TP2
+
+- Requirement R2 / execution EP2; product baseline `18fd48d1b6f2e26241c304d6acddb025297f08e4`.
+- Proposed review status: pending. Test assets are prepared; no formal target executed, no PASS claimed. [Execution plan](execution-plan.md) is the sole design; [review](review.md) records independent conclusions.
+- Authority: [Test Engineer Rule](https://app.notion.com/p/3d80101a85f380d8a8f5ce528141e253), [Project Consensus](https://app.notion.com/p/3d60101a85f3815a8c43f271f2b4d91d), versions recorded in EP2.
+
+## Required checklist (acceptance ceiling)
+
+| Goal / input | Expected business result | Sufficient check |
+|---|---|---|
+| R-A: Current registered source-owned findings and valid existing cache; retain the evidence projection case and add one representative partial gap with wording corrections to all three eligible fields, each matched to its registered field; then normal process/finalize | Only the selected wording changes, preserving the fixture's factual meaning; the affected candidate-gap evidence fields and the completed-gap blacklist evidence follow the existing field mapping, including a reused direction, while the partial card/pack reflects completed_part and remaining_gap; the unselected-gap list keeps its existing fields and membership and gains no evidence display; unrelated data/candidates/status/confidence/narrative unchanged; repair returns needs_refresh and no PASS | Focused existing unittest-style public-command lifecycle; directly assert cache/pack/render/validator state, including the evidence/blacklist_evidence mapping. Use a prewritten semantically equivalent partial fixture, not a semantic judge or field-combination matrix |
+| R-B: Ineligible fixed quote/template finding and stale repair expected cache/text | Reject with actionable owner/drift result before mutation; no partial batch write or fabricated source | Small command-level negative cases in same product module, assert relevant files unchanged; no combinatorial matrix |
+| R-C: Repair followed by normal refresh with manual Markdown change; unchanged repair request | Existing manual-conflict path remains; no-op does not clear accepted validator/rounds or change source | Reuse existing managed-document fixture and direct state/file assertions; no model run |
+| R-D: Source instructions and CLI contract | Caller distinguishes the three-field wording whitelist and exact displayed/cache mapping from fixed scientific facts; instructions assign semantic preservation to source owner without claiming automatic proof or promising all other errors are repaired, resumes normal acceptance and validation, does not bypass PASS or alter candidates | Reviewer reads the delivered `SKILL.md` and the two `professor-contact-analyzer.agent.md` targets and records whether those points are stated and where; no automated text assertion, because keyword matching fixes wording instead of proving behaviour. The command entry and its two flags are exercised by the R-A/R-B/R-C calls, so no separate help-text test is added |
+
+No new model evaluation, Zotero/network, full Stage0–5 regression, installation matrix, source certification, new result parser/framework, all historical U1 tests, or future-work candidate tests. Existing unittest/json assertions are enough. R-A covers successful path and projection; do not repeat it at unit/integration/real-model levels.
+
+## Execution handoff / recipe status
+
+Test assets are prepared; Gate2 stays **PENDING** and Gate3 **UNEXECUTED**. This section records the exact selectors, inputs and expected observables for the automated targets R-A, R-B and R-C. R-D is a documentation review read by the reviewer and is not an automated target. Nothing below was run as a formal target: the product entry `stage2-repair-evidence` does not exist at the prepared baseline, so the automated targets are expected to fail as **product missing**, not as test defects.
+
+### Prepared assets
+
+- New module: `.apm/skills/professor-contact/tests/test_stage2_source_evidence_repair.py` — one case class `SourceEvidenceRepairTests` with **9 selectors**: R-A 3, R-B 4, R-C 2. R-D adds no automated selector. The 9 selectors are named in the per-target commands below, so no separate index is needed.
+- The command entry and its two flags are covered by the R-A/R-B/R-C calls themselves (`stage2-repair-evidence --professor-dir … --repair-file …`), so no help-text assertion is added: help wording is not a business result.
+- Structured results are read per record, never as a bag of values: the success payload's `affected` rows are matched on `direction_id` and `gap_id` inside the same row, and a refusal's owner name is read from its `owners` field only. `owners` may be a list of names, a `field -> owner` map (including `field -> {owner}`), or a `{field, owner}` / `{fields, owner}` record on its own or in a list — EP2 fixes the semantics, not that shape — but the name must come from that field, so a stray occurrence elsewhere in the payload cannot satisfy it, and a field key is never mistaken for an owner name. A rename of either key has to update this file and the module in the same commit.
+- Shard registration: `plan/test-grouping/shards.json` shard4 `{"name": "test_stage2_source_evidence_repair", "stage": "stage2"}`; `python scripts/check_test_shards.py` reports `OK: 83 test modules across 4 shards`.
+- Producer fixtures reused unchanged: `test_stage2_fixed_evidence.py` (report recording, managed Markdown, pack, preflight/finalize), `stage2_upstream_fixture.py` (`run_bound_stage2_finalize`), `test_contact_state.py` (`BaseEnv`, `run_cli`, `parse`). The producer module is reached through its module object on purpose, so its six U1 cases are not collected into this plan's shard.
+- Prepared baseline: `2b6a824`; interpreter `/nix/store/0kcws5blwbdyxqxjd1w8hjipz61xny3k-python3-3.14.7/bin/python3`.
+
+### Environment
+
+Run from the PR worktree root; every artefact stays below one `/tmp/contact-evidence-repair.*` directory and no test writes into the checkout. Each formal attempt gets its own attempt directory, so a permitted retry can never overwrite the first result.
+
+```bash
+checkout=$(git rev-parse --show-toplevel)
+run_dir=$(mktemp -d /tmp/contact-evidence-repair.XXXXXX)
+attempt_dir=$(mktemp -d "$run_dir/attempt.XXXXXX")
+export TMPDIR="$attempt_dir"
+cd "$checkout/.apm/skills/professor-contact/tests"
+git rev-parse HEAD > "$attempt_dir/target-version.txt"
+/nix/store/0kcws5blwbdyxqxjd1w8hjipz61xny3k-python3-3.14.7/bin/python3 --version > "$attempt_dir/python-version.txt" 2>&1
+```
+
+A second attempt is allowed only under the retry rule in "Failure handling"; it starts by allocating a new `attempt_dir` with the same command, and the old directory is kept as the first result.
+
+### Per-target commands
+
+`R-A` (three cases, one ordinary `preflight -> plan -> finalize` cycle each), expected 60–120 s:
+
+```bash
+/nix/store/0kcws5blwbdyxqxjd1w8hjipz61xny3k-python3-3.14.7/bin/python3 -m unittest -v \
+  test_stage2_source_evidence_repair.SourceEvidenceRepairTests.test_r_a_partial_gap_three_field_wording_reaches_the_projection \
+  test_stage2_source_evidence_repair.SourceEvidenceRepairTests.test_r_a_blacklist_evidence_projects_the_repaired_model_evidence \
+  test_stage2_source_evidence_repair.SourceEvidenceRepairTests.test_r_a_reused_direction_projects_the_repaired_evidence \
+  > "$attempt_dir/r-a.log" 2>&1; printf '%s\n' "$?" > "$attempt_dir/r-a.exit"
+```
+
+`R-B` (four negative cases), expected 40–90 s:
+
+```bash
+/nix/store/0kcws5blwbdyxqxjd1w8hjipz61xny3k-python3-3.14.7/bin/python3 -m unittest -v \
+  test_stage2_source_evidence_repair.SourceEvidenceRepairTests.test_r_b_finding_on_one_field_does_not_authorize_the_other_fields \
+  test_stage2_source_evidence_repair.SourceEvidenceRepairTests.test_r_b_quote_and_generator_findings_keep_their_owner \
+  test_stage2_source_evidence_repair.SourceEvidenceRepairTests.test_r_b_stale_expectations_are_rejected_before_writing \
+  test_stage2_source_evidence_repair.SourceEvidenceRepairTests.test_r_b_a_batch_with_one_bad_row_writes_nothing \
+  > "$attempt_dir/r-b.log" 2>&1; printf '%s\n' "$?" > "$attempt_dir/r-b.exit"
+```
+
+`R-C` (two cases), expected 40–90 s:
+
+```bash
+/nix/store/0kcws5blwbdyxqxjd1w8hjipz61xny3k-python3-3.14.7/bin/python3 -m unittest -v \
+  test_stage2_source_evidence_repair.SourceEvidenceRepairTests.test_r_c_manual_markdown_change_keeps_the_conflict_path \
+  test_stage2_source_evidence_repair.SourceEvidenceRepairTests.test_r_c_no_op_repair_changes_nothing_and_keeps_the_recorded_rounds \
+  > "$attempt_dir/r-c.log" 2>&1; printf '%s\n' "$?" > "$attempt_dir/r-c.exit"
+```
+
+### Inputs and expected observables
+
+Every case builds an isolated synthetic professor directory with `BaseEnv`; no user data, network, model call or installed-product edit is involved. The producer fixture supplies two gaps: `AAAA1111` (`partial`) and `BBBB2222` (`done_by_self`).
+
+- **R-A1** — record `evidence`, `completed_part`, `remaining_gap` findings on `AAAA1111` (no blacklist finding: that field's separate authorization and projection are R-A2), then repair all three cache fields (`后续由`→`后续工作由`, `已完成一部分`→`已完成其中一部分`, `仍缺`→`仍缺少`). Expected: `status=needs_refresh`, and the affected row that names `DIR00001` also names this gap — the two ids are read from the same record, so two unrelated rows cannot satisfy the check; only those three strings change, proven by comparing the whole cache document before and after with just those three fields removed (another gap, another field of the same record, the record set or the document envelope would fail); `status`, `confidence`, `candidate_paper_ids`, both fingerprints, `evaluated_at`, `downgraded` unchanged; the unselected-gap list, the shortlist/blacklist gap-id sets, the membership keys and the accepted narrative are compared whole before and after; `ANALYSIS_MD`, `INPUT_PACK` and the validator bytes unchanged by the command; after preflight `action=process` with `freshness_cache_changed`, plan `reuse`, finalize `ok` with the three repaired strings in the shortlist row and the rendered body, and no validator carried. On the current baseline the projection assertion fails because reuse keeps the old accepted rows — that is the EP2 section B product gap, not a test defect.
+- **R-A2** — record `blacklist_evidence` on `BBBB2222` (`已接住该点`→`已接住了该点`) and repair its `model_evidence`. Expected: `needs_refresh`; the completed-gap blacklist row's `evidence` shows the new text while `completed_by_item_key`, `candidate_paper_ids`, title, year, confidence and `evaluated_at` stay unchanged; the rendered `接住（依据：…）` line carries it; the partial gap of the same direction keeps its own evidence.
+- **R-A3** — two directions (`DIR00001`, `DIR00002`) both accepting the same partial gap; the report quotes only the first of the two identical `- 后续论文依据：` lines, so `fixed_blocking` names `DIR00001` only; repair `AAAA1111` `model_evidence`. Expected: `needs_refresh`; preflight `process`; plan `reuse` for both directions; finalize `ok`; both shortlist rows and both rendered `- 后续论文依据：` lines show the new text; each direction's whole narrative object is compared before and after (not a substring), and the cache is compared whole with only the repaired field removed, so a partial rewrite in the reused direction fails.
+- **R-B1** — only `model_evidence` registered, request `completed_part` and `remaining_gap`. Expected: non-zero exit with the product's structured error (`status`/`reason_code`) and no write, every file byte-identical. The refused field names are not asserted, because EP2 does not freeze the wording of the refusal; a real result that lacks information EP2 does require is reported from that output.
+- **R-B2** — a `quote` finding (`owner=source`) and a `label` finding (`owner=generator`), each followed by a `model_evidence` request. Expected: both refused; the `quote` case reports `source` in its `owners` field and the `label` case reports `generator`, both read from `owners` only rather than from the payload at large; every file byte-identical.
+- **R-B3** — stale `expected_cache_sha256`, stale `expected_validation_sha256`, and a wrong `expected_old_text`. Expected: three separate refusals with the product's structured error (`status`/`reason_code`) and no write, every file byte-identical. EP2 does not freeze a per-input error code, so no message keyword or dedicated code is required; if a real result lacks information EP2 does require, that is reported from the actual output.
+- **R-B4** — a two-row batch whose second row is unauthorized, then a batch with two rows for the same direction/gap/field. Expected: both batches refused; no partial write, no last-row-wins; every file byte-identical.
+- **R-C1** — a registered `evidence` blocking row with `owner=source` for `DIR00001`/`AAAA1111` (validator `phase=needs_correction`, round 1 — the standing authorization EP2 section A requires), then repair `model_evidence`, then a manual `- 页码：p.8` → `- 页码：p.9（人工改写）` edit before a single finalize without `--decision-file`. Expected: either `needs_decision` or `error/validation_render_stale`; the Markdown bytes and the recorded validator stay unchanged. The explicit `{"decision": "overwrite"}` file then resolves it: exit 0, the manual marker gone, the repaired text rendered, validator dropped. R-C's business goal is the manual-edit protection, so it needs no exhausted two-round review; the exhausted-round case is R-C2.
+- **R-C2** — the unchanged repair request of TP2 R-C, exercised on an exhausted review: a narrative round 1 is refined, then round 2 lands on the source-owned evidence line and closes as `terminal` / `round 2` / `fail_after_2_rounds`. A repair row whose replacement equals the current text is then submitted. Expected: no cache, Markdown, pack or validator byte change and no reset of the recorded rounds — a no-op is not a new source version.
+- **R-D** — **no automated target.** The reviewer reads the delivered `SKILL.md` and both `professor-contact-analyzer.agent.md` targets and records, with the location of any gap, whether they state: the three-field whitelist; the `evidence`/`blacklist_evidence` → `model_evidence` mapping and the other two identity mappings; that each field needs its own registered blocking row; that factual meaning stays with the source owner; that a successful repair returns `needs_refresh` and requires an ordinary fresh validation; and that other errors stay with their own owner. No fixed wording, no keyword or regex assertion, no scripted pass/fail. Never a runtime PASS.
+
+### Failure handling
+
+- A missing product entry (`argparse: invalid choice`, exit 2, no JSON) is a **product-missing failure** for its runtime target; the module reports it as such and does not weaken the assertion.
+- A missing dependency or fixture is **unable-to-judge** for that target. No automatic installation, model sampling or unchanged retry; after one concrete setup correction the affected command may be retried once with the same input and expectation, keeping the first output.
+- A product failure needs a product correction and a rerun of the affected targets only; assertions are never relaxed to reach green.
+- Every formal attempt keeps its own `attempt_dir`, and the attempt number, its directory and the reason for a permitted retry are recorded with the results. A retry never reuses the previous directory, and the first attempt's log is never overwritten.
+- Result at the baseline named above (`2b6a824`, no product entry): all nine automated selectors fail at the absent subcommand, reported as 11 failures because the stale-expectation case uses `subTest` for its three inputs. That is the expected product-missing state, not a test defect.
+- The implementation later landed on this branch (`259cab0`, plus the documentation commit `20a4dd1`), and [test-execution-2026-10-27.md](test-execution-2026-10-27.md) records the formal run against it. That record was produced with the pre-revision test module.
+- After the Gate2 findings the module was strengthened without adding, renaming or removing a selector (still 9: R-A 3, R-B 4, R-C 2). The test engineer re-ran the strengthened module against `259cab0`+`20a4dd1` in the same interpreter and got `Ran 9 tests ... OK`. That is a satisfiability check that the new assertions hold on a correct product, not a formal Gate3 result: the execution record's evidence predates this revision, so adopting the current assets needs one confirmation run by the execution owner. R-D stays a reviewer read.
+
+### Preparation and precheck record
+
+Limited precheck only — no formal target was executed and no PASS is claimed:
+
+- `py_compile` on the new module: passed.
+- `unittest` collection of the new module: 9 selectors (`SourceEvidenceRepairTests`), no U1 case imported and no static documentation case.
+- Fixture smoke through the producer helpers in an isolated synthetic professor directory: pack generation, finding recording, and the registered `fixed_blocking` owner/field rows confirmed as `evidence`, `completed_part`, `remaining_gap`, `blacklist_evidence` (`owner=source`), `quote` (`owner=source`) and `label` (`owner=generator`).
+- Fixture smoke of the R-C1 precondition on the prepared baseline: registering the `evidence` finding yields `phase=needs_correction`, round 1, and a `fixed_blocking` row `{direction_id: DIR00001, gap_id: <AAAA1111>, field: evidence, owner: source}`, so the repair request in that case is authorized by a real registered row rather than by a passing report.
+- Fixture smoke of the reused two-direction and manual-edit paths on the prepared baseline: plan reports `reuse` for both directions, and a hand-edited managed body yields `error/validation_render_stale` with unchanged bytes until `{"decision": "overwrite"}` is supplied. This confirms the recipe's inputs are producible; it is not a result for the repair targets.
+- `python scripts/check_test_shards.py`: `OK: 83 test modules across 4 shards, each with a stage`.
+- `python scripts/check_test_shards.py --print shard4` lists `test_stage2_source_evidence_repair`.
+- On the baseline without the product entry, one trial run of the revised module confirmed the failure cause: 9 tests, 11 reported failures, every one of them the absent subcommand. No target is recorded as passing there, and no PASS was claimed.
+- Structured-result readers were exercised directly on synthetic payloads: an `affected` row naming both `DIR00001` and the gap in one record is accepted, while the same two values split across two rows and a row naming a different direction are both rejected.
+- The `owners` reader was exercised on every form the plan allows — a list of names, a `field -> owner` map, a `field -> {owner}` map, a single `{field, owner}` record and a `{fields, owner}` record list — and reports the expected name for each; `{"owners": {"evidence": "source"}}` yields `source`, a record's field key is not reported as an owner, and a payload whose `owners` names a different owner does not satisfy the expected one. An earlier revision of this helper dropped string values inside a map, so a legal `field -> owner` payload would have been refused; that defect was corrected, and only R-B2 was re-run afterwards (`Ran 1 test ... OK`).
+- Whole-state comparisons were exercised on the prepared baseline: with only the three authorized texts changed by hand, the cache document compares equal once those three fields are removed, and the unselected-gap list, the shortlist/blacklist gap-id sets, the membership keys and the narrative objects are unchanged after finalize, including both directions in the two-direction fixture. This proves the new comparisons can pass on a correct run instead of being impossible.
+- For the record, the revision before this review ran 12 selectors and reported 18 failures: 11 from the absent subcommand and 7 from the documentation sections that R-D no longer asserts. That count is a pre-revision precheck record only and is not a result of the current module.
+- Fixture hygiene was checked directly: the two-direction helper produces two distinct temporary professor directories and both are removed on teardown, so a run leaves nothing behind.
+- Blocking item at the time of preparation was the absent `stage2-repair-evidence` subcommand and the SKILL/analyzer documentation. Both landed on this branch (`259cab0`, `20a4dd1`). What still blocks adopting the current assets is one confirmation run recorded with these strengthened selectors, and the reviewer's R-D read. Next owner: the execution owner runs R-A–R-C against the current head; the reviewer then reads R-D and decides Gate2.
+
+## Responsibilities / completion
+
+Plan reviewer independently decides design and Gate1. Product/test owner adds implementation and executable recipe; Gate2 reviewer verifies only this checklist's coverage/executability. Execution owner records actual results; independent Gate3 reviewer adopts those results and separates PASS, business failure, unable-to-judge and unexecuted. Existing valid unaffected results are reusable; no reruns merely for docs/review commits. This PR is not merge-ready implementation.
+

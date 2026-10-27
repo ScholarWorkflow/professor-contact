@@ -828,6 +828,10 @@
     {
      "name": "test_human_validation_continuation",
      "stage": "mixed:stage2+stage3"
+    },
+    {
+     "name": "test_stage2_source_evidence_repair",
+     "stage": "stage2"
     }
    ]
   }

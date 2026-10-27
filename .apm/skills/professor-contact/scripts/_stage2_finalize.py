@@ -488,6 +488,55 @@ def build(*, Stage2Context,
                 item["candidate_paper_ids"] = list(
                     status.get("candidate_paper_ids") or [])
 
+    def stage2_project_source_evidence(entry: dict, checked: dict) -> None:
+        """Consume the current valid cache wording instead of a stale projection.
+
+        A supported source-owner wording repair changes only the freshness cache;
+        a reused direction keeps its accepted rows.  Ordinary acceptance therefore
+        re-projects the still-valid record for that exact gap into the rows that
+        already carry the fields (EP2 section B).  Only the three wording fields
+        move: the row must still match the record's protected facts (status,
+        confidence, candidate list, completed-by identity), so a genuine source
+        change stays the normal regeneration path instead of being masked here.
+        """
+        pairs = (("evidence", "model_evidence"),
+                 ("completed_part", "completed_part"),
+                 ("remaining_gap", "remaining_gap"))
+
+        def matches(row, record, *, with_status: bool) -> bool:
+            if not isinstance(row, dict) or not isinstance(record, dict):
+                return False
+            if with_status and row.get("status") != record.get("status"):
+                return False
+            if row.get("confidence") != record.get("confidence"):
+                return False
+            return (list(row.get("candidate_paper_ids") or [])
+                    == list(record.get("candidate_paper_ids") or []))
+
+        def project(row, record, fields) -> None:
+            for row_field, cache_field in fields:
+                text = record.get(cache_field)
+                if isinstance(text, str) and row_field in row \
+                        and row[row_field] != text:
+                    row[row_field] = text
+
+        for section in ("gap_shortlist", "gaps_excluded"):
+            for row in entry.get(section) or []:
+                record = checked.get(row.get("gap_id")) if isinstance(row, dict) else None
+                if matches(row, record, with_status=True):
+                    project(row, record, pairs)
+        for item in entry.get("completed_gap_blacklist") or []:
+            record = checked.get(item.get("gap_id")) if isinstance(item, dict) else None
+            if not isinstance(record, dict) or record.get("status") != "done_by_self":
+                continue
+            candidates = list(record.get("candidate_paper_ids") or [])
+            completed = candidates[0] if candidates else None
+            if not matches(item, record, with_status=False):
+                continue
+            if item.get("completed_by_item_key") != completed:
+                continue
+            project(item, record, (("evidence", "model_evidence"),))
+
     def stage2_display_reference_keys(direction: dict) -> set:
         """Structured paper keys the four fixed-evidence exits actually display."""
         keys = set()
@@ -1290,6 +1339,7 @@ def build(*, Stage2Context,
                     papers_map[key] = canonical
         for direction in pack_directions:
             stage2_fill_blacklist_candidates(direction, checked_gap_statuses)
+            stage2_project_source_evidence(direction, checked_gap_statuses)
         cache_entries = dict(ctx.cache)
         for ckey, statuses in statuses_by_direction.items():
             for gap_id, record in statuses.items():
@@ -2086,6 +2136,8 @@ def build(*, Stage2Context,
         stage2_old_pack_gap_statuses=stage2_old_pack_gap_statuses,
         stage2_render_state=stage2_render_state,
         stage2_require_paper_reference_titles=stage2_require_paper_reference_titles,
+        stage2_project_source_evidence=stage2_project_source_evidence,
+        stage2_lease_owner=stage2_lease_owner,
         stage2_body_without_generation_time=stage2_body_without_generation_time,
         stage2_old_managed_render=stage2_old_managed_render,
         stage2_accept_managed_body=stage2_accept_managed_body,

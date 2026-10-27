@@ -217,6 +217,19 @@ if _STAGE2_VALIDATION_SPEC is None or _STAGE2_VALIDATION_SPEC.loader is None:
 _stage2_validation_module = importlib.util.module_from_spec(_STAGE2_VALIDATION_SPEC)
 _STAGE2_VALIDATION_SPEC.loader.exec_module(_stage2_validation_module)
 
+# Stage-2 source-evidence wording repair (execution plan EP2). Loaded by path
+# for the same reason as the other Stage-2 helpers; the factory call further
+# down binds it to this runner's own helpers once they are defined.
+_STAGE2_EVIDENCE_REPAIR_PATH = Path(__file__).with_name("_stage2_evidence_repair.py")
+_STAGE2_EVIDENCE_REPAIR_SPEC = importlib.util.spec_from_file_location(
+    "_stage2_evidence_repair", _STAGE2_EVIDENCE_REPAIR_PATH)
+if _STAGE2_EVIDENCE_REPAIR_SPEC is None or _STAGE2_EVIDENCE_REPAIR_SPEC.loader is None:
+    raise RuntimeError(
+        f"cannot load _stage2_evidence_repair: {_STAGE2_EVIDENCE_REPAIR_PATH}")
+_stage2_evidence_repair_module = importlib.util.module_from_spec(
+    _STAGE2_EVIDENCE_REPAIR_SPEC)
+_STAGE2_EVIDENCE_REPAIR_SPEC.loader.exec_module(_stage2_evidence_repair_module)
+
 # Stage-2 helper module: loaded by path next to this runner (the runner may be
 # executed directly or imported by path, so the scripts directory is not
 # guaranteed to be on sys.path). The factory call further down binds it to this
@@ -987,6 +1000,27 @@ stage2_old_managed_render = _stage2_finalize.stage2_old_managed_render
 stage2_accept_managed_body = _stage2_finalize.stage2_accept_managed_body
 cmd_stage2_finalize = _stage2_finalize.cmd_stage2_finalize
 cmd_stage2_refresh_level = _stage2_finalize.cmd_stage2_refresh_level
+
+
+# Binding point: the source-evidence repair entry reuses this runner's existing
+# accepted-pack/cache helpers and the professor writer lease loaded lazily by
+# the Stage-2 finalize module; it never builds a second channel or lock.
+_stage2_evidence_repair = _stage2_evidence_repair_module.build(
+    fail=fail,
+    emit=emit,
+    read_json_file=read_json_file,
+    atomic_json=atomic_json,
+    sha256_obj=sha256_obj,
+    load_input_pack=load_input_pack,
+    stage2_validation_legality=lambda pack: _stage2_validation.stage2_validation_legality(pack),
+    stage2_bound_render=lambda professor_dir, pack: _stage2_validation.stage2_bound_render(
+        professor_dir, pack),
+    stage2_pack_content_fingerprint=stage2_pack_content_fingerprint,
+    lease_owner=_stage2_finalize.stage2_lease_owner,
+    INPUT_PACK=INPUT_PACK,
+    FRESHNESS_CACHE=FRESHNESS_CACHE)
+
+cmd_stage2_repair_evidence = _stage2_evidence_repair.cmd_stage2_repair_evidence
 
 
 # Stage-2 helper module: loaded by path next to this runner (the runner may be
@@ -2159,6 +2193,15 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--professor-dir", required=True)
     p.add_argument("--validation-file", required=True)
     p.set_defaults(func=cmd_stage2_record_validation)
+
+    p = sub.add_parser("stage2-repair-evidence")
+    p.add_argument("--professor-dir", required=True)
+    p.add_argument("--repair-file", required=True,
+                   help="schema-1 repair batch naming direction_id, gap_id, one cache "
+                        "field from model_evidence|completed_part|remaining_gap, the "
+                        "expected old text, the replacement text and the current "
+                        "validator/cache digests")
+    p.set_defaults(func=cmd_stage2_repair_evidence)
 
     p = sub.add_parser("stage3-record-validation")
     p.add_argument("--professor-dir", required=False,

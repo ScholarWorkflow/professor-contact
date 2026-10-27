@@ -255,6 +255,8 @@ Stage 0 的 handoff 形状固定为上面的教授级事务记录数组：下游
 
 旧包缺少 U1 展示完成标记时，Stage 2 preflight 会返回 `process` 和 `fixed_evidence_display_update`；按正常 `preflight → process → plan → finalize` 通路更新即可，不新增刷新命令、不强迫模型重跑仍有效的分析/freshness/narrative/resolved 资产，也不得手工改受管 Markdown。缺 map 的旧包不能直接记录校验，必须先用这一通路接受新正文；完成标记只在 finalize 实际接受当前 body 与 map 后写入。
 
+**固定卡措辞修复（`contact_state.py stage2-repair-evidence`）**：`needs_owner_fix=true` 且 `fixed_blocking` 记录的责任为 `source` 时，固定卡只有三项措辞字段可以走这个窄入口：缓存 `model_evidence`、`completed_part`、`remaining_gap`。显示字段到缓存字段的映射固定为 `evidence`/`blacklist_evidence` → `model_evidence`、`completed_part` → `completed_part`、`remaining_gap` → `remaining_gap`；每个字段都必须在 `fixed_blocking` 里有自己的、`owner=source` 的同方向同 gap 记录，一个字段的记录不授权另外两个。命令只接受 schema 1 的 `{"schema":1,"repairs":[...]}`，每行写明 `direction_id`、`gap_id`、`field`、`expected_old_text`、`replacement`、`expected_validation_sha256`、`expected_cache_sha256`；先校验整批（逐字段授权、旧文本、校验报告摘要与整个 `论文分析/_freshness_cache.json` 摘要），任一行不合格整批拒绝且零写入，重复的 direction/gap/field 行直接拒绝而不是后者覆盖前者。事实含义仍由 source owner 核对：命令不调用模型、不做语义等价判定，也不改候选、状态、置信度、作者原文或其它字段；措辞确需改变事实时回到源数据重评。成功改写只写 `论文分析/_freshness_cache.json`，返回 `needs_refresh` 与受影响的 direction/gap，不改受管 Markdown、输入包、validator 记录，也不代表 PASS；之后按普通接受流程重新预检（`stage2-preflight --target-file <教授目录>/套磁目标.json`）→ process/plan → `stage2-finalize`，finalize 把该 gap 当前有效的三项措辞投影到已承载这些字段的行（含 reuse 方向与禁锚卡），新正文仍须重新过一轮 style validator。替换文本与旧文本相同的请求是 no-op：不写缓存、不重置已记录的校验轮次。引文/译文/页码/状态等 source 原文问题、标签/模板/链接排版（generator）问题和校验报告本身的格式问题不属于这个入口，按各自 owner 处理。
+
 ### 版本关系（阶段 2 输入包内临时计算）
 
 runner 在输入包内计算临时 `version_family/version_role/supersedes`：会议版/期刊扩展版仅在作者核心集合、题名/摘要主题、时间顺序、明确扩展证据（后续摘要正则命中 extend/journal version 等）都成立时合并（期刊扩展版为主证据，重复 gap 标 `suppressed_by`）；证据不足只写 `possible_family` 人工提示，不合并不压制不影响 freshness。
