@@ -562,6 +562,10 @@
      "signals": {
       "stage2": 96
      }
+    },
+    {
+     "name": "test_stage5_interest_title_length",
+     "stage": "stage5"
     }
    ]
   },
