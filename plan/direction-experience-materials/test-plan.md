@@ -1,8 +1,8 @@
 # 方向真实素材：测试计划
 
-- Test plan revision: TP1.4；2026-10-28；对应 [EP1.2/R1](execution-plan.md)。
+- Test plan revision: TP1.5；2026-10-28；对应 [EP1.2/R1](execution-plan.md)。
 - Target repository baseline: ScholarWorkflow/professor-contact `b67dd3ca4d29dfc78f57988564b219c71b582674`。
-- Proposed review status: pending。测试资产与可执行 recipe 已按本计划准备；产品新能力尚未实现，T1–T6 全部未执行，不声明 PASS。原 TP1.1 的无关必测项结论可复用；T4 已按验收决定人的本轮精简改写，待定向复核。第二关待审核本轮 recipe 的可执行性与范围；第三关未执行。
+- Proposed review status: pending。测试资产与可执行 recipe 已按本计划准备；产品新能力尚未实现，T1–T6 全部未执行，不声明 PASS。原 TP1.1 的无关必测项结论可复用；T4 已按验收决定人的本轮精简改写；T5 旧包夹具已按第二关意见改为还原旧字段结构与旧版 `source_hash`。第二关仅待定向复核 T5；第三关未执行。
 - 本文件是唯一完整测试计划与步骤承载位置，不另建问卷评估、采集器、判定器或证据账本。
 
 ## 1. 唯一必测清单（验收上限）
@@ -96,7 +96,7 @@ PROBE
 
 4. 夹具构成（全部合成，已在预检中确认可生成）：单教授 `試験 教授`、方向 `DIR00001`/`DIR00002`，各 3 个候选、已选 idea；Stage-2/3 事实来自同仓 `BaseEnv` 的既有夹具，联系方式证据与核验缓存来自 `_stage5_issue59_test_support.py` 的既有写入器；模板来自 `stage5_templates()`。素材回答为固定合成日文，`question` 固定一句。模型输出是测试输入：刷新后重新读取 `stage5-plan` 的素材字段，再构造并提交本轮合成结果及草稿，不复用上一轮结果；不在测试中构造旧结果指纹。
 
-5. 兼容输入（T5）只准备旧格式夹具：把 Stage-4 邮件包去掉 `direction_material*` 字段后写回临时目录，不迁移历史真实包。
+5. 兼容输入（T5）只准备旧格式夹具，且必须同时还原**旧字段结构和旧版 `source_hash`**：取本轮 Stage-4 邮件包，删掉 `direction_material*` 字段与 `direction_material:<dir>:<id>` 来源 ID，再按功能加入前的摘要规则重算每条 email 的 `source_hash`，写回临时目录。旧版规则是 `main` `b67dd3c` 的 `EMAIL_SOURCE_HASH_FIELDS`（`email_id`、`direction_ids`、`directions`、`idea`、`papers`、`gaps`、`red_lines`、`allowed_sources`、`contact_evidence`、`cross_direction`）按 `json.dumps(..., ensure_ascii=False, sort_keys=True)` 取 SHA-256，与 runner 的 `sha256_obj` 编码一致；测试模块用 `legacy_source_hash()` 计算、`legacy_pack()` 组装，并在用例中断言该行的 hash 等于旧规则结果。只删字段而保留新规则算出的 hash 不算旧包，因为功能加入前的 producer 不会写出这种组合。不迁移历史真实包，也不新增旧版本全量迁移测试。
 
 ## 2.1 准备与预检记录（2026-10-27）
 
@@ -113,6 +113,7 @@ PROBE
   - 预检同时观察到两个当前事实，供实现参考，不是正式结论：`stage5-finalize` 的邮件文件名是带方向与哈希后缀的 `套磁邮件_<方向>_<想法>_<hash>.md`，不是固定名；`validate_email_raw` 对未列入 `allowed_sources` 的来源返回 `source_map <句>: source <id> not in allowed_sources`。
   - 当前 runner 没有 `direction-materials-save` 子命令（符合实现前状态）；以未实现入口运行模块，8 项全部 `skipped`（`OK (skipped=8)`），记为未执行。
   - 按 §2 第 1 步的探测脚本实跑，`save-entry-present.txt` 输出 `False`，与上一条一致。
+  - TP1.5 追加预检（`/tmp/pr149-prep-20261027/probe_legacy.py`，只检查夹具形状，不执行 T5 断言）：`legacy_pack()` 产出的行不含 `direction_materials`、不含 `direction_material:` 来源 ID，其 `source_hash` 等于按 `b67dd3c` 旧规则重算的结果，且与“把素材字段计入摘要”的新规则结果不同；把该旧包写回后 `stage5-plan` 返回 `ok`，`model_input` 不含 `direction_materials`。
 - 未完成：第二关（本 recipe 的独立审核）、第三关（正式结果）；产品实现由实现负责人完成。下一负责人：独立 reviewer 确认第二关，再由本地执行工程师按本 recipe 运行。
 
 ## 3. 结果复用与范围控制
@@ -129,6 +130,8 @@ PROBE
 Gate1/设计由独立审核记录给结论；Gate2待独立 reviewer 审核本 recipe 的可执行性与范围；Gate3待有效结果。产品实施与正式执行均非本 PR 交付，本轮不声明可合并或已完成产品。
 
 ## 修订记录
+
+TP1.5（2026-10-28，按第二关审核意见）：T5 的旧包夹具改为同时还原旧字段结构和旧版 `source_hash`——按 `b67dd3c` 的 `EMAIL_SOURCE_HASH_FIELDS` 重算，并删除 `direction_material:` 来源 ID；recipe 第 5 项同步写明规则与断言。只改 T5 测试数据与 recipe，未改必测目标、其它用例或产品需求；第二关仅需定向复核 T5。
 
 TP1.4（2026-10-28，验收决定人主动精简）：随 EP1.2 将 T4 的旧模型结果指纹拒绝预期改为“更新回答→Stage4重冻→Stage5读取新素材→本轮重新生成结果、草稿并完成邮件”；删除模型结果素材指纹字段及对它的断言，同步修正 T3/T5 夹具。仍为 T1–T6、8 项测试方法；T1 的既有静态阅读覆盖生成器刷新后重新规划的约定，未增加真实模型运行。受影响的 T4 设计及 recipe 待复核；Gate3 未执行。
 

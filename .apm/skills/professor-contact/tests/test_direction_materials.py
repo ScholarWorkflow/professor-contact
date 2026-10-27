@@ -1,7 +1,7 @@
 """TP1 T2-T6 checks for direction-scoped experience materials.
 
 Prepared by the local test engineer from
-``plan/direction-experience-materials/test-plan.md`` (TP1.4).  The product
+``plan/direction-experience-materials/test-plan.md`` (TP1.5).  The product
 feature is not implemented in this commit: every case drives the planned
 public entry points (``contact_state.py direction-materials-save`` and the
 Stage-4/Stage-5 commands that must carry the frozen slice) and reads the
@@ -99,6 +99,27 @@ def material_entries(data, direction_id):
     return bucket
 
 
+# The Stage-4 fact tuple the pre-feature runner hashed: ``contact_state.py``
+# ``EMAIL_SOURCE_HASH_FIELDS`` on main ``b67dd3c``, before direction materials
+# existed. A pack written back then carries a hash over exactly these keys.
+LEGACY_SOURCE_HASH_FIELDS = (
+    "email_id", "direction_ids", "directions", "idea", "papers", "gaps",
+    "red_lines", "allowed_sources", "contact_evidence", "cross_direction",
+)
+
+
+def legacy_source_hash(entry):
+    """The pre-feature ``email_source_hash`` for one row.
+
+    Same canonical encoding the runner uses (``ensure_ascii=False``,
+    ``sort_keys=True``) over the fixed pre-feature key tuple.
+    """
+    payload = {key: entry[key] for key in LEGACY_SOURCE_HASH_FIELDS}
+    return hashlib.sha256(
+        json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8")
+    ).hexdigest()
+
+
 def strip_material_fields(pack):
     """The pre-feature pack shape: no ``direction_material*`` field anywhere."""
 
@@ -111,6 +132,28 @@ def strip_material_fields(pack):
         return value
 
     return clean(pack)
+
+
+def legacy_pack(pack):
+    """A faithful pre-feature pack: old field structure *and* its old hash.
+
+    Dropping the new fields alone leaves the hash the current rule computed over
+    them, which no pre-feature producer ever wrote. Recompute each row with the
+    old key tuple (and drop the ``direction_material:`` source ids a
+    pre-feature pack could not contain) so the fixture really is an old pack.
+    """
+    legacy = strip_material_fields(pack)
+    for email in legacy.get("emails") or []:
+        if not isinstance(email, dict):
+            continue
+        sources = email.get("allowed_sources")
+        if isinstance(sources, list):
+            email["allowed_sources"] = [
+                source for source in sources
+                if not (isinstance(source, str)
+                        and source.startswith("direction_material:"))]
+        email["source_hash"] = legacy_source_hash(email)
+    return legacy
 
 
 class _DirectionMaterialsBase(BaseEnv):
@@ -511,11 +554,16 @@ class DirectionMaterialsCompatibilityTests(_DirectionMaterialsBase):
     def test_t5_pack_without_materials_keeps_old_behavior(self):
         require_save_entry(self)
         self.stage4(self.both_directions(), name="sel-t5.json")
-        legacy = strip_material_fields(self.pack())
+        current = self.pack()
+        legacy = legacy_pack(current)
         self.email_pack.write_text(json.dumps(legacy, ensure_ascii=False, indent=1),
                                    encoding="utf-8")
         email = self.email(DIRECTION_A)
         self.assertNotIn("direction_materials", email)
+        # The fixture is an old pack only if its hash matches the old field
+        # structure; keeping the new-rule hash would test a shape no
+        # pre-feature producer ever wrote.
+        self.assertEqual(email["source_hash"], legacy_source_hash(email))
 
         plan = self.plan(email["email_id"])
         self.assertEqual(plan["status"], "ok", plan)
