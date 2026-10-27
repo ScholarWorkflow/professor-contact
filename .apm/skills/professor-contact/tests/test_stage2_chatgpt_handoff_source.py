@@ -41,23 +41,26 @@ PAPER_PYTHON_ENV = "CONTACT_PAPER_ANALYSIS_PYTHON"
 HELPER_PYTHON_ENV = "CONTACT_PAPER_PYTHON"
 RUN_ROOT_ENV = "CONTACT_SOURCE_TEST_RUN_ROOT"
 
-# The quote below sits on a page outside the trailing candidate pages, so it is
-# never in candidates.json: only prepared source text can prove it.
-NON_CANDIDATE_QUOTE = "The framework also supports multilingual documents."
+# The quote below sits on page 2, outside the trailing candidate pages and
+# without a prepare keyword, so it is never in candidates.json: only prepared
+# source text can prove it.  It states the authors' explicit follow-up study.
+OUTSIDE_CANDIDATE_QUOTE = "Our next study will validate the pipeline on multilingual documents."
 CANDIDATE_QUOTE = "We will share code after publication."
 OCR_PAGE_TEXT = "Exact OCR text for the blank final page."
 
 PAGES_WITH_FUTURE_WORK = (
     ("Title Page", "A Study of Contact Workflows", "Author A, Author B"),
-    ("Method", "We describe the pipeline.", NON_CANDIDATE_QUOTE),
+    ("Method", "We describe the pipeline.", OUTSIDE_CANDIDATE_QUOTE),
     ("Results", "The method improves accuracy.", "Results hold across three benchmarks."),
+    ("Methods", "The pipeline is deterministic.", "We describe the pipeline."),
+    ("Limitations", "The method needs more data.", "We describe remaining challenges."),
     ("Discussion", "The results are consistent.", "We discuss practical deployment."),
     ("Conclusion", "Our future work will extend the method to longer documents.", CANDIDATE_QUOTE),
 )
 
 PAGES_WITH_BLANK_LAST_PAGE = (
     ("Title Page", "A Study of Contact Workflows", "Author A, Author B"),
-    ("Method", "We describe the pipeline.", NON_CANDIDATE_QUOTE),
+    ("Method", "We describe the pipeline.", OUTSIDE_CANDIDATE_QUOTE),
     ("Results", "The method improves accuracy.", "Results hold across three benchmarks."),
     ("Discussion", "The results are consistent.", "We discuss practical deployment."),
     (),
@@ -332,9 +335,9 @@ class SourceItemsCase(SourceHandoffTestCase):
 
     def setUp(self):
         super().setUp()
-        self.non_candidate_page = self.page_of(NON_CANDIDATE_QUOTE)
+        self.non_candidate_page = self.page_of(OUTSIDE_CANDIDATE_QUOTE)
         self.assertFalse(
-            [item for item in self.candidates_payload if NON_CANDIDATE_QUOTE in item["quote"]],
+            [item for item in self.candidates_payload if OUTSIDE_CANDIDATE_QUOTE in item["quote"]],
             "fixture quote must stay outside candidates.json",
         )
         self.candidate = self.candidate_for(CANDIDATE_QUOTE)
@@ -342,8 +345,8 @@ class SourceItemsCase(SourceHandoffTestCase):
     def items(self):
         return [
             {
-                "quote": NON_CANDIDATE_QUOTE,
-                "translation_zh": "该框架也支持多语言文档。",
+                "quote": OUTSIDE_CANDIDATE_QUOTE,
+                "translation_zh": "我们的下一项研究将在多语言文档上验证该流程。",
                 "source": "Method",
                 "page": self.non_candidate_page,
             },
@@ -388,7 +391,7 @@ class SourceItemsTests(SourceItemsCase):
         self.assertEqual(sorted(transport_pages), sorted(prepared_pages))
         for page, prepared_text in prepared_pages.items():
             self.assertEqual(transport_pages[page].strip(), prepared_text.strip())
-        self.assertIn(NON_CANDIDATE_QUOTE, transport_pages[self.non_candidate_page])
+        self.assertIn(OUTSIDE_CANDIDATE_QUOTE, transport_pages[self.non_candidate_page])
         self.assert_no_pdf_copies()
         self.assertEqual(self.pdf.read_bytes(), self.pdf_bytes)
 
@@ -404,7 +407,7 @@ class SourceItemsTests(SourceItemsCase):
         )
         self.assertEqual(
             [item["quote"] for item in sidecar["items"]],
-            [NON_CANDIDATE_QUOTE, self.candidate["quote"]],
+            [OUTSIDE_CANDIDATE_QUOTE, self.candidate["quote"]],
         )
         self.assertEqual(
             [item["page"] for item in sidecar["items"]],
@@ -413,7 +416,7 @@ class SourceItemsTests(SourceItemsCase):
         self.assertEqual(sidecar["items"][1]["id"], self.candidate["id"])
         self.assertEqual(
             sidecar["items"][0]["id"],
-            hashlib.sha256(NON_CANDIDATE_QUOTE.encode("utf-8")).hexdigest(),
+            hashlib.sha256(OUTSIDE_CANDIDATE_QUOTE.encode("utf-8")).hexdigest(),
         )
         facts = json.loads(Path(str(self.target) + ".facts.json").read_text(encoding="utf-8"))
         self.assertEqual(facts["future_work_ids"], [item["id"] for item in sidecar["items"]])
@@ -434,7 +437,7 @@ class RejectedSourceItemsTests(SourceItemsCase):
 
     def test_rewritten_quote_is_rejected(self):
         items = self.items()
-        items[0]["quote"] = NON_CANDIDATE_QUOTE.replace("documents", "papers")
+        items[0]["quote"] = OUTSIDE_CANDIDATE_QUOTE.replace("documents", "papers")
         bundle = self.build()
         result = self.result_zip(bundle["bundle_path"], items, facts=support.FACTS_DRAFT)
         self.assert_not_installed(
@@ -551,8 +554,8 @@ class LegacyExactContractTests(SourceItemsCase):
             legacy["bundle_path"],
             [
                 {
-                    "quote": NON_CANDIDATE_QUOTE,
-                    "translation_zh": "该框架也支持多语言文档。",
+                    "quote": OUTSIDE_CANDIDATE_QUOTE,
+                    "translation_zh": "我们的下一项研究将在多语言文档上验证该流程。",
                     "source": "Method",
                     "page": self.non_candidate_page,
                 }

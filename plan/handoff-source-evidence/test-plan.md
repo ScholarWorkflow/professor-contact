@@ -8,7 +8,7 @@
 
 | ID | 目标/输入 | 预期 | 足够的检查 |
 |---|---|---|---|
-| T1 | 有完整 prepare、候选外正文一句，另带一个旧合法候选，生成并导入 source-items-v1 | 返回项不需候选ID；正式 sidecar 含两条及正确页/源SHA，既有候选ID保留，facts正确join；ZIP/临时目录无 PDF，原 PDF 不变 | 现有 unittest 框架中的一个 focused build→import 用例；调用真实 paper-analysis helper，不 mock 原文校验结果 |
+| T1 | 有完整 prepare、候选外正文一句（作者明确后续研究），另带一个旧合法候选，生成并导入 source-items-v1 | 返回项不需候选ID；正式 sidecar 含两条及正确页/源SHA，既有候选ID保留，facts正确join；ZIP/临时目录无 PDF，原 PDF 不变 | 现有 unittest 框架中的一个 focused build→import 用例；调用真实 paper-analysis helper，不 mock 原文校验结果 |
 | T2 | 旧 prepare 无 source_pages；同源缓存为一个必要坏页提供正文 | 统一 helper 补齐，原 prepare/candidates 不变；transport 与新 prepare 使用同一页文字，缺该必要缓存时 upload_ready=false，无 PDF fallback | 同一个准备路径 focused unittest，实际 helper prepare/merge，临时合成 PDF 和既有 cache格式；不调OCR服务 |
 | T3 | T1 结果分别改错物理页/改写原话；当前源PDF变化 | 原文或身份校验失败，相应 job 不安装 analysis/sidecar/index；不改输入或放宽匹配求成功 | 现有断言/文件观察，最小三个变体；不扩 hash/并发/路径组合 |
 | T4 | 旧 exact-items 的一个合法非空候选与旧 hybrid OCR excerpt结果 | 原协议成功；不把旧包静默解释成新 contract；有效候选不要求新字段 | 原有legacy bundle fixture保留一个真实候选，复用T1同一helper直接导入；另复用一条既有OCR selector，不跑所有legacy回归 |
@@ -19,7 +19,8 @@
 ## 可执行 recipe（实现后执行，现在不运行）
 
 1. 在隔离 contact producer checkout 中工作，使用已有可用 Python/helper依赖，临时输入与输出用 `RUN=$(mktemp -d /tmp/contact-source-evidence.XXXXXX)`；用例的临时目录由 `CONTACT_SOURCE_TEST_RUN_ROOT="$RUN/tmp"` 指定，标准输出存 `$RUN`。记录实际 Python/contact/helper版本和 RUN。不得读取用户生产教授目录或 Zotero；缺依赖记无法判断，不自动安装。
-2. 在 `.apm/skills/professor-contact/tests/test_stage2_chatgpt_handoff_source.py` 用当前 `unittest`、`tempfile`、已有 handoff support 组织 T1–T3 及T4旧exact非空输入；合成小 PDF 包含已知正文和候选外语句，复用上游既有 fixture构造方式。只需要正常输出与明确变体，不新增测试工具。测试可写 disposable PDF作为原始输入；产品不得复制它。
+   正式执行前先确认受测版本：记录 `git rev-parse HEAD`，并确认该提交包含 `.apm/skills/professor-contact/tests/test_stage2_chatgpt_handoff_source.py`（`git cat-file -e HEAD:.apm/skills/professor-contact/tests/test_stage2_chatgpt_handoff_source.py`）。随后从同一提交运行第 4 步，并记录实际执行的提交、unittest 的 `Ran N tests` 数量与每项结果；发现 0 项测试或模块缺失时停止，记未执行，不记通过。本 PR 的测试准备资产与预检版本说明见文末“准备与预检记录”。
+2. 在 `.apm/skills/professor-contact/tests/test_stage2_chatgpt_handoff_source.py` 用当前 `unittest`、`tempfile`、已有 handoff support 组织 T1–T3 及T4旧exact非空输入；合成小 PDF 包含已知正文和候选外的作者明确后续研究句，复用上游既有 fixture构造方式。只需要正常输出与明确变体，不新增测试工具。测试可写 disposable PDF作为原始输入；产品不得复制它。
 3. 使用同一已安装 paper-analysis 的 `future_work.py/facts.py/pdf_runtime.py` 运行实际 helper，不 mock helper 的语义输出。本次准备固定以下运行资源（Gate2 项的实际值）：
    - skill：`/nix/store/vvdass0s4x1b2h46sqk29dq7rdbjbmr8-paper-analysis-0.1.0/payload/skills/paper-analysis`；其中 `future_work.py` SHA256 为 `25bd7678f85dc1a8cb527449f65f12d0b4400da5ff8d8806b26a175490d571ea`，与 flake.lock 的 paper-analysis `c140658cc60f9d9c3d17008cbab0b599f40c8e46` 同一文件内容一致。
    - agent：`/nix/store/vvdass0s4x1b2h46sqk29dq7rdbjbmr8-paper-analysis-0.1.0/codex/agents/paper-analysis.toml`。
@@ -55,15 +56,16 @@
 
 ## 准备与预检记录（2026-10-27）
 
-- 目标版本：contact `2866b1cdfa39f8a9ee19796cf063cfc4ef756c19`（PR #143 head）；paper-analysis helper 与解释器见第 3 节实际值。
+- 预检版本：contact `2866b1cdfa39f8a9ee19796cf063cfc4ef756c19`（当时的 PR head，也是本轮预检与 fixture 验证使用的版本）；它不包含 `test_stage2_chatgpt_handoff_source.py`，不能用于正式执行。正式执行按第 1 步确认受测提交包含该模块，并记录实际提交与 `Ran N tests`。
+- 测试准备资产版本：`bab083e` 首次交付后，按第二关口审核意见修正（候选外引文改为作者明确后续研究、执行版本绑定），实际修正提交与 PR head 以执行时 `git rev-parse HEAD` 为准；本记录不把准备提交当受测产品版本。
 - 已交付准备产物：
-  - `.apm/skills/professor-contact/tests/test_stage2_chatgpt_handoff_source.py`：T1、T2（有/无必需页缓存两个准备路径）、T3（错页/改写原话/源 PDF 变化三个变体）、T4（旧 exact 非空候选与候选外拒绝）。
+  - `.apm/skills/professor-contact/tests/test_stage2_chatgpt_handoff_source.py`：T1、T2（有/无必需页缓存两个准备路径）、T3（错页/改写原话/源 PDF 变化三个变体）、T4（旧 exact 非空候选与候选外拒绝）；T1 的候选外句为作者明确的后续研究（`Our next study will validate the pipeline on multilingual documents.`），位于第 2 页、不在 `candidates.json` 中。
   - `.apm/skills/professor-contact/tests/_stage2_handoff_test_support.py`：`legacy_embedded_bundle` 新增可选 `selection_contract` 参数；仅在该参数传入时优先从 `bundle_dir` 读取 prepare/candidates 字节，默认参数与原调用行为不变。
   - `plan/test-grouping/shards.json`：新模块登记到 shard4（stage2）。
 - 有限预检（临时目录 `/tmp/pr143-test-prep-20261027`，使用第 3 节解释器；未调用 contact build/import 正式入口，未执行必测用例）：
-  - 三个 helper 脚本与解释器可用；helper `prepare` 在 5 页合成 PDF 上产出 `source_pages`/`page_quality`（5 页 trusted、`ocr_required_pages` 为空），候选外句不在 `candidates.json`。
+  - 三个 helper 脚本与解释器可用；helper `prepare` 在 7 页合成 PDF 上产出 `source_pages`/`page_quality`（7 页 trusted、`ocr_required_pages` 为空），第 2 页的候选外后续研究句不在 `candidates.json`（该页不在 trailing 候选页且无 prepare 关键词）。
   - 空白末页的合成 PDF 上 `prepare` 标 `ocr_required_pages=[5]`、第 5 页 tier=empty；按 `<pdf>.llm_ocr.pages.json` 既有格式写页缓存后，`pdf_runtime.py validate-ocr-cache` 与 `future_work.py merge-ocr` 成功，合并后 required 为空、第 5 页正文为缓存文字。
-  - 计划中的 T1 两条 items（候选外 + 合法候选）经真实 helper `validate`/`finalize` 通过，sidecar 页码/ID/源SHA 与预期一致；改错物理页与改写原话均被拒绝；真实 `facts.py finalize` 产出 `future_work_ids` join。
+  - 计划中的 T1 两条 items（候选外后续研究 + 合法候选）经真实 helper `validate`/`finalize` 通过，sidecar 页码/ID/源SHA 与预期一致；改错物理页与改写原话均被拒绝；真实 `facts.py finalize` 产出 `future_work_ids` join。
   - 各测试类的 fixture setUp（合成 PDF、真实 prepare、旧 prepare 降级、页缓存写入、候选定位）逐类运行无错误。
   - `python3 scripts/check_test_shards.py` 返回 `OK: 83 test modules across 4 shards, each with a stage`。
 - 未完成：Gate3 未执行；T5 待人工阅读；本轮没有正式通过结论。
