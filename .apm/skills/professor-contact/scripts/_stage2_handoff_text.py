@@ -190,15 +190,16 @@ def prepare_text(job: dict, skill_dir: Path, work: Path, run) -> dict:
     wanted = (required - resolved) | unresolved_bad
     provided = _cached_pages(pdf_runtime, pdf, sha256, wanted, count, work, run)
 
-    blocking = required - resolved - set(provided)
-    untrusted = {page for page in unresolved_bad if tiers[page] == "untrusted"}
-    if not blocking:
-        blocking |= untrusted - set(provided)
+    missing_required = required - resolved - set(provided)
+    untrusted_missing = {page for page in unresolved_bad
+                         if tiers[page] == "untrusted"} - set(provided)
+    # Every unresolved needed page blocks the package, so report all of them.
+    blocking = set(missing_required) | untrusted_missing
     if not any(tier == "trusted" for tier in tiers.values()):
         blocking |= unresolved_bad - set(provided)
     if blocking:
         reason = ("future_work_pages_need_local_ocr_merge"
-                  if blocking & required else "text_pages_need_local_ocr")
+                  if missing_required else "text_pages_need_local_ocr")
         return _blocked(reason, blocking)
 
     source_prepare = work / "prepare.json"
