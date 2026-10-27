@@ -486,18 +486,26 @@ def build_bundle(args: argparse.Namespace) -> dict[str, Any]:
                 continue
             job['source_mode'] = 'local'
             try:
-                data, pages, reason = _text.prepare_text(job, Path(args.paper_analysis_skill_dir),
+                prepared = _text.prepare_text(job, Path(args.paper_analysis_skill_dir),
                     staging / _safe_component(job['item_key']), _run_future_work)
-            except (OSError, ValueError) as error:
-                data, pages, reason = None, [], 'text_preparation_unavailable'
-            if reason:
-                preparation.append({'item_key': job['item_key'], 'pages': pages, 'reason': reason})
-            else:
-                rel = f"papers/{_safe_component(job['item_key'])}/paper.txt"
-                job['text_transport'] = {'path': rel, 'sha256': hashlib.sha256(data).hexdigest(),
-                    'page_count': _load_json(Path(job['future_work_prepare_local']))['page_count'],
-                    'format': 'pdf-pages-v1', 'missing_text_pages': pages}
-                text_files[rel] = data
+            except (OSError, ValueError):
+                prepared = {'text': None, 'missing_pages': [], 'reason': 'text_preparation_unavailable',
+                            'prepare_path': None, 'candidates_path': None, 'page_count': None}
+            if prepared['reason']:
+                preparation.append({'item_key': job['item_key'], 'pages': prepared['missing_pages'],
+                                    'reason': prepared['reason']})
+                continue
+            # The canonical prepare/candidates are the bundled evidence files, so
+            # the transport text and the future-work source pages cannot diverge.
+            job['future_work_prepare_local'] = prepared['prepare_path']
+            job['future_work_candidates_local'] = prepared['candidates_path']
+            job['future_work_prepare_sha256'] = _sha256_file(Path(prepared['prepare_path']))
+            job['future_work_candidates_sha256'] = _sha256_file(Path(prepared['candidates_path']))
+            rel = f"papers/{_safe_component(job['item_key'])}/paper.txt"
+            job['text_transport'] = {'path': rel, 'sha256': hashlib.sha256(prepared['text']).hexdigest(),
+                'page_count': prepared['page_count'],
+                'format': 'pdf-pages-v1', 'missing_text_pages': prepared['missing_pages']}
+            text_files[rel] = prepared['text']
         manifest = _build_manifest(professor, normalized)
         bundle_dir = root / f"stage2-{manifest['handoff_id']}"
         zip_path = root / f"stage2-{manifest['handoff_id']}.zip"

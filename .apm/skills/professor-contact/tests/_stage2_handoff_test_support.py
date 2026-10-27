@@ -134,20 +134,31 @@ def add_paper_context(args, root):
     args.paper_analysis_agent = agent
 
 
-def legacy_embedded_bundle(args, handoff):
+def legacy_embedded_bundle(args, handoff, *, selection_contract=None):
     """Construct the pre-text transport fixture for existing legacy-import tests.
 
     Current build still validates inputs; only this fixture embeds old PDFs.
     New transport behavior is checked separately in test_stage2_chatgpt_handoff_text.
+
+    ``selection_contract`` rewrites the future-work contract so a caller can
+    build one specific pre-text package (for example the legacy exact-items-v1
+    candidate-only protocol).  That rewritten shape also embeds the evidence
+    bytes the build hashed, so its manifest stays bound to the exact bundled
+    prepare/candidates; the default path keeps reading the caller's original
+    files.
     """
     import json
     import zipfile
     result = handoff.build_bundle(args)
     record = json.loads(Path(result['local_manifest_path']).read_text())
     manifest = record['manifest']
+    bundle_dir = Path(result['bundle_dir']) if result.get('bundle_dir') else None
+    use_bundled_evidence = selection_contract is not None
     for job in manifest['jobs']:
         job.pop('source_mode', None)
         job.pop('text_transport', None)
+        if selection_contract is not None and job.get('future_work'):
+            job['future_work']['selection_contract'] = selection_contract
         job['job_id'] = handoff._expected_job_id(job)
     fingerprint = handoff._source_fingerprint(manifest['professor'], manifest['jobs'])
     manifest.update(source_fingerprint=fingerprint, handoff_id=fingerprint[:20])
@@ -162,8 +173,15 @@ def legacy_embedded_bundle(args, handoff):
         files[job['input_path']] = Path(spec['input_path']).read_bytes()
         files[str(Path(job['input_path']).parent / 'job.json')] = handoff._json_bytes(job)
         if job.get('future_work'):
-            files[job['future_work']['prepare_path']] = Path(spec['future_work_prepare']).read_bytes()
-            files[job['future_work']['candidates_path']] = Path(spec['future_work_candidates']).read_bytes()
+            future_work = job['future_work']
+            for field, local_field in (
+                ('prepare_path', 'future_work_prepare'),
+                ('candidates_path', 'future_work_candidates'),
+            ):
+                rel = future_work[field]
+                bundled = bundle_dir / rel if use_bundled_evidence and bundle_dir is not None else None
+                source = bundled if bundled is not None and bundled.is_file() else Path(spec[local_field])
+                files[rel] = source.read_bytes()
     with zipfile.ZipFile(archive_path, 'w') as zf:
         for rel, data in sorted(files.items()):
             handoff._zip_add_bytes(zf, rel, data)
