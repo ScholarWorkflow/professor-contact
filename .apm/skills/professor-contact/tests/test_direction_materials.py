@@ -1,7 +1,7 @@
 """TP1 T2-T6 checks for direction-scoped experience materials.
 
 Prepared by the local test engineer from
-``plan/direction-experience-materials/test-plan.md`` (TP1.3).  The product
+``plan/direction-experience-materials/test-plan.md`` (TP1.4).  The product
 feature is not implemented in this commit: every case drives the planned
 public entry points (``contact_state.py direction-materials-save`` and the
 Stage-4/Stage-5 commands that must carry the frozen slice) and reads the
@@ -9,9 +9,9 @@ planned ``方向素材.json`` shape.  Running this module before the implementat
 lands therefore records 未执行, never PASS.
 
 Scope is exactly T2-T6 of the plan's single required checklist; T1 is a static
-reading task and has no case here.  No case computes the material fingerprint
-itself: the value is always echoed from the plan output, so the fixture cannot
-become a second implementation of the product contract.
+reading task and has no case here.  T4 rebuilds the Stage-4 pack and creates
+fresh Stage-5 result and draft files for the updated answer; no model-result
+material fingerprint or stale-result rejection contract is introduced.
 """
 
 import hashlib
@@ -234,9 +234,9 @@ class _DirectionMaterialsBase(BaseEnv):
         extra = ("--email-id", email_id) if email_id else ()
         return parse(self.stage5(*extra, *arguments))
 
-    def model_result(self, email, fingerprint=None, *, first_source=None,
+    def model_result(self, email, *, first_source=None,
                      gap_source=None, name="raw.json"):
-        """One legal three-part result; the fingerprint is echoed, never computed."""
+        """One legal three-part synthetic model result for the current pack."""
         payload = {
             "schema": 1, "kind": "email", "email_id": email["email_id"],
             "interest_sentences_ja": [
@@ -253,8 +253,6 @@ class _DirectionMaterialsBase(BaseEnv):
                                                 f"gap:{email['anchorable_gaps'][0]}"]},
                 {"output": "future", "source_ids": [f"idea:{email['idea']['id']}"]}],
         }
-        if fingerprint is not None:
-            payload["direction_materials_fingerprint"] = fingerprint
         path = self.root / name
         path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
         return path
@@ -296,9 +294,8 @@ class _DirectionMaterialsBase(BaseEnv):
         md = (entry.get("files") or {}).get("md")
         return Path(md).read_text(encoding="utf-8") if md else ""
 
-    def commit_email(self, email, fingerprint=None, *, first_source=None,
-                     name="raw.json"):
-        raw = self.model_result(email, fingerprint, first_source=first_source, name=name)
+    def commit_email(self, email, *, first_source=None, name="raw.json"):
+        raw = self.model_result(email, first_source=first_source, name=name)
         choices = self.choices(email, name=f"choices-{name}")
         humanized = self.draft(email, raw, choices, name=f"draft-{name}.txt")
         out = parse(self.finalize(email, raw, choices, humanized))
@@ -403,14 +400,10 @@ class DirectionMaterialsProvenanceTests(_DirectionMaterialsBase):
         material_id, email, job = self._frozen()
         self.assertEqual([row["answer"] for row in job["model_input"]
                           ["direction_materials"]], [ANSWER_A_V1])
-        fingerprint = job["model_input"]["direction_materials_fingerprint"]
-        self.assertTrue(fingerprint)
-        self.assertIn("direction_materials_fingerprint", job["result_schema"])
-
         source = f"direction_material:{DIRECTION_A}:{material_id}"
         self.assertIn(source, self.email(DIRECTION_A)["allowed_sources"])
         raw, choices, humanized = self.commit_email(
-            email, fingerprint, first_source=source, name="t3-legal.json")
+            email, first_source=source, name="t3-legal.json")
         md = self.rendered_text(self.email(DIRECTION_A))
         self.assertIn("| 句 | 来源 |", md)
         self.assertTrue(material_id in md or ANSWER_A_V1 in md, md)
@@ -425,15 +418,14 @@ class DirectionMaterialsProvenanceTests(_DirectionMaterialsBase):
 
     def test_t3_unfrozen_material_cannot_be_cited(self):
         material_id, email, job = self._frozen()
-        fingerprint = job["model_input"]["direction_materials_fingerprint"]
         raw, choices, humanized = self.commit_email(
-            email, fingerprint, name="t3-baseline.json")
+            email, name="t3-baseline.json")
         before = self.rendered(email)
 
         for label, source in (
                 ("other-direction", f"direction_material:{DIRECTION_B}:{material_id}"),
                 ("unknown", f"direction_material:{DIRECTION_A}:MAT00000000")):
-            bad = self.model_result(email, fingerprint, first_source=source,
+            bad = self.model_result(email, first_source=source,
                                     name=f"t3-{label}.json")
             rejected = self.finalize(email, bad, choices, humanized)
             self.assertNotEqual(rejected.returncode, 0, label)
@@ -441,7 +433,7 @@ class DirectionMaterialsProvenanceTests(_DirectionMaterialsBase):
             self.assertEqual(self.rendered(email), before, label)
 
         # ③ still has to cite a gap; a material may never replace it.
-        bad_gap = self.model_result(email, fingerprint,
+        bad_gap = self.model_result(email,
                                     gap_source=f"direction_material:{DIRECTION_A}:{material_id}",
                                     name="t3-gap.json")
         rejected = self.finalize(email, bad_gap, choices, humanized)
@@ -463,10 +455,9 @@ class DirectionMaterialsFreshnessTests(_DirectionMaterialsBase):
         hash_v1 = email["source_hash"]
         plan_v1 = self.plan(email["email_id"])
         self.assertEqual(plan_v1["status"], "ok", plan_v1)
-        fingerprint_v1 = plan_v1["jobs"][0]["model_input"][
-            "direction_materials_fingerprint"]
-        raw, choices, humanized = self.commit_email(email, fingerprint_v1,
-                                                    name="t4-v1.json")
+        self.assertEqual([row["answer"] for row in plan_v1["jobs"][0]
+                          ["model_input"]["direction_materials"]], [ANSWER_A_V1])
+        raw, choices, humanized = self.commit_email(email, name="t4-v1.json")
         before = self.rendered(email)
         state_before = (self.prof_dir / contact_state.CANDIDATE_STATE).read_bytes()
         profile_before = self.profile.read_bytes()
@@ -487,22 +478,16 @@ class DirectionMaterialsFreshnessTests(_DirectionMaterialsBase):
         self.assertNotEqual(email_v2["source_hash"], hash_v1)
         plan_v2 = self.plan(email_v2["email_id"])
         self.assertEqual(plan_v2["status"], "ok", plan_v2)
-        fingerprint_v2 = plan_v2["jobs"][0]["model_input"][
-            "direction_materials_fingerprint"]
-        self.assertNotEqual(fingerprint_v2, fingerprint_v1)
         self.assertEqual([row["answer"] for row in email_v2["direction_materials"]],
                          [ANSWER_A_V2])
+        self.assertEqual([row["answer"] for row in plan_v2["jobs"][0]
+                          ["model_input"]["direction_materials"]], [ANSWER_A_V2])
 
-        # The result bound to the previous slice stays rejected on the new pack.
-        old_result = self.model_result(email_v2, fingerprint_v1, name="t4-old.json")
-        rejected = parse(self.finalize(email_v2, old_result, choices, humanized))
-        self.assertNotEqual(rejected["status"], "ok", rejected)
-        self.assertEqual(self.rendered(email_v2), before)
-
-        # A result carrying the current slice is accepted.
-        new_result = self.model_result(email_v2, fingerprint_v2, name="t4-new.json")
-        out = parse(self.finalize(email_v2, new_result, choices, humanized))
-        self.assertEqual(out["status"], "ok", out)
+        # Rebuild this run's result AND draft from the refreshed Stage-5 input.
+        # Never pair the old draft/result with the new email pack.
+        source = f"direction_material:{DIRECTION_A}:{material_id}"
+        self.assertIn(source, email_v2["allowed_sources"])
+        self.commit_email(email_v2, first_source=source, name="t4-v2.json")
         md = self.rendered_text(self.email(DIRECTION_A))
         self.assertTrue(material_id in md or ANSWER_A_V2 in md, md)
 
@@ -535,10 +520,8 @@ class DirectionMaterialsCompatibilityTests(_DirectionMaterialsBase):
         plan = self.plan(email["email_id"])
         self.assertEqual(plan["status"], "ok", plan)
         job = plan["jobs"][0]
-        self.assertNotIn("direction_materials_fingerprint", job["model_input"])
-        self.assertNotIn("direction_materials_fingerprint", job["result_schema"])
         # No live answer exists for this direction, so the old pack is complete.
-        raw, choices, humanized = self.commit_email(email, None, name="t5-legacy.json")
+        raw, choices, humanized = self.commit_email(email, name="t5-legacy.json")
         self.assertEqual(self.materials_path().exists(), False)
 
         before = self.rendered(email)
@@ -566,9 +549,7 @@ class DirectionMaterialsCompatibilityTests(_DirectionMaterialsBase):
         email = self.email(DIRECTION_A)
         plan = self.plan(email["email_id"])
         self.assertEqual(plan["status"], "ok", plan)
-        fingerprint = plan["jobs"][0]["model_input"]["direction_materials_fingerprint"]
-        raw, choices, humanized = self.commit_email(email, fingerprint,
-                                                    name="t5-frozen.json")
+        raw, choices, humanized = self.commit_email(email, name="t5-frozen.json")
         before = self.rendered(email)
 
         # Withdrawing the answer is the same slice change as adding one.
