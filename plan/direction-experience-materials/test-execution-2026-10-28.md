@@ -84,7 +84,9 @@ PROBE
 - F1-R2：`materials_digest_changed` 后重读发现文件不存在时停止该教授保存并报告，不按同一 `material_id` 重新追加；
 - F2-R1：selection Step 2.5.4、Return 与 SKILL Stage 4 统一为“任一成功 → partial；无成功且存在失败/错误 → error（needs_input 行保留展示）；无成功且全部停在真实用户输入 → needs_input”。
 
-残余修正只改合同文字（selection/SKILL），未改产品代码、TP1 测试方法或输入，`1084a40` 的 T2–T6 结果继续适用；合同批在修正后 `Ran 135 tests in 9.842s`，`OK`。最终定向复核结论以独立 reviewer 的后续记录为准，本记录不自行宣布 F1/F2 完全关闭。
+残余修正只改合同文字（selection/SKILL），未改产品代码、TP1 测试方法或输入，`1084a40` 的 T2–T6 结果继续适用；合同批在修正后 `Ran 135 tests in 9.842s`，`OK`。
+
+最终定向复核（基线 `112a22d`）结论：**完整（仅实现符合性）**。F1-R1、F1-R2、F2-R1 关闭，F3/F4 的先前关闭不受影响；未发现新的直接行为偏差，只有三条不影响结论的可选措辞清理，未因此改动测试或产品。该结论不是 Gate2/Gate3 或合并批准。
 
 ## T1 合同位置（供独立 reviewer 静态核对）
 
@@ -101,7 +103,7 @@ PROBE
 以下结果不替代 T1–T6，也不扩大测试范围，只用于确认本次实现没有破坏直接受影响的既有合同：
 
 - 在最终代码 `1a60113` 上复跑：`test_contact_state` `Ran 90 tests in 241.973s`，`OK`；全 shard3（`check_test_shards.py --print shard3`）`Ran 288 tests in 487.072s`，`OK`；全 shard2（`--print shard2`）退出码 0（同一模块集此前一次完整输出为 `Ran 227 tests in 273.865s`，`OK`）。
-- 推送后 CI run `40574397594`（head `50c33ad`）与修正后 run `40577168299`（head `c255904`）：两次的 `shards (shard1)`–`shards (shard4)` 与聚合 `test` 全部 pass。CI 不是 TP1 的必测项，只作既有回归复核。
+- 推送后 CI run `40574397594`（head `50c33ad`）、`40577168299`（head `c255904`）与 `40578210640`（head `112a22d`）：三次的 `shards (shard1)`–`shards (shard4)` 与聚合 `test` 全部 pass。CI 不是 TP1 的必测项，只作既有回归复核。
 - 文档补充后重跑 selection/stage4/stage5 合同、部署元数据与 routing 合同：`Ran 121 tests in 12.969s`，`OK`。
 - 复核修正 `1084a40` 后重跑同类合同批（含 `test_stage5_immutable`）：`Ran 148 tests in 27.449s`，`OK`。
 
@@ -109,5 +111,5 @@ PROBE
 
 - Gate2：TP1.5 的 T5 定向复核与 recipe 范围审核仍待独立 reviewer；本记录不声称 Gate2 通过。
 - Gate3：T2–T6 已给出当前版本的实际结果；T1 未执行，需独立 reviewer 完成静态阅读后才能形成必测清单的完整结论。本记录不自授 Gate3 或合并许可。
-- 实现符合性审核：首审“部分完成”（F1–F4，修正 `1084a40`）；定向复核确认 F3/F4 关闭，F1/F2 残余（F1-R1/F1-R2/F2-R1）已在 `181b356` 处理，最终结论待独立 reviewer 返回。其结论只覆盖实现符合性，不是计划/测试关口或合并批准。
+- 实现符合性审核：首审“部分完成”（F1–F4，修正 `1084a40`）；定向复核确认 F3/F4 关闭、F1/F2 有残余（F1-R1/F1-R2/F2-R1），已在 `a1ac428`/`181b356` 处理；最终定向复核结论“完整（仅实现符合性）”。该结论不是计划/测试关口或合并批准。
 - 下一负责人：独立 reviewer（T1 静态阅读、Gate2 定向复核、采用本记录给出 Gate3）；随后由 merge reviewer 按 `Merge Reviewer Rule.md` 处理。
