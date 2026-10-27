@@ -50,7 +50,7 @@
 - 首次推送后 CI run `40508820295`：shard2、shard3、shard4 通过；shard1 失败于 `test_stage01_caller_contract.test_issue64_t7_every_target_bound_command_names_the_local_target_file`——新增的 `SKILL.md` 句子在同一分句里写了 `stage2-preflight`，却没有 `--target-file`，触发既有 caller contract。该失败是文档契约回归，不是 R-A–R-C 的运行时结果，也没有改写任何产品行为。
 - 修正提交 `20a4dd1`：`SKILL.md` 与两个 analyzer 的 resume 句改为显式 `stage2-preflight --target-file <教授目录>/套磁目标.json`。只改说明文字，不涉及命令实现或测试资产。
 - 复核：`test_stage01_caller_contract` `Ran 20 tests ... OK`；`test_stage1_stage2_contract` + `test_stage2_source_evidence_repair` `Ran 26 tests ... OK`。R-A–R-C 的输入、断言与运行路径未变，按 Test Engineer Rule §6 复用已通过结果，不因文档提交重跑。
-- 该轮修正后需重新观察 CI；本记录只记录本地复核结果与失败原因，不把 CI 结果写成必测项。
+- 修正后 CI run `40509634189`（head `fa74ef9`）：shards 1–4 与聚合 `test` 检查全部通过。CI 不是 TP2 必测项，本记录只把它作为上述文档契约回归的复核结果，不写成必测项。
 
 ## 实现自检（非必测，不构成验收范围）
 
