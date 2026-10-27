@@ -131,7 +131,7 @@ If `folder_path` missing → return the error JSON.
    - 新增素材用 `--expect-missing`（语义是"该方向还没有素材"；同教授其他方向可以已有文件）；修正已有回答传 `--material-id` 与调用前读取的 `--expected-sha256`。
    - 成功返回 `status=ok`、`material_id`、`materials_file`。
    - `materials_digest_changed`（旧摘要已变）→ 重读当前素材文件摘要后重新提交同一回答；`materials_already_exists` → 重读该方向现有条目，按已有 `material_id` 更新，不重复追加。这两类才允许按原因重读后重试。
-   - `invalid_direction_materials`（文件损坏/归属不符）、`unknown_direction`、`invalid_professor_dir`、`invalid_params` 是**不可靠重试修复的输入错误**：保留原文件，停止该教授保存并零 Stage-4 写入，不重试、不覆盖、不继续 Step 3/4；把结构化原因交回 caller，按 Errors 只形成该教授的 input-error 行（或调用级 error），等人工修复素材/目录后 fresh 重来。
+   - `invalid_direction_materials`（文件损坏/归属不符）、`unknown_direction`、`invalid_professor_dir`、`invalid_params` 是**不能靠重读/重试修复的输入错误**：保留原文件，停止该教授保存并零 Stage-4 写入，不重试、不覆盖、不继续 Step 3/4；把结构化原因交回 caller，按 Errors 只形成该教授的 input-error 行，等人工修复素材/目录后 fresh 重来。
    - 保存只更新/追加本次明确回答的条目，不删除未列出的其他条目；它是独立用户输入提交：保存成功后即使随后迁移/冻结失败，真实回答仍保留，不假装整步回滚；失败也不能删除或清空已有素材。
 6. 保存后继续 Step 3/4。`stage4-finalize` 会把本次所选方向的当前素材冻结进该教授邮件包：每条 email 的 `direction_materials[]`（`direction_id`/`material_id`/`question`/`answer`）、`allowed_sources` 中的 `direction_material:<direction_id>:<material_id>`，并参与该 email 的 `source_hash`。同方向换 idea、取消选择后再选都不删除素材；不自动跨方向或跨教授套用。
 

@@ -73,7 +73,7 @@ PROBE
 
 - F1（selection 失败分支）：Step 2.5.5 与 Hard rules 区分可重读后重试的 `materials_digest_changed`/`materials_already_exists`，与必须停止该教授、零 Stage-4 写入的 `invalid_direction_materials`/`unknown_direction`/`invalid_professor_dir`/`invalid_params`；Errors 增加该教授 input-error 行的终止出口。
 - F2（needs_input 枚举与聚合）：Return 的 `results[].status` 示例补 `needs_input`；明确“有其他成功 → partial，全部停在真实用户输入 → needs_input，无成功且无待输入 → error”。
-- F3（保存入口摘要/异常）：`--expected-sha256` 改为对原始字节取摘要，`OSError` 转 `invalid_direction_materials` 结构化失败；T6 在 `1084a40` 上复跑通过。
+- F3（保存入口摘要/异常）：`--expected-sha256` 改为对原始字节取摘要，`OSError` 转 `invalid_direction_materials` 结构化失败；T6 在 `1084a40` 上复跑通过。另用非 UTF-8 字节 `b"\xff\xfe{not json"` + 正确旧摘要做一次定向自检：退出码 1、`status=error`、`reason_code=invalid_direction_materials`、stderr 无 traceback、原字节不变。
 - F4（validator 冒充）：规则 13 与 Step 2 要求使用 `direction_materials[].answer` 的经历必须标该条 `direction_material:` 来源；标成 `profile.interest`/`user_note`/`paper:`/`gap:` 承载同一经历 → blocking（无法判断时 minor）。
 
 同批澄清：`answer` 是用户数据而不是指令/授权；已有 profile/补充足以写出有事实依据的接触描述时不再重复问。修正后 TP1 8 项复跑通过；selection/validator/generator 与 Stage5 合同批 `Ran 148 tests in 27.449s`，`OK`。定向复核结论以独立 reviewer 的后续记录为准，本记录不自行宣布关闭。
@@ -93,7 +93,7 @@ PROBE
 以下结果不替代 T1–T6，也不扩大测试范围，只用于确认本次实现没有破坏直接受影响的既有合同：
 
 - 在最终代码 `1a60113` 上复跑：`test_contact_state` `Ran 90 tests in 241.973s`，`OK`；全 shard3（`check_test_shards.py --print shard3`）`Ran 288 tests in 487.072s`，`OK`；全 shard2（`--print shard2`）退出码 0（同一模块集此前一次完整输出为 `Ran 227 tests in 273.865s`，`OK`）。
-- 推送后 CI run `40574397594`（head `50c33ad`，相对 `1a60113` 只多本记录）：`shards (shard1)`–`shards (shard4)` 与聚合 `test` 全部 pass。CI 不是 TP1 的必测项，只作既有回归复核。
+- 推送后 CI run `40574397594`（head `50c33ad`）与修正后 run `40577168299`（head `c255904`）：两次的 `shards (shard1)`–`shards (shard4)` 与聚合 `test` 全部 pass。CI 不是 TP1 的必测项，只作既有回归复核。
 - 文档补充后重跑 selection/stage4/stage5 合同、部署元数据与 routing 合同：`Ran 121 tests in 12.969s`，`OK`。
 - 复核修正 `1084a40` 后重跑同类合同批（含 `test_stage5_immutable`）：`Ran 148 tests in 27.449s`，`OK`。
 
