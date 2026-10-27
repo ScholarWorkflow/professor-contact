@@ -53,19 +53,19 @@ git rev-parse HEAD > "$run_dir/target-version.txt"
 
 ### 2.4 逐项命令与预期观察
 
-在 §2.3 的同一个 shell 中执行 T1–T4 的确定性检查，另对 T1 生成规则只观察一次。每项分别保存退出码，单项失败不阻断其他项。不运行旧的 \`test_t1_generated_rule_states_the_title_exemption\`：它通过专用词表和正则近似判断自然语言，能误放行“标点忽略”或完全不提外围符号的规则，也可能误拒绝等义正确措辞。
+在 §2.3 的同一个 shell 中执行 T1–T4 的确定性检查，另对 T1 生成规则只观察一次。每项分别保存退出码，单项失败不阻断其他项。不运行旧的 `test_t1_generated_rule_states_the_title_exemption`：它通过专用词表和正则近似判断自然语言，能误放行“标点忽略”或完全不提外围符号的规则，也可能误拒绝等义正确措辞。
 
 **T1-接受**（长标题不占限额、保留原文和模板）：
 
-\`\`\`bash
+```bash
 /run/current-system/sw/bin/python3 -m unittest -v \
   test_stage5_interest_title_length.TestStage5InterestTitleLength.test_t1_long_cited_title_is_accepted_and_rendered_verbatim \
   > "$run_dir/t1.log" 2>&1; printf '%s\n' "$?" > "$run_dir/t1.exit"
-\`\`\`
+```
 
 **T1-生成规则**（单次直接观察；使用同一既有夹具和正式 wrapper，不新增自然语言判定器）：
 
-\`\`\`bash
+```bash
 /run/current-system/sw/bin/python3 - <<'PY' > "$run_dir/t1-rule.txt" 2> "$run_dir/t1-rule.err"
 from test_stage5_interest_title_length import TestStage5InterestTitleLength, parse, run_wrapper
 
@@ -84,49 +84,49 @@ finally:
     case.tearDown()
 PY
 printf '%s\n' "$?" > "$run_dir/t1-rule.exit"
-\`\`\`
+```
 
-执行者直接阅读 \`$run_dir/t1-rule.txt\` 中完整的 \`rules.interest\` 原文，记录该项是否同时明确表达：
+执行者直接阅读 `$run_dir/t1-rule.txt` 中完整的 `rules.interest` 原文，记录该项是否同时明确表达：
 
 1. 兴趣段仍为三部分，并保留原 180 字符软限制；
 2. 当前邮件包中实际完整逐字引用的论文标题文本免计；
 3. 标题外的书名号、引号、标点和其他正文字符继续计数，且没有相矛盾的文字。
 
-三项中有缺失或冲突，就记 **T1-规则业务失败**；提取命令失败、未得到该字段，记 **无法判断**。人工检查不限制同义措辞、关键词间隔或括号写法。\`t1-rule.exit=0\` 仅证明取得了文本，**不等于规则通过**。只记录是否满足上述三项及必要的原文片段，不进行第二次规则检查。
+三项中有缺失或冲突，就记 **T1-规则业务失败**；提取命令失败、未得到该字段，记 **无法判断**。人工检查不限制同义措辞、关键词间隔或括号写法。`t1-rule.exit=0` 仅证明取得了文本，**不等于规则通过**。只记录是否满足上述三项及必要的原文片段，不进行第二次规则检查。
 
 **T2**（净正文 180／181／200／201 四个边界）：
 
-\`\`\`bash
+```bash
 /run/current-system/sw/bin/python3 -m unittest -v \
   test_stage5_interest_title_length.TestStage5InterestTitleLength.test_t2_net_body_thresholds_are_180_181_200_201 \
   > "$run_dir/t2.log" 2>&1; printf '%s\n' "$?" > "$run_dir/t2.exit"
-\`\`\`
+```
 
 **T3**（包外标题不免计；无可信标题保持原口径）：
 
-\`\`\`bash
+```bash
 /run/current-system/sw/bin/python3 -m unittest -v \
   test_stage5_interest_title_length.TestStage5InterestTitleLength.test_t3_foreign_quoted_title_is_not_exempt \
   test_stage5_interest_title_length.TestStage5InterestTitleLength.test_t3_pack_without_titles_keeps_the_original_counting \
   > "$run_dir/t3.log" 2>&1; printf '%s\n' "$?" > "$run_dir/t3.exit"
-\`\`\`
+```
 
 **T4**（净 201 字符拒绝，原有邮件不被覆盖）：
 
-\`\`\`bash
+```bash
 /run/current-system/sw/bin/python3 -m unittest -v \
   test_stage5_interest_title_length.TestStage5InterestTitleLength.test_t4_over_cap_finalize_is_rejected_without_rewriting_existing_email \
   > "$run_dir/t4.log" 2>&1; printf '%s\n' "$?" > "$run_dir/t4.exit"
-\`\`\`
+```
 
 逐项预期：
 
-- **T1-接受**：\`validate_email_raw\` 对净 180、含 80 字符标题总长 260 的三段返回空列表；\`stage5-finalize\` 返回 \`status=ok\`；\`套磁邮件.txt\` 包含按换行拼接的三段原文、完整标题及 \`FIXED-BEGIN\`、\`FIXED-SELFINTRO\`、\`FIXED-INTEREST\`、\`FIXED-FUTURE\`、\`FIXED-LEARNING\`、\`FIXED-END\` 六个固定标记；\`套磁邮件.md\` 同样含完整标题。
+- **T1-接受**：`validate_email_raw` 对净 180、含 80 字符标题总长 260 的三段返回空列表；`stage5-finalize` 返回 `status=ok`；`套磁邮件.txt` 包含按换行拼接的三段原文、完整标题及 `FIXED-BEGIN`、`FIXED-SELFINTRO`、`FIXED-INTEREST`、`FIXED-FUTURE`、`FIXED-LEARNING`、`FIXED-END` 六个固定标记；`套磁邮件.md` 同样含完整标题。
 - **T1-生成规则**：按照上面的三项观察点人工给出通过／业务失败／无法判断；无自动正则判定。
-- **T2**：\`INTEREST_SOFT_CAP\`／\`INTEREST_HARD_CAP\` 仍为 180／200。净 180 无长度问题；净 181、200 均恰好一条以 \`WARNING\` 开头的长度问题；净 201 恰好一条不以 \`WARNING\` 开头的长度问题。181／200／201 的提示数字包含相应净长度。
+- **T2**：`INTEREST_SOFT_CAP`／`INTEREST_HARD_CAP` 仍为 180／200。净 180 无长度问题；净 181、200 均恰好一条以 `WARNING` 开头的长度问题；净 201 恰好一条不以 `WARNING` 开头的长度问题。181／200／201 的提示数字包含相应净长度。
 - **T3-包外标题**：把当前邮件包没有的标题形文本放入第②部分，净正文 201、总长 289；应有一条硬拒绝，显示总长 289，不豁免任意引号内容。
-- **T3-无标题包**：移除测试邮件包的 \`papers\` 后仍用同样语料，总长 260；共享 validator 计数检查应硬拒绝并报告 260。此输入只用于核对计数，不声称满足整封邮件的标题引用要求。
-- **T4**：先以净 100（总长 180）成功 finalize，保存 \`套磁邮件.md\`、\`套磁邮件.txt\`、\`套磁邮件状态.json\` 三份文件字节；再以净 201 finalize，应退出非零、返回 \`status=error\`、\`reason_code=invalid_result_json\`、提示含 201，且这三份文件均不变化。
+- **T3-无标题包**：移除测试邮件包的 `papers` 后仍用同样语料，总长 260；共享 validator 计数检查应硬拒绝并报告 260。此输入只用于核对计数，不声称满足整封邮件的标题引用要求。
+- **T4**：先以净 100（总长 180）成功 finalize，保存 `套磁邮件.md`、`套磁邮件.txt`、`套磁邮件状态.json` 三份文件字节；再以净 201 finalize，应退出非零、返回 `status=error`、`reason_code=invalid_result_json`、提示含 201，且这三份文件均不变化。
 
 ### 2.5 T4 的人工静态核对
 
