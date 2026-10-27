@@ -1,17 +1,17 @@
-# Source evidence repair — TP1
+# Source evidence repair — TP2
 
-- Requirement R1 / execution EP1; product baseline `18fd48d1b6f2e26241c304d6acddb025297f08e4`.
+- Requirement R2 / execution EP2; product baseline `18fd48d1b6f2e26241c304d6acddb025297f08e4`.
 - Proposed review status: pending. Plan-only delivery: no tests executed, no PASS claimed. [Execution plan](execution-plan.md) is the sole design; [review](review.md) records independent conclusions.
-- Authority: [Test Engineer Rule](https://app.notion.com/p/3d80101a85f380d8a8f5ce528141e253), [Project Consensus](https://app.notion.com/p/3d60101a85f3815a8c43f271f2b4d91d), versions recorded in EP1.
+- Authority: [Test Engineer Rule](https://app.notion.com/p/3d80101a85f380d8a8f5ce528141e253), [Project Consensus](https://app.notion.com/p/3d60101a85f3815a8c43f271f2b4d91d), versions recorded in EP2.
 
 ## Required checklist (acceptance ceiling)
 
 | Goal / input | Expected business result | Sufficient check |
 |---|---|---|
-| R-A: One current registered source-owned evidence finding, valid existing cache, changed model_evidence; then normal process/finalize | Only that source evidence changes; affected shortlist/excluded/blacklist views reflect it, including a reused direction; unrelated fields/candidates/status/confidence/narrative unchanged; repair returns needs_refresh and no PASS | One focused existing unittest-style fixture lifecycle through public commands; assert cache and accepted pack fields, rendered evidence and validator state directly |
+| R-A: Current registered source-owned findings and valid existing cache; retain the evidence projection case and add one representative partial gap with wording corrections to all three eligible fields, each matched to its registered field; then normal process/finalize | Only the selected wording changes, preserving the fixture's factual meaning; affected shortlist/excluded/blacklist evidence views reflect model_evidence, including a reused direction, while the partial card/pack reflects completed_part and remaining_gap; unrelated data/candidates/status/confidence/narrative unchanged; repair returns needs_refresh and no PASS | Focused existing unittest-style public-command lifecycle; directly assert cache/pack/render/validator state, including evidence/blacklist_evidence mapping. Use a prewritten semantically equivalent partial fixture, not a semantic judge or field-combination matrix |
 | R-B: Ineligible fixed quote/template finding and stale repair expected cache/text | Reject with actionable owner/drift result before mutation; no partial batch write or fabricated source | Small command-level negative cases in same product module, assert relevant files unchanged; no combinatorial matrix |
 | R-C: Repair followed by normal refresh with manual Markdown change; unchanged repair request | Existing manual-conflict path remains; no-op does not clear accepted validator/rounds or change source | Reuse existing managed-document fixture and direct state/file assertions; no model run |
-| R-D: Source instructions and CLI contract | Caller distinguishes eligible model_evidence from fixed scientific facts, resumes normal acceptance and validation, does not bypass PASS or alter candidates | Static review of changed CLI/help, SKILL and affected analyzer sections |
+| R-D: Source instructions and CLI contract | Caller distinguishes the three-field wording whitelist and exact displayed/cache mapping from fixed scientific facts; instructions assign semantic preservation to source owner without claiming automatic proof or promising all other errors are repaired, resumes normal acceptance and validation, does not bypass PASS or alter candidates | Static review of changed CLI/help, SKILL and affected analyzer sections |
 
 No new model evaluation, Zotero/network, full Stage0–5 regression, installation matrix, source certification, new result parser/framework, all historical U1 tests, or future-work candidate tests. Existing unittest/json assertions are enough. R-A covers successful path and projection; do not repeat it at unit/integration/real-model levels.
 
@@ -28,3 +28,4 @@ This is a complete test **design**, not a falsely runnable recipe against nonexi
 ## Responsibilities / completion
 
 Plan reviewer independently decides design and Gate1. Product/test owner adds implementation and executable recipe; Gate2 reviewer verifies only this checklist's coverage/executability. Execution owner records actual results; independent Gate3 reviewer adopts those results and separates PASS, business failure, unable-to-judge and unexecuted. Existing valid unaffected results are reusable; no reruns merely for docs/review commits. This PR is not merge-ready implementation.
+
