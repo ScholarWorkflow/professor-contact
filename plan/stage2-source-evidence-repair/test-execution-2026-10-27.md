@@ -2,7 +2,7 @@
 
 - 执行计划：EP2（`plan/stage2-source-evidence-repair/execution-plan.md`；独立审核 `Plan conclusion: APPROVED`，P1–P4 PASS）。
 - 测试计划：TP2（同目录 `test-plan.md`；必测清单 R-A–R-D 为验收上限）。本次按 TP2 `Execution handoff / recipe status` 的精确 selector、环境块与命令运行。TP2 记录的 Gate2 仍是 PENDING（recipe 已由测试工程师补齐，独立 Gate2 审核不在本记录中宣称为通过）；Gate3 由独立 reviewer 采用本记录，不在此自批。
-- 被测版本：`259cab0334878c2e7986d69464b938bf52fbe74d`（`feat(stage2): add the narrow source evidence wording repair entry`）。测试资产来自 PR head `f59ff9a`（`test_stage2_source_evidence_repair.py`、TP2 recipe 与 shard 登记），本实现提交未修改任何测试断言、selector 或预期结果。
+- 被测版本：运行时候选 `259cab0334878c2e7986d69464b938bf52fbe74d`（`feat(stage2): add the narrow source evidence wording repair entry`）；随后的文档契约修正 `20a4dd1` 只改 `SKILL.md` 与两个 analyzer 的说明文字，运行时路径与断言不变。测试资产来自 PR head `f59ff9a`（`test_stage2_source_evidence_repair.py`、TP2 recipe 与 shard 登记），实现与修正提交都未修改任何测试断言、selector 或预期结果。
 - 实现范围：`stage2-repair-evidence` 命令（新模块 `scripts/_stage2_evidence_repair.py` 与 `contact_state.py` 接线）、`_stage2_finalize.py` 的定向投影、`SKILL.md` 与两个 analyzer 的说明。未改候选选择、状态、置信度、作者原文或其它 Stage 2–5 行为。
 - 环境：macOS arm64；解释器 `/nix/store/0kcws5blwbdyxqxjd1w8hjipz61xny3k-python3-3.14.7/bin/python3`（Python 3.14.7）；工作树 `/Users/rekidunois/code/skill-repos-dev/worktree/professor-contact-pr145-execution-20261027`。
 - 运行目录：`/tmp/contact-evidence-repair.TJIIYQ`；正式尝试目录 `/tmp/contact-evidence-repair.TJIIYQ/attempt.xz7suW`（同时作为 `TMPDIR`）。其中 `target-version.txt`、`python-version.txt`、`r-a.log`/`r-a.exit`、`r-b.log`/`r-b.exit`、`r-c.log`/`r-c.exit`、`shards.out` 保存本次正式输出；用例自身临时目录也在该 `TMPDIR` 下，仓库内没有测试写入。本次没有正式重试，未覆盖任何先前输出。
@@ -17,7 +17,7 @@
 | R-C 人工改正文冲突与 no-op | 通过 | `Ran 2 tests in 3.024s / OK`，`r-c.exit=0`（`r-c.log`） |
 | R-D 源数据说明与 CLI 契约 | 未执行（非自动化目标） | TP2 规定由 reviewer 阅读 `SKILL.md` 与两个 analyzer 并记录位置；本记录只给出交付位置（见下），不声称已通过 |
 | shard 索引检查 | 通过 | `python3 scripts/check_test_shards.py`：`OK: 83 test modules across 4 shards, each with a stage`（`shards.out`） |
-| 既有回归（非必测，实现自检） | 通过 | 253 项 `OK`（16 个直接受影响模块）+ 90 项 `OK`（`test_contact_state`）；见“实现自检” |
+| 既有回归（非必测，实现自检） | 通过 | 253 项 `OK`（16 个直接受影响模块）+ 90 项 `OK`（`test_contact_state`）+ 20 项 `OK`（caller contract，文档修正后）；见“实现自检”与“推送后 CI 复核” |
 
 ## 逐项结果与观察
 
@@ -45,9 +45,16 @@
 - `packages/professor-contact-codex/.apm/agents/professor-contact-analyzer.agent.md` 第 636 行：同一套白名单/映射/独立授权、`needs_refresh` 与非 PASS、重新 preflight→plan→finalize 和重新校验、其它 owner 分流。
 - `packages/professor-contact-opencode/.apm/agents/professor-contact-analyzer.agent.md` 第 644 行：与 Codex 版本的同一组说明。
 
+## 推送后 CI 复核与文档契约修正（非必测，不影响 R-A–R-C 结果）
+
+- 首次推送后 CI run `40508820295`：shard2、shard3、shard4 通过；shard1 失败于 `test_stage01_caller_contract.test_issue64_t7_every_target_bound_command_names_the_local_target_file`——新增的 `SKILL.md` 句子在同一分句里写了 `stage2-preflight`，却没有 `--target-file`，触发既有 caller contract。该失败是文档契约回归，不是 R-A–R-C 的运行时结果，也没有改写任何产品行为。
+- 修正提交 `20a4dd1`：`SKILL.md` 与两个 analyzer 的 resume 句改为显式 `stage2-preflight --target-file <教授目录>/套磁目标.json`。只改说明文字，不涉及命令实现或测试资产。
+- 复核：`test_stage01_caller_contract` `Ran 20 tests ... OK`；`test_stage1_stage2_contract` + `test_stage2_source_evidence_repair` `Ran 26 tests ... OK`。R-A–R-C 的输入、断言与运行路径未变，按 Test Engineer Rule §6 复用已通过结果，不因文档提交重跑。
+- 该轮修正后需重新观察 CI；本记录只记录本地复核结果与失败原因，不把 CI 结果写成必测项。
+
 ## 实现自检（非必测，不构成验收范围）
 
-在同一候选 `259cab0` 上运行直接受影响的既有模块，全部通过：`test_stage2_fixed_evidence`、`test_stage2_analysis_level`、`test_stage2_style_validation_handoff`、`test_stage2_preflight`、`test_stage2_preflight_binding`、`test_stage2_preflight_malformed`、`test_stage2_resolved_direction`、`test_stage2_resolved_direction_acceptance_boundary`、`test_stage2_resolved_direction_downstream_regressions`、`test_stage1_stage2_contract`、`test_resolved_direction_preflight_integration`、`test_stage2_narrative_example_contract`、`test_stage2_resolved_direction_regressions`、`test_stage2_resolved_direction_fresh_review_regressions`、`test_apm_deployment_metadata`、`test_gate2_evidence`，合计 `Ran 253 tests ... OK`；另 `test_contact_state` `Ran 90 tests ... OK`。这些结果不替代 TP2 的四项，也没有据此增加测试义务。
+在同一候选 `259cab0` 上运行直接受影响的既有模块，全部通过：`test_stage2_fixed_evidence`、`test_stage2_analysis_level`、`test_stage2_style_validation_handoff`、`test_stage2_preflight`、`test_stage2_preflight_binding`、`test_stage2_preflight_malformed`、`test_stage2_resolved_direction`、`test_stage2_resolved_direction_acceptance_boundary`、`test_stage2_resolved_direction_downstream_regressions`、`test_stage1_stage2_contract`、`test_resolved_direction_preflight_integration`、`test_stage2_narrative_example_contract`、`test_stage2_resolved_direction_regressions`、`test_stage2_resolved_direction_fresh_review_regressions`、`test_apm_deployment_metadata`、`test_gate2_evidence`，合计 `Ran 253 tests ... OK`；另 `test_contact_state` `Ran 90 tests ... OK`。文档修正后又补跑 `test_stage01_caller_contract`（20 项 `OK`）。这些结果不替代 TP2 的四项，也没有据此增加测试义务。
 
 ## 未完成项与下一负责人
 
