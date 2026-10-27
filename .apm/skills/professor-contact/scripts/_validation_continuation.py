@@ -60,16 +60,87 @@ def grants(validator: dict | None) -> list:
     return list(continuation_block(validator).get("grants") or [])
 
 
+_HEX = "0123456789abcdef"
+
+
+def _grant_error(grant: Any, *, index: int, expected_old_limit: int) -> str | None:
+    """Validate one recorded grant against the chain position it must occupy."""
+    if not isinstance(grant, dict):
+        return f"grant #{index} is not an object"
+    additional = grant.get("additional_rounds")
+    if isinstance(additional, bool) or not isinstance(additional, int) or additional < 1:
+        return f"grant #{index} has no positive additional_rounds"
+    old_limit = grant.get("old_limit")
+    new_limit = grant.get("new_limit")
+    if isinstance(old_limit, bool) or not isinstance(old_limit, int) \
+            or old_limit != expected_old_limit:
+        return (f"grant #{index} claims old_limit {old_limit!r}, but the chain "
+                f"stands at {expected_old_limit}")
+    if isinstance(new_limit, bool) or not isinstance(new_limit, int) \
+            or new_limit != old_limit + additional:
+        return (f"grant #{index} claims new_limit {new_limit!r}, but "
+                f"{old_limit} + {additional} is {old_limit + additional}")
+    exhausted = grant.get("exhausted_round")
+    if isinstance(exhausted, bool) or not isinstance(exhausted, int) \
+            or not 1 <= exhausted <= old_limit:
+        return (f"grant #{index} was not decided on a round inside its own "
+                f"exhausted limit {old_limit}")
+    digest = grant.get("expected_state_sha256")
+    if not isinstance(digest, str) or len(digest) != 64 \
+            or any(char not in _HEX for char in digest.lower()):
+        return f"grant #{index} does not bind a state digest"
+    authorization = grant.get("authorization")
+    if not isinstance(authorization, str) or not authorization.strip():
+        return f"grant #{index} carries no human authorization text"
+    granted_at = grant.get("granted_at")
+    if not isinstance(granted_at, str) or not granted_at.strip():
+        return f"grant #{index} has no granted_at"
+    return None
+
+
+def grant_chain_error(validator: dict | None) -> str | None:
+    """Prove the recorded continuation block is a well-formed, ordered chain.
+
+    The effective limit is never a caller-supplied number: it is the base plus a
+    sequence of grants that each start where the previous one ended.  A block
+    whose version, base, ordering or arithmetic does not hold is not trusted, so
+    callers fail closed instead of honouring a fabricated limit.
+    """
+    block = (validator or {}).get(CONTINUATION_FIELD)
+    if block is None:
+        return None
+    if not isinstance(block, dict):
+        return "the recorded continuation block is not an object"
+    if block.get("version") != CONTINUATION_VERSION:
+        return f"continuation version {block.get('version')!r} is not supported"
+    base = block.get("base_limit")
+    if isinstance(base, bool) or not isinstance(base, int) or base != BASE_ROUND_LIMIT:
+        return f"continuation base_limit {base!r} is not {BASE_ROUND_LIMIT}"
+    rows = block.get("grants")
+    if not isinstance(rows, list):
+        return "the recorded continuation block has no grant list"
+    expected = BASE_ROUND_LIMIT
+    for index, grant in enumerate(rows, start=1):
+        error = _grant_error(grant, index=index, expected_old_limit=expected)
+        if error:
+            return error
+        expected = grant["new_limit"]
+    return None
+
+
 def round_limit(validator: dict | None) -> int:
-    """Effective limit of the current cycle: the base plus every recorded grant."""
+    """Effective limit of the current cycle: the base plus its valid grant chain.
+
+    A block that does not form a valid chain contributes no extra rounds, so a
+    corrupted or fabricated grant can never widen the bound; the mutation
+    entrypoints report ``grant_chain_error`` as a hard failure instead of
+    silently reading a smaller limit.
+    """
+    if grant_chain_error(validator):
+        return BASE_ROUND_LIMIT
     total = BASE_ROUND_LIMIT
     for grant in grants(validator):
-        if not isinstance(grant, dict):
-            continue
-        additional = grant.get("additional_rounds")
-        if isinstance(additional, bool) or not isinstance(additional, int) or additional < 1:
-            continue
-        total += additional
+        total += grant["additional_rounds"]
     return total
 
 
@@ -118,9 +189,14 @@ def snapshot_for_history(validator: dict | None) -> dict | None:
     """The replaced cycle's own record, moved aside by a genuine new cycle.
 
     A legacy two-round record that never carried continuation or history is
-    still worth keeping: its results are the only proof that the cycle failed.
+    still worth keeping: its recorded results are the only proof that the cycle
+    failed.  A Stage-3 cycle keeps its cross-direction findings in ``groups`` and
+    its unattributed findings in ``global``, so those are preserved verbatim too
+    — a legacy state whose only failure sits in ``groups`` stays provable after
+    the cycle is replaced.  Nothing is invented: a field the record never had is
+    simply absent from the snapshot.
     The binding fields are kept with it, so the moved record can still prove
-    which render and input pack its own ``results`` were recorded against.
+    which render and input pack its own results were recorded against.
     An empty validator block has nothing to preserve and yields ``None``.
     """
     if not isinstance(validator, dict) or not validator:
@@ -128,8 +204,8 @@ def snapshot_for_history(validator: dict | None) -> dict | None:
     snapshot = {}
     for field in ("schema", "round", "phase", ROUND_LIMIT_FIELD, CONTINUATION_FIELD,
                   HISTORY_FIELD, "render_sha256", "validation_render_sha256",
-                  "pack_sha256", "raw_verdict", "results", "pending", "fixed_blocking",
-                  "issues", "notes", "validation_sha256",
+                  "pack_sha256", "raw_verdict", "results", "groups", "global",
+                  "pending", "fixed_blocking", "issues", "notes", "validation_sha256",
                   "correction_applied_direction_ids", "updated_at"):
         if field in validator:
             snapshot[field] = validator[field]
@@ -190,17 +266,28 @@ def grant_admission(validator: dict | None, *, expected_round: int,
              f"the cycle still has {limit - recorded} round(s) at limit {limit}; "
              "no grant is needed")
     results = (validator or {}).get("results")
-    if not isinstance(results, dict) or not results:
+    if not isinstance(results, dict):
         fail("validation_evidence_not_recorded",
              "the exhausted cycle has no recorded results to continue")
-    passing = [ident for ident, row in results.items()
-               if isinstance(row, dict) and row.get("result") in PASSING_RESULTS]
-    failing = [ident for ident, row in results.items()
+    # A Stage-3 cycle records direction findings in ``results`` and
+    # cross-direction findings in ``groups``.  Both are real recorded scopes, so
+    # an exhaustion whose only failure is a group must still be reopenable and
+    # must never be reported as a passing validation.
+    groups = (validator or {}).get("groups")
+    if groups is not None and not isinstance(groups, dict):
+        fail("validation_evidence_not_recorded",
+             "the exhausted cycle has malformed recorded group results")
+    if not results and not groups:
+        fail("validation_evidence_not_recorded",
+             "the exhausted cycle has no recorded scope to continue")
+    scopes = [(ident, row) for ident, row in results.items()]
+    scopes.extend((ident, row) for ident, row in (groups or {}).items())
+    failing = [ident for ident, row in scopes
                if isinstance(row, dict) and row.get("result") not in PASSING_RESULTS]
     if not failing:
         fail("validation_already_passed",
-             "every recorded scope passed; a passing validation cannot be reopened "
-             "for extra sampling")
+             "every recorded direction and group passed; a passing validation "
+             "cannot be reopened for extra sampling")
     # Only the recorded failed scope reopens; untouched passing scopes keep
     # their result exactly as recorded.
 
@@ -293,6 +380,10 @@ def build(*, fail, emit, atomic_json, sha256_bytes, sha256_text, now_utc,
         if not isinstance(validator, dict):
             fail("validation_evidence_not_recorded",
                  "record a raw Stage-2 validator report before asking for more rounds")
+        chain_error = grant_chain_error(validator)
+        if chain_error:
+            fail("validation_evidence_not_recorded",
+                 f"recorded Stage-2 continuation is not a valid grant chain: {chain_error}")
         render_sha, _body = stage2_bound_render(professor_dir, pack)
         if validator.get("render_sha256") != render_sha \
                 or validator.get("pack_sha256") != stage2_pack_content_fingerprint(pack):
@@ -314,6 +405,10 @@ def build(*, fail, emit, atomic_json, sha256_bytes, sha256_text, now_utc,
         if not isinstance(validator, dict) or not isinstance(validator.get("results"), dict):
             fail("validation_evidence_not_recorded",
                  "record a raw Stage-3 validator report before asking for more rounds")
+        chain_error = grant_chain_error(validator)
+        if chain_error:
+            fail("validation_evidence_not_recorded",
+                 f"recorded Stage-3 continuation is not a valid grant chain: {chain_error}")
         path = professor_dir / CANDIDATES_MD
         try:
             body = split_frontmatter(path.read_text(encoding="utf-8"))[1]

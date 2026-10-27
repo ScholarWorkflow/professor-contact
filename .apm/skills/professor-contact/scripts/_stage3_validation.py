@@ -40,6 +40,7 @@ FAIL_AFTER_MAX = _validation_continuation.FAIL_AFTER_MAX
 round_limit = _validation_continuation.round_limit
 recorded_round = _validation_continuation.recorded_round
 terminal_failure_label = _validation_continuation.terminal_failure_label
+grant_chain_error = _validation_continuation.grant_chain_error
 history_rows = _validation_continuation.history_rows
 remember_round = _validation_continuation.remember_round
 history_row = _validation_continuation.history_row
@@ -830,7 +831,12 @@ def build(*, atomic_json,
         previous = state.get("validator") if isinstance(state.get("validator"), dict) else {}
         raw_round = recorded_round(previous)
         # The default bound plus every round the human explicitly granted on this
-        # exhausted cycle; a legacy state with no grant keeps exactly two.
+        # exhausted cycle; a legacy state with no grant keeps exactly two.  A block
+        # that does not form a valid ordered chain is refused, never narrowed.
+        chain_error = grant_chain_error(previous)
+        if chain_error:
+            fail("validation_evidence_not_recorded",
+                 f"recorded Stage-3 continuation is not a valid grant chain: {chain_error}")
         limit = round_limit(previous)
         previous_pending = (
             previous.get("pending") if isinstance(previous.get("pending"), dict) else {}

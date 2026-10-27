@@ -38,6 +38,7 @@ FAIL_AFTER_MAX = _validation_continuation.FAIL_AFTER_MAX
 round_limit = _validation_continuation.round_limit
 recorded_round = _validation_continuation.recorded_round
 terminal_failure_label = _validation_continuation.terminal_failure_label
+grant_chain_error = _validation_continuation.grant_chain_error
 remember_round = _validation_continuation.remember_round
 history_row = _validation_continuation.history_row
 
@@ -1060,6 +1061,12 @@ def build(*, Stage2Context,
         previous_round = recorded_round(previous)
         if previous.get("round") is not None and previous_round == 0:
             fail("validation_evidence_not_recorded", "existing Stage-2 validator round is malformed")
+        # The effective limit is never read from a block that does not form a
+        # valid, ordered grant chain: a fabricated limit must not admit a round.
+        chain_error = grant_chain_error(previous)
+        if chain_error:
+            fail("validation_evidence_not_recorded",
+                 f"recorded Stage-2 continuation is not a valid grant chain: {chain_error}")
         limit = round_limit(previous)
         round_no = 1
         previous_pending = previous.get("pending") if isinstance(previous.get("pending"), dict) else {}
