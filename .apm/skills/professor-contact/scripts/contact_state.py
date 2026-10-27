@@ -626,6 +626,7 @@ _direction_materials = _direction_materials_module.build(
     emit=emit,
     read_json_file=read_json_file,
     atomic_json=atomic_json,
+    sha256_bytes=sha256_bytes,
     sha256_text=sha256_text,
     professor_dir_containment_error=professor_dir_containment_error,
     load_input_pack=load_input_pack,

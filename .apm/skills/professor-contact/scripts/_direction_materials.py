@@ -36,6 +36,7 @@ def build(*, fail,
           emit,
           read_json_file,
           atomic_json,
+          sha256_bytes,
           sha256_text,
           professor_dir_containment_error,
           load_input_pack,
@@ -279,7 +280,15 @@ def build(*, fail,
                     fail("materials_digest_changed",
                          f"方向素材文件不存在，无法匹配旧摘要：{path}；本次零写入。",
                          materials_file=str(path))
-                current = sha256_text(path.read_text(encoding="utf-8"))
+                try:
+                    current = sha256_bytes(path.read_bytes())
+                except OSError as exc:
+                    # A damaged/unreadable file must stay a structured input
+                    # failure, never an uncaught decode/OS error, and must keep
+                    # its original bytes: the caller re-reads and reports it.
+                    fail("invalid_direction_materials",
+                         f"方向素材无法读取（{path}）：{exc}。本次零写入。",
+                         materials_file=str(path))
                 if current != args.expected_sha256:
                     fail("materials_digest_changed",
                          f"方向素材已被修改（当前 {current}，期望 "

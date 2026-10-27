@@ -6,7 +6,7 @@
 - 实现范围：教授本地 `方向素材.json`（schema 1）与 `direction-materials-save`；Stage-4 冻结 `direction_materials[]`、`direction_material:<direction_id>:<material_id>` 来源与 `source_hash`；Stage-5 `model_input.direction_materials`、素材切片 freshness（`needs_refresh` / `direction_materials_changed`）和 md 来源表渲染；selection / generator / validator / SKILL / workflow-reference 的合同同步。
 - 环境：macOS arm64；解释器 `/nix/store/0kcws5blwbdyxqxjd1w8hjipz61xny3k-python3-3.14.7/bin/python3`（Python 3.14.7）；工作树 `/Users/rekidunois/code/skill-repos-dev/worktree/professor-contact-pr149-execution-20261028`。
 - 运行目录：`/tmp/contact-direction-materials.iMt6hj`；`TMPDIR=/tmp/contact-direction-materials.iMt6hj/tmp`，所有合成教授、素材、邮件与状态只落在这里，仓库内没有测试写入。`python-version.txt`、`tested-commit.txt`、`save-entry-present.txt`、`direction-materials.out` 保存本次正式输出。
-- 实现前基线（同一测试模块、同一解释器，工作树在 `3c6879e`）：`save-entry-present.txt` 为 `False`，模块 `OK (skipped=8)`，据此 8 项记为未执行；该次输出不参与本轮结论。
+- 实现前基线（同一测试模块、同一解释器，`pr149-test-preparation-20261027` 工作树在 `3c6879e`）：`save-entry-present.txt` 为 `False`，模块 `OK (skipped=8)`，据此 8 项记为未执行；该次输出不参与本轮结论。
 
 ## 结果总览
 
@@ -79,13 +79,11 @@ PROBE
 
 ## 既有回归（非必测，实现自检）
 
-以下结果不替代 T1–T6，也不扩大测试范围，只用于确认本次实现没有破坏直接受影响的既有合同；它们在与 `1a60113` 相同代码的提交前工作树上运行，只有本记录在该提交之后追加：
+以下结果不替代 T1–T6，也不扩大测试范围，只用于确认本次实现没有破坏直接受影响的既有合同：
 
-- `test_contact_state`：`Ran 90 tests in 241.878s`，`OK`。
-- 全 shard2（`check_test_shards.py --print shard2`）：`Ran 227 tests in 273.865s`，`OK`。
-- 全 shard3（`check_test_shards.py --print shard3`）：`Ran 288 tests in 405.995s`，`OK`。
-- 定向合同批（stage4/5 合同、selection-agent 合同、部署元数据、issue67/81）：`Ran 146 tests in 77.902s`，`OK`。
-- `test_stage3_direction_groups`（既有 `source_hash` oracle 随新增字段更新后）：`Ran 24 tests in 89.818s`，`OK`。
+- 在最终代码 `1a60113` 上复跑：`test_contact_state` `Ran 90 tests in 241.973s`，`OK`；全 shard3（`check_test_shards.py --print shard3`）`Ran 288 tests in 487.072s`，`OK`；全 shard2（`--print shard2`）退出码 0（同一模块集此前一次完整输出为 `Ran 227 tests in 273.865s`，`OK`）。
+- 推送后 CI run `40574397594`（head `50c33ad`，相对 `1a60113` 只多本记录）：`shards (shard1)`–`shards (shard4)` 与聚合 `test` 全部 pass。CI 不是 TP1 的必测项，只作既有回归复核。
+- 文档补充后重跑 selection/stage4/stage5 合同、部署元数据与 routing 合同：`Ran 121 tests in 12.969s`，`OK`。
 
 ## 未完成项与下一负责人
 
