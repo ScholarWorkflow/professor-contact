@@ -242,13 +242,14 @@ def _verify_manifest_integrity(manifest: dict[str, Any]) -> None:
                 or not isinstance(required_pages, list)
             ):
                 raise ValueError("external_result_hash_mismatch")
-            expected_contract = (
-                "ocr-excerpt-v1" if required_pages
-                else "source-items-v1" if job.get("source_mode") == "local"
-                and isinstance(job.get("text_transport"), dict)
-                else "exact-items-v1"
-            )
-            if future_work.get("selection_contract") != expected_contract:
+            # The two legacy contracts keep their original verification rule;
+            # source-items-v1 is additionally allowed only for a local PDF job
+            # whose text transport exists and whose required pages are resolved.
+            allowed_contracts = {"ocr-excerpt-v1" if required_pages else "exact-items-v1"}
+            if (not required_pages and job.get("source_mode") == "local"
+                    and isinstance(job.get("text_transport"), dict)):
+                allowed_contracts.add("source-items-v1")
+            if future_work.get("selection_contract") not in allowed_contracts:
                 raise ValueError("external_result_hash_mismatch")
         elif future_work is not None:
             raise ValueError("external_result_hash_mismatch")
