@@ -1394,12 +1394,25 @@ _verify_diagnostic_failure = _verify_chain._verify_diagnostic_failure
 verify_state = _verify_chain.verify_state
 
 
+def _ja_date(value: str | None) -> str:
+    """Format an ISO date for email text without changing stored choices."""
+    if not value:
+        return ""
+    if re.fullmatch(r"\d{4}-\d{2}-\d{2}", value):
+        try:
+            parsed = datetime.strptime(value, "%Y-%m-%d")
+        except ValueError:
+            return value
+        return f"{parsed.year}年{parsed.month}月{parsed.day}日"
+    return value
+
+
 def assemble_followup_draft(email: dict, choices: dict, sources: dict,
                             template_text: str, verify: dict | None = None) -> tuple[str, list, list]:
     values = header_values(sources, email)
     values["出身校"] = choices.get("alma_mater") or DEFAULT_ALMA_MATER
     values["氏名"] = choices.get("signature_name") or ""
-    values["初回送信日"] = choices.get("initial_sent_date") or ""
+    values["初回送信日"] = _ja_date(choices.get("initial_sent_date"))
     # Issue #8 §8.3: a multi-direction (cross) email must not guess ONE
     # direction name — prefer the selected idea title as the follow-up topic.
     if len(email.get("direction_ids") or []) > 1:
@@ -2126,3 +2139,4 @@ def main() -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
+
