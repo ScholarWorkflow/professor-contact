@@ -144,6 +144,29 @@ def round_limit(validator: dict | None) -> int:
     return total
 
 
+def limit_at_round(validator: dict | None, round_no: Any) -> int | None:
+    """The effective limit that was in force when ``round_no`` was recorded.
+
+    A recorded exhaustion names the bound it actually used.  After a later grant
+    that bound is no longer the cycle's current limit, so the recorded label has
+    to be checked against the chain prefix that existed at that round: the base
+    limit, plus every valid grant whose ``exhausted_round`` is below ``round_no``
+    (a grant decided on round R reopens round R+1).  Returns ``None`` when the
+    block is not a valid chain, so callers can refuse rather than guess.
+    """
+    if isinstance(round_no, bool) or not isinstance(round_no, int) or round_no < 1:
+        return None
+    if grant_chain_error(validator):
+        return None
+    limit = BASE_ROUND_LIMIT
+    for grant in grants(validator):
+        if grant["exhausted_round"] < round_no:
+            limit = grant["new_limit"]
+        else:
+            break
+    return limit
+
+
 def recorded_round(validator: dict | None) -> int:
     value = (validator or {}).get("round")
     if isinstance(value, bool) or not isinstance(value, int) or value < 0:

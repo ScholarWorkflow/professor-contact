@@ -39,6 +39,7 @@ round_limit = _validation_continuation.round_limit
 recorded_round = _validation_continuation.recorded_round
 terminal_failure_label = _validation_continuation.terminal_failure_label
 grant_chain_error = _validation_continuation.grant_chain_error
+limit_at_round = _validation_continuation.limit_at_round
 remember_round = _validation_continuation.remember_round
 history_row = _validation_continuation.history_row
 
@@ -582,14 +583,22 @@ def build(*, Stage2Context,
                 return None, "validator_result_rounds"
             # A recorded failure names the bound it actually exhausted.  A later
             # grant raises the cycle's limit but never rewrites that history, so
-            # the row is compared with its own recorded bound, not the new one.
-            if row.get("result") == "fail_after_2_rounds" \
-                    and row_round != BASE_ROUND_LIMIT:
+            # the row is compared with the bound in force AT ITS OWN ROUND, not
+            # with the cycle's current limit.
+            bound = limit_at_round(validator, row_round)
+            if bound is None:
                 return None, "validator_result_rounds"
+            if row.get("result") == "fail_after_2_rounds":
+                # The historical label belongs to a genuinely unextended
+                # two-round exhaustion only.
+                if row_round != BASE_ROUND_LIMIT or bound != BASE_ROUND_LIMIT:
+                    return None, "validator_result_rounds"
             if row.get("result") == "fail_after_max_rounds":
                 max_rounds = row.get("max_rounds")
+                # The extended label is legal only where a recorded grant really
+                # raised the bound that this round exhausted.
                 if isinstance(max_rounds, bool) or not isinstance(max_rounds, int) \
-                        or max_rounds < BASE_ROUND_LIMIT or max_rounds > limit \
+                        or max_rounds <= BASE_ROUND_LIMIT or max_rounds != bound \
                         or row_round != max_rounds:
                     return None, "validator_result_rounds"
             if not isinstance(row.get("issues"), list):
