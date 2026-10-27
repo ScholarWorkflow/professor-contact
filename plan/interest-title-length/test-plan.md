@@ -1,8 +1,9 @@
-# 兴趣段字数不计论文标题 — 测试计划 TP1
+# 兴趣段字数不计论文标题 — 测试计划 TP2
 
 - Requirement revision: R1；关联执行计划：同目录 `execution-plan.md` EP1。
+- Plan revision: TP2（2026-10-28）。只修订 T1 的生成规则检查方式和执行步骤；第 1 节必测清单、T1–T4 的业务预期及 EP1 已批准的产品要求保持不变。
 - Baseline: `b67dd3ca4d29dfc78f57988564b219c71b582674`（产品基线）；测试资产准备基线：`b36ed0613cbe5eeae950acdc4e8195ec0218537d`。目标产品实现版本：待实现。
-- Proposed review status: pending。本文为必测清单与方法候选；正式执行全部 **未执行**，无 PASS 声明。
+- Review status: 第二关待复核；第三关未执行。本轮修订不自行授予 PASS，准备期试跑和自动 CI 均不作为第三关结果。
 
 ## 1. 唯一必测清单
 
@@ -15,14 +16,14 @@
 
 本清单来自 R1 直接改变的接受、警告、拒绝和输出保留行为。标题完整逐字匹配、不重复扣同一跨度按 EP1 静态核对，不另加组合穷举。已有适用通过结果直接引用；普通自动 CI 不扩大本清单。
 
-## 2. 执行 recipe（已准备，未执行）
+## 2. 执行步骤（TP2 修订；正式测试未执行）
 
 沿用仓库 `.apm/skills/professor-contact/tests/test_stage5_immutable.py` 的 `unittest`、`BaseEnv` 临时目录、`prepare`/`raw_result`、`run_wrapper`，不新增设施、安装路径、网络或模型调用。生产文件、用户目录和实际邮件不得用于测试。复用可用 Python 环境，不为此重装 Nix/APM 或建立干净消费者。
 
 ### 2.1 已准备的资产
 
-- 新模块：`.apm/skills/professor-contact/tests/test_stage5_interest_title_length.py`，单类 `TestStage5InterestTitleLength`，6 个 selector（T1 两个、T2 一个含 4 个 `subTest`、T3 两个、T4 一个）。selector 全名见 2.4，不另建索引。
-- 分片登记：`plan/test-grouping/shards.json` 的 shard3 增加 `{"name": "test_stage5_interest_title_length", "stage": "stage5"}`；`python scripts/check_test_shards.py` 报 `OK: 85 test modules across 4 shards, each with a stage`，`--print shard3` 含该模块。
+- 新模块：`.apm/skills/professor-contact/tests/test_stage5_interest_title_length.py`，单类 `TestStage5InterestTitleLength`。当前文件含 6 个 selector，TP2 正式执行只使用其中 5 个（T1 接受一个、T2 一个含 4 个 `subTest`、T3 两个、T4 一个）；T1 生成规则改由 §2.4 的一次人工观察完成，不把它重复写成自动判定。现有 `test_t1_generated_rule_states_the_title_exemption` 的词表、正则及相邻字符窗口检查已被本计划废止，需由本地测试工程师在测试代码中移除或停用，不能作为 TP2 的通过条件。
+- 分片登记：`plan/test-grouping/shards.json` 的 shard3 已加入 `{"name": "test_stage5_interest_title_length", "stage": "stage5"}`；历史检查显示该模块可被收集。由于当前文件仍保留已废止的第六个 selector，自动 CI 在测试代码完成对齐前仍可能运行旧检查；其结果不能代表 TP2 的 T1-规则判定。
 - 夹具复用：通过 `test_stage5_immutable` 的模块对象取 `helpers`/`BaseEnv`/`parse`/`run_wrapper`，再由 `helpers.TestStage5` 取 `prepare`/`raw_result`/`choices`，因此不重新收集 immutable 模块的既有用例（该模块当前实际收集 13 个；`shards.json` 的旧记录写 10 个，属既有漂移，本 PR 不改），也不新增夹具文件。`setUp` 只把 `AAAA1111` 的标题换成 80 字符的 `Synthetic comparison of input patterns across heterogeneous processing pipelines`，其余论文、gap、sidecar、verify 缓存、模板均由既有夹具生成。
 - 准备基线：`b36ed0613cbe5eeae950acdc4e8195ec0218537d`（本 PR 当前 head，产品尚未改动）；解释器 `/run/current-system/sw/bin/python3`（3.14.7）。
 
@@ -52,75 +53,105 @@ git rev-parse HEAD > "$run_dir/target-version.txt"
 
 ### 2.4 逐项命令与预期观察
 
-以下四个代码块在 2.3 的同一个 shell 里依次执行，`$run_dir` 与 `$TMPDIR` 沿用到最后；每项单独记录退出码，单项失败不阻断其余项。
+在 §2.3 的同一个 shell 中执行 T1–T4 的确定性检查，另对 T1 生成规则只观察一次。每项分别保存退出码，单项失败不阻断其他项。不运行旧的 \`test_t1_generated_rule_states_the_title_exemption\`：它通过专用词表和正则近似判断自然语言，能误放行“标点忽略”或完全不提外围符号的规则，也可能误拒绝等义正确措辞。
 
-`T1`（接受 + 完整标题与原文保留 + 生成规则口径），预计 10–25 s：
+**T1-接受**（长标题不占限额、保留原文和模板）：
 
-```bash
+\`\`\`bash
 /run/current-system/sw/bin/python3 -m unittest -v \
   test_stage5_interest_title_length.TestStage5InterestTitleLength.test_t1_long_cited_title_is_accepted_and_rendered_verbatim \
-  test_stage5_interest_title_length.TestStage5InterestTitleLength.test_t1_generated_rule_states_the_title_exemption \
   > "$run_dir/t1.log" 2>&1; printf '%s\n' "$?" > "$run_dir/t1.exit"
-```
+\`\`\`
 
-`T2`（净正文 180/181/200/201 四边界），预计 10–25 s：
+**T1-生成规则**（单次直接观察；使用同一既有夹具和正式 wrapper，不新增自然语言判定器）：
 
-```bash
+\`\`\`bash
+/run/current-system/sw/bin/python3 - <<'PY' > "$run_dir/t1-rule.txt" 2> "$run_dir/t1-rule.err"
+from test_stage5_interest_title_length import TestStage5InterestTitleLength, parse, run_wrapper
+
+case = TestStage5InterestTitleLength(
+    "test_t1_long_cited_title_is_accepted_and_rendered_verbatim")
+case.setUp()
+try:
+    case.prepare()
+    out = run_wrapper(
+        "stage5-plan", "--program-root", case.root,
+        "--email-pack", case.email_pack)
+    if out.returncode != 0:
+        raise RuntimeError(f"stage5-plan failed: {out.returncode}: {out.stdout} {out.stderr}")
+    print(parse(out)["jobs"][0]["model_input"]["rules"]["interest"])
+finally:
+    case.tearDown()
+PY
+printf '%s\n' "$?" > "$run_dir/t1-rule.exit"
+\`\`\`
+
+执行者直接阅读 \`$run_dir/t1-rule.txt\` 中完整的 \`rules.interest\` 原文，记录该项是否同时明确表达：
+
+1. 兴趣段仍为三部分，并保留原 180 字符软限制；
+2. 当前邮件包中实际完整逐字引用的论文标题文本免计；
+3. 标题外的书名号、引号、标点和其他正文字符继续计数，且没有相矛盾的文字。
+
+三项中有缺失或冲突，就记 **T1-规则业务失败**；提取命令失败、未得到该字段，记 **无法判断**。人工检查不限制同义措辞、关键词间隔或括号写法。\`t1-rule.exit=0\` 仅证明取得了文本，**不等于规则通过**。只记录是否满足上述三项及必要的原文片段，不进行第二次规则检查。
+
+**T2**（净正文 180／181／200／201 四个边界）：
+
+\`\`\`bash
 /run/current-system/sw/bin/python3 -m unittest -v \
   test_stage5_interest_title_length.TestStage5InterestTitleLength.test_t2_net_body_thresholds_are_180_181_200_201 \
   > "$run_dir/t2.log" 2>&1; printf '%s\n' "$?" > "$run_dir/t2.exit"
-```
+\`\`\`
 
-`T3`（非包内标题不免计；无标题包维持原口径），预计 5–15 s：
+**T3**（包外标题不免计；无可信标题保持原口径）：
 
-```bash
+\`\`\`bash
 /run/current-system/sw/bin/python3 -m unittest -v \
   test_stage5_interest_title_length.TestStage5InterestTitleLength.test_t3_foreign_quoted_title_is_not_exempt \
   test_stage5_interest_title_length.TestStage5InterestTitleLength.test_t3_pack_without_titles_keeps_the_original_counting \
   > "$run_dir/t3.log" 2>&1; printf '%s\n' "$?" > "$run_dir/t3.exit"
-```
+\`\`\`
 
-`T4`（201 净正文 finalize 拒绝且既有邮件不变），预计 10–25 s：
+**T4**（净 201 字符拒绝，原有邮件不被覆盖）：
 
-```bash
+\`\`\`bash
 /run/current-system/sw/bin/python3 -m unittest -v \
   test_stage5_interest_title_length.TestStage5InterestTitleLength.test_t4_over_cap_finalize_is_rejected_without_rewriting_existing_email \
   > "$run_dir/t4.log" 2>&1; printf '%s\n' "$?" > "$run_dir/t4.exit"
-```
+\`\`\`
 
 逐项预期：
 
-- **T1-接受**：`validate_email_raw` 对净 180、含标题总长 260 的三段返回空列表；`stage5-finalize` 返回 `status=ok`；`套磁邮件.txt` 含三段原文（以换行连接）与 80 字符标题，固定标记 `FIXED-BEGIN`/`FIXED-SELFINTRO`/`FIXED-INTEREST`/`FIXED-FUTURE`/`FIXED-LEARNING`/`FIXED-END` 六个仍在（与既有 immutable 测试一致）；`套磁邮件.md` 同样含标题。断言读实际文件与退出码，不调用真实模型。
-- **T1-规则**：`stage5-plan` 的 `jobs[0].model_input.rules.interest` 同时满足三件事。①字数口径仍在：规则文本含 `180`/`字数`/`文字数`/`总长` 之一。②标题免计：某个子句（按 `；;。` 与换行切分）内，标题词（`标题`/`タイトル`/`題名`）与免计词（`不计入`/`不计`/`免计`/`不算`/`不纳入`/`不计算`/`不参与`/`不占用`/`不列入`/`排除`/`免除`/`除外`/`不含`/`以外`/`対象外`/`含めない`/`含まない`/`数えない`/`除く`/`カウントしない`/`計上しない`/`計上いたしません`）在 30 个字符内相邻成立，正反两种语序都算；免计词紧前 10 字符出现 `标题内`/`标题中`/`标题里`/`标题の内` 时，视为在排除标题内部的东西（如 `标题内方法名除外`），该次匹配不算。③外围符号不得被免计：同一个子句里符号词（`书名号`/`引号`/`标点`/`符号`/`括弧`/`括号`/`記号`/`句読点`/`「」`）与免计词在 10 字符内相邻即判为与 R1 冲突。相邻判定查三种形态：符号在前、免计词在前（`不计书名号与标点`）、以及符号后接括号再在括号内免计（`书名号与标点（均不计）`）；前两种的间隔不跨括号，所以「标题免计」写在括号里、符号照常计数写在括号外的排版不会被误判。第三种只在括号内免计的是符号时才判冲突：括号内出现标题词、且该标题词之后不再出现符号词时（`书名号与标点照常计数（论文标题不计）`、`（论文标题除外）`），说明括注解释的是标题，跳过；若标题词之后又提到符号（`（含标题与标点，均不计）`、`（标题与标点都不计）`），免计范围仍含符号，判冲突。若该符号词被 `内`/`中`/`里`/`以内`/`以外`/`之外`/`の内`/`の外` 限定（如 `书名号内的论文标题不计`、`书名号以外的字符照常计数`），说明限定的是符号范围而不是把符号免计，该次匹配跳过；限定判定取符号词两侧各约 10–12 字符的窗口。③ 只做反向检查，不要求出现「照常计数」一类正面措辞——自然语言正面表达太多，穷举词表只会造成假失败；因此不提符号的规则也会通过，这是本判据已知的覆盖边界。这是对生成规则文本的近似核对，不是语义解析器：只确认规则有没有写出该口径、有没有把符号一起免掉，不认证措辞质量。②③可以落在不同子句。
-- **T2**：`INTEREST_SOFT_CAP`/`INTEREST_HARD_CAP` 仍为 180/200。净 180 → 无 problem；净 181、200 → 恰好 1 条 problem 且以 `WARNING` 开头；净 201 → 恰好 1 条且不以 `WARNING` 开头。181/200/201 三例还要求 problem 文本中的数字包含净长度；旧口径只报含标题的总长 261/280/281，因此这三例会按产品缺失失败。
-- **T3-非包内标题**：把一段 88 字符、邮件包从未出现的标题形文本逐字放进 ②，净正文 201、总长 289；期望恰好 1 条非 `WARNING` problem，数字为总长 289，证明豁免只认本邮件包实际标题，不认任意引号内容。
-- **T3-无标题包**：深拷贝邮件包并移除 `papers`，用 T1 同一语料（净 180、总长 260）；期望恰好 1 条非 `WARNING` problem、数字 260，证明没有可信标题时计数不变。该输入只用于共享 validator 的计数检查，不代表符合完整邮件②要求。
-- **T4**：先用同一标题、净 100（总长 180）的结果成功 finalize 一次，记录 `套磁邮件.md`/`套磁邮件.txt`/`套磁邮件状态.json` 三份字节；再用净 201 结果 finalize，期望退出码非 0、payload `status=error`、`reason_code=invalid_result_json`、`message` 含 `201`（旧口径只报总长 281），三份文件字节与记录完全一致。
+- **T1-接受**：\`validate_email_raw\` 对净 180、含 80 字符标题总长 260 的三段返回空列表；\`stage5-finalize\` 返回 \`status=ok\`；\`套磁邮件.txt\` 包含按换行拼接的三段原文、完整标题及 \`FIXED-BEGIN\`、\`FIXED-SELFINTRO\`、\`FIXED-INTEREST\`、\`FIXED-FUTURE\`、\`FIXED-LEARNING\`、\`FIXED-END\` 六个固定标记；\`套磁邮件.md\` 同样含完整标题。
+- **T1-生成规则**：按照上面的三项观察点人工给出通过／业务失败／无法判断；无自动正则判定。
+- **T2**：\`INTEREST_SOFT_CAP\`／\`INTEREST_HARD_CAP\` 仍为 180／200。净 180 无长度问题；净 181、200 均恰好一条以 \`WARNING\` 开头的长度问题；净 201 恰好一条不以 \`WARNING\` 开头的长度问题。181／200／201 的提示数字包含相应净长度。
+- **T3-包外标题**：把当前邮件包没有的标题形文本放入第②部分，净正文 201、总长 289；应有一条硬拒绝，显示总长 289，不豁免任意引号内容。
+- **T3-无标题包**：移除测试邮件包的 \`papers\` 后仍用同样语料，总长 260；共享 validator 计数检查应硬拒绝并报告 260。此输入只用于核对计数，不声称满足整封邮件的标题引用要求。
+- **T4**：先以净 100（总长 180）成功 finalize，保存 \`套磁邮件.md\`、\`套磁邮件.txt\`、\`套磁邮件状态.json\` 三份文件字节；再以净 201 finalize，应退出非零、返回 \`status=error\`、\`reason_code=invalid_result_json\`、提示含 201，且这三份文件均不变化。
 
 ### 2.5 T4 的人工静态核对
 
-长度断言之外，T4 还要求「未放宽的规则」与「全部相关文档同一计数口径」。产品实现落地后按下列路径逐条读 diff 并记录观察结论（准备阶段这些文件仍是旧口径，不得据此声称已核对）：
+长度断言之外，T4 只静态核对未放宽的产品约束与相关文档同步。产品实现落地后读取相应 diff 并记录结论；生成规则原文已由 §2.4 T1-生成规则检查，本节不再重复。准备阶段这些文件仍是旧口径，不得据此声称已核对：
 
 | 核对点 | 路径 | 观察要求 |
 | --- | --- | --- |
 | 三部分结构、② 1–3 篇与标题真实、③ 与未来志向、source_map | `scripts/_stage5_email.py` 的 `validate_email_raw` | 除长度计算外无新增/放宽/删除判定；`source_map ④ is retired`、③ 只锚 `anchorable_gaps` 等既有分支保留 |
 | 计数只免标题、外围符号仍计 | 同上 `validate_email_raw` 的长度段 | 豁免来源只取 `email["papers"][].title` 的非空字符串；同一跨度不重复扣除；正文未被改写 |
 | 阈值与警告/错误通道 | `scripts/contact_state.py` 的 `INTEREST_SOFT_CAP`/`INTEREST_HARD_CAP` | 仍为 180/200；warning 仍走 `WARNING` 前缀被 plan/finalize 过滤，硬拒绝仍走 `invalid_result_json` |
-| 生成给模型的规则 | `scripts/_stage5_commands.py` 的 `model_input.rules.interest` | 明示标题文本免计、外围符号计数，且不再与新的计数口径冲突 |
 | 契约文档 | `SKILL.md` 第 348 行、`docs/stage5-legacy-contract.md` 第 55/218/301 行 | 三处字数表述与 runner 一致；218 行「恰 3 个非空兴趣段字段」等结构约束未被改写 |
 | 校验 agent 口径 | `.apm/agents/professor-contact-email-validator.agent.md` Rule 3 与计数相关表述 | 仍要求标题与 `papers[].title` 逐字一致；如提及字数，与新口径一致 |
 | generator 冲突 | `.apm/agents/professor-contact-email-generator.agent.md` 第 44 行起引用 `docs/stage5-legacy-contract.md` 的段落 | 无与新口径矛盾的旧表述；不因口径同步而放宽真实标题要求 |
 
 ### 2.6 失败处理
 
-- 断言失败记业务失败，保留首次 `$run_dir` 输出，不放宽断言、不换输入求通过。
+- 自动断言失败或 T1 生成规则人工观察不满足预期，记对应业务失败；提取结果缺失或命令无法执行时记无法判断。`t1-rule.exit=0` 不单独构成 T1-规则通过。
+- 保留首次 `$run_dir` 输出，不放宽预期、不换输入求通过。
 - 缺少依赖、解释器或夹具记「无法判断」，停止受影响项，继续可独立项；同一输入最多按一次明确的环境修正重试一次，并保留首次输出。
 - 方法或配置确需调整时，先修订本文件对应步骤并记录原因，再由执行者重跑受影响项；无关项不重跑。
 - 无外部服务依赖，不设真实模型重采样，不做全仓回归。
 
 ### 2.7 有限预检记录
 
-只确认运行环境与资产就位，未取得任何正式结果：
+以下属于 TP1 准备期历史记录，保留原事实，不构成 TP2 检查、第二关批准或第三关正式结果。旧 T1-规则 selector 的词表结论自 TP2 起不再引用：
 
 - `py_compile` 通过；`unittest` 收集到 6 个 selector（1 个类，无 immutable 模块的既有用例混入；该模块当前收集 13 个）。
 - `python scripts/check_test_shards.py` 报 `OK: 85 test modules across 4 shards, each with a stage`；`--print shard3` 列出 `test_stage5_interest_title_length`。
@@ -137,13 +168,15 @@ git rev-parse HEAD > "$run_dir/target-version.txt"
 不增加真实模型 eval、全教授流程、全仓回归、重复安装、来源认证、自建判定器或完整运行轨迹。生成规则是否使用新口径以 model_input/契约核对，确定性计数以现有框架断言；不是文风质量测试。
 
 - 第一关（必测清单）：通过，见同目录 `review.md`。该记录里的 TP1 SHA-256 `6348e4da…` 对应 recipe 补齐前的版本；本文件 §1 逐字未改（该节内容 SHA-256 `473f1323…`），因此第一关结论继续适用，补齐 recipe 不重开第一关。
-- 第二关（具体步骤）：recipe 与 selector 已补齐，本角色准备产物已由独立 `implementation_reviewer` 判「完整」（见 §4，不代表第二关）；第二关仍待独立测试计划审核者，本 PR 不声明已通过。
+- 第二关（具体步骤）：TP2 已改为 5 个确定性 selector 加一次规则原文人工观察；现有旧规则 selector 尚未从测试模块及自动 CI 中移除，测试代码需要按本计划对齐。第二关待独立审核，本计划不自行声明通过；TP1 的准备审核记录见 §4，不能代替 TP2 结论。
 - 第三关（正式结果）：未执行；产品实现尚未交付，T1/T2/T4 当前按产品缺失失败。
-- 下一负责人：测试计划审核者确认第二关；实现/测试工程师补实现；执行工程师执行；独立结果审核者采用实际记录。作者不得自行标注通过。
+- 下一负责人：本地测试工程师移除或停用已废止的 T1 词表／正则 selector，使正式模块和 CI 与 TP2 一致；测试计划审核者复核受影响的第二关步骤；产品实现工程师落实 R1，执行工程师按 TP2 正式执行，结果审核者核对结果。
 
 依据：[Test Engineer Rule](https://app.notion.com/p/3d80101a85f380d8a8f5ce528141e253) 与 [PROJECT_CONSENSUS](https://app.notion.com/p/3d60101a85f3815a8c43f271f2b4d91d)。仅复核受影响项；文档 SHA 改变本身不触发重跑。
 
-## 4. 测试准备符合性审核记录
+## 4. 测试准备符合性审核记录（TP1 历史记录）
+
+本节仅保留旧候选的准备审核与冻结事实；其中 T1 词表、正则及窗口条件的冻结不再适用于 TP2。TP2 的现行检查方法以 §2.4 为准；原审核结论不自动扩展到本次修订。
 
 按 [实现符合性审核入口](https://github.com/ScholarWorkflow/professor-contact) 调用独立 `implementation_reviewer`，对本角色应交付的三项产物（测试模块、shard 登记、本文件 §2 recipe）做只读核对。共 7 轮：前 6 轮为「部分完成」，逐轮指出 T1-规则文本匹配的假失败与假通过（子句共现过严、符号否定子串、括号边界两侧、敬体与复合动词词表、括号内免计标题 vs 符号等），均由本角色修正并交同一入口定向复核。
 
@@ -156,3 +189,12 @@ git rev-parse HEAD > "$run_dir/target-version.txt"
 - T1 措辞待测试计划工程师：§1 T1「外侧符号计数」目前只有反向证据（「没把符号一起免掉」），完全不提符号的规则会通过。是否收窄 §1 措辞由测试计划工程师裁定；本角色不改必测清单。
 
 本结论仅表示本角色准备产物已落实有效计划，不代表第二关、第三关或合并批准。
+
+
+## 5. TP2 修订说明（2026-10-28）
+
+- **修订依据**：Test Engineer Rule 第 2 节要求每项目标采用一个足够的检查入口；第 3 节允许人工判断业务目标，并在现有断言或直接观察足够时禁止新增专用判定器。本次不更改第 1 节必测清单，已通过的第一关继续有效。
+- **本轮修正**：T1-生成规则只从正式 `stage5-plan` 输出读取 `model_input.rules.interest` 一次，按已批准的“标题免计、外围符号计数”要求直接人工判断。废止基于关键词、固定字符间隔和括号规则的自动近似判定，也不在 T4 静态核对中重复检验同一生成规则。
+- **实际文件状态**：本次只修改测试计划。测试模块仍存在被废止的 `test_t1_generated_rule_states_the_title_exemption`，分片自动执行仍可能收集它；本地测试工程师负责对齐测试代码，完成前不能把该 selector 或相关 CI 结果视为 TP2 的业务通过证据。
+- **范围与风险**：T1–T4 的输入、接受／警告／拒绝、正文原样保留以及失败不覆盖现有邮件的目标不变；不增加真实模型运行、全流程回归或新的证明材料。此前“外侧符号计数”只有反向词表检查、可能误放行未说明符号的规则；现通过人工直接核对原文解决。TP1 的历史预检与旧版审核记录不被重写。
+- **未完成项**：第二关等待按 TP2 复核；本地测试工程师尚须去除废止 selector；产品标题免计实现未提交；第三关未执行。仅修改计划不代表测试已通过或 PR 可以合并。
