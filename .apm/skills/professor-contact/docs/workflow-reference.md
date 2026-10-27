@@ -281,7 +281,7 @@ flowchart TD
     CE["contact-evidence freshness / fingerprint gate"]
     REFRESH["needs_refresh<br/>回 Stage 4 重冻结"]
     VERIFY["送信前核验"]
-    MODEL["模型动态字段<br/>4 句兴趣段 + future aspiration + learning candidates + source_map"]
+    MODEL["模型动态字段<br/>3 句兴趣段 + future aspiration + learning candidates + source_map"]
     HUM["humanizer-ja business<br/>仅动态字段，拼装前"]
     CHOICE["用户 choices"]
     ASM["stage5_immutable.py stage5-finalize<br/>确定性模板拼装 / 保护串 / 渲染"]
