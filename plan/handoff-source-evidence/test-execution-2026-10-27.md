@@ -2,10 +2,10 @@
 
 - 执行计划：CONTACT-SOURCE-EP1.1（`Plan conclusion: APPROVED`，P1–P4 PASS）。
 - 测试计划：CONTACT-SOURCE-TP1.1（第一关 PASS、第二关 PASS）。
-- 被测提交：`cba85a5b4bd58051976e45d7f5339e7a26180acf`（`fix(stage2): report every unresolved blocking page and align the import notes`）。本轮提交序列：`0149e18`（实现，首轮正式执行）→ `0eed997`（manifest 旧契约兼容性修订）→ `cba85a5`（审核 P1/P2 修订，最终候选）。每个提交都包含 `.apm/skills/professor-contact/tests/test_stage2_chatgpt_handoff_source.py`（`git cat-file -e` 返回 0）。下文的 T1–T4 与 hybrid 结果在 `0149e18`、`0eed997`、`cba85a5` 三个提交上都重跑过，结果相同。
+- 被测提交：`cba85a5b4bd58051976e45d7f5339e7a26180acf`（`fix(stage2): report every unresolved blocking page and align the import notes`）。本轮提交序列：`0149e18`（实现，首轮正式执行）→ `0eed997`（manifest 旧契约兼容性修订）→ `cba85a5`（审核 P1/P2 修订，最终候选）。每个提交都包含 `.apm/skills/professor-contact/tests/test_stage2_chatgpt_handoff_source.py`（`git cat-file -e` 返回 0）。T1–T4 与 hybrid 的实际执行：`0149e18` 与 `cba85a5` 有保存到运行目录的输出；`0eed997` 只做了适用性复核（T1–T4 模块 8 项 `OK`、handoff 既有 48 项只有已知的 macOS 失败、hybrid 作为该 48 项的一部分通过），没有另存独立输出。最终候选以 `cba85a5` 的复跑为准。
 - 环境：macOS arm64；解释器 `/nix/store/447smjkzgapdxqrcdg8r8kf8j1a1jrxc-python3-3.14.7-env/bin/python3`（Python 3.14.7，`pymupdf 1.27.2.3`、`scholar-workflow-pdfx 0.1.0`）。
 - 上游 helper：`/nix/store/vvdass0s4x1b2h46sqk29dq7rdbjbmr8-paper-analysis-0.1.0/payload/skills/paper-analysis`；`future_work.py` SHA256 `25bd7678f85dc1a8cb527449f65f12d0b4400da5ff8d8806b26a175490d571ea`（与测试计划第 3 节、flake.lock `c140658c` 一致）。
-- 运行目录：`/tmp/contact-source-evidence.C7DWxa`；其中 `version.txt`、`source-items.out`、`legacy-hybrid.out`、`shards.out` 保存首轮正式输出，`source-items.cba85a5.out`、`handoff-suite.cba85a5.out`、`legacy-hybrid.cba85a5.out` 保存最终候选的复跑输出，`tmp/` 为用例的临时目录（`CONTACT_SOURCE_TEST_RUN_ROOT`）。仓库外临时产物不入库，提交的是本记录的脱敏结果。
+- 运行目录：`/tmp/contact-source-evidence.C7DWxa`；其中 `version.txt`、`source-items.out`、`legacy-hybrid.out`、`shards.out` 保存首轮 `0149e18` 的正式输出，`source-items.cba85a5.out`、`handoff-suite.cba85a5.out`、`legacy-hybrid.cba85a5.out` 保存最终候选 `cba85a5` 的复跑输出，`tmp/` 为用例的临时目录（`CONTACT_SOURCE_TEST_RUN_ROOT`）。`0eed997` 的适用性复核输出只在会话内，未另存文件。仓库外临时产物不入库，提交的是本记录的脱敏结果。
 
 ## 结果总览
 
@@ -131,10 +131,10 @@ cd .apm/skills/professor-contact/tests
 
 结果：`Ran 48 tests`、1 项失败（只有本记录已说明的 macOS 路径形式）、1 项跳过；T1–T4 模块 `Ran 8 tests`、`OK`；旧 hybrid 指定项 `Ran 1 test`、`OK`。P2 的页面报告另用一次性诊断（/tmp，不入库）确认：required 与 untrusted 同时缺缓存时报告 `[2, 3]`，仅 untrusted 时报告 `[2]`，仅 required 时报告 `[3]`，允许的非 required 空页仍为 `upload_ready=true` + 缺页标记 `[3]`。
 
-最终候选为 `cba85a5`；本轮改动不涉及 `flake.lock` 或其它依赖。
+最终候选为 `cba85a5`；本轮改动不涉及 `flake.lock` 或其它依赖。CI 已在 `0eed997`（四个 shard 与聚合 `test`）和最终 PR head `b6f56ee`（同样四个 shard 与聚合 `test`）全部通过。
 
 ## 未完成项与下一负责人
 
 - 已在 `cba85a5` 上完成 T1–T5 与 shard 索引检查（shard 索引在首轮 `0149e18` 运行，结论 `OK: 83 test modules`；本轮未改测试模块或 shard 登记，结论继续适用）；T1–T4、shard 均通过，T5 通过人工阅读（含 P1 修订后的 Step 4.5 C 段）。
 - 本轮没有真实回放生产教授目录、Zotero 或私有 PDF（执行计划明确不要求），也没有重跑全文模型。
-- 下一负责人：实现符合性审核（implementation_reviewer）；通过后由本地执行工程师推送并更新 PR。本记录不构成合并批准。
+- 实现符合性审核已完成：首轮“部分完成”（P1/P2/P3），`cba85a5` 与 `b6f56ee` 的复核结论为“完整”，未再提出代码修改。下一负责人：测试负责人按本记录确认第三关口（T1–T5 与 T5 的 Step 4.5 C）；合并审核另行确认 PR head、CI 与第三关口。本记录不构成第三关口通过或合并批准。
