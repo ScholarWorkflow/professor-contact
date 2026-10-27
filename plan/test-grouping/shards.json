@@ -9,7 +9,7 @@
   "non-stage": "文档/工具/夹具类测试，不驱动某个阶段的运行时入口"
  },
  "totals": {
-  "modules": 80,
+  "modules": 83,
   "seconds": 430.0,
   "tests": 1110
  },
@@ -820,6 +820,10 @@
      "signals": {
       "stage2": 3
      }
+    },
+    {
+     "name": "test_human_validation_continuation",
+     "stage": "mixed:stage2+stage3"
     }
    ]
   }
