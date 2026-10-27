@@ -1,10 +1,10 @@
 # 方向真实素材与缺素材补问：执行计划
 
 - Requirement revision: R1（2026-10-27）：用户要求按研究方向补问真实接触经历用于自然首句；明确 profile 仅放通用背景，方向专属素材另存；随后授权“双计划”。
-- Plan revision: EP1.1；Proposed review status: pending。
+- Plan revision: EP1.2；Proposed review status: pending。
 - Repository / baseline: ScholarWorkflow/professor-contact / main `b67dd3ca4d29dfc78f57988564b219c71b582674`（含已合并 PR148 三部分兴趣段）。
-- 本 PR 仅新增本目录执行、测试计划及必要独立审核记录；不实施产品、不改测试实现、不运行正式测试、不合并。实施另由产品负责人按批准计划进行。
-- 唯一完整计划为本文件及 [test-plan.md](test-plan.md)；正式关口结论仅属于 [review.md](review.md)。
+- 本 PR 交付执行计划、测试计划和预备合成测试代码；不实施产品、不运行正式测试、不合并。产品实现由产品负责人在计划获批后进行。
+- 唯一完整计划为本文件及 [test-plan.md](test-plan.md)；[review.md](review.md) 的既有批准对应 EP1.1/TP1.1，EP1.2/TP1.4 的语义修订待复核，不沿用旧版批准为新版结论。
 
 ## 1. 需求、范围、非目标
 
@@ -63,13 +63,13 @@ Stage4 正常编译时从独立素材文件读取选中方向的当前条目，�
 
 新增素材字段按明确版本加入邮件 source_hash；未改素材且无关方向变更时该 email 的指纹不变。Stage5 plan 与 finalize 在使用/落盘前，将当前所选方向素材切片与冻结快照比较：变化返回现有 needs_refresh 类结果，指向刷新该教授 Stage4 邮件包，而不是重跑 Stage3。不将该教授所有邮件一律失效：未受影响邮件可按既有 `--email-id` 单独处理；同一次请求包含过期邮件时，沿用既有批次失败/零写入语义，不新增 partial 提交或改造事务。不批量改已有 md/txt/choices。
 
-新素材版本的 stage5-plan 在 model_input/result_schema 提供 `direction_materials_fingerprint`（冻结素材切片的确定性摘要，包括方向归属、条目ID、问题及原回答）；模型结果须原样携带。plan-with-result 与 finalize 均在接受结果前核对其与当前冻结切片一致，缺失/不一致拒绝、原产物不改。Stage4 重冻后不得把旧模型结果直接贴上新包的 source_hash；须按新包重新生成对应结果。此字段只是本次输入版本绑定，不是执行身份或来源认证；不扩成所有历史输入的认证合同。
+素材更新后，由 Stage4 selection/coordinator 先完成该邮件选中方向的重新冻结，交给 Stage5 新的邮件输入包。Stage5 email-generator 必须重新运行 `stage5-plan`，从本次 `model_input.direction_materials` 读取更新后的原回答，再调用模型重新生成兴趣段与 `source_map`，并以这一轮新结果生成草稿、执行既有 `plan-with-result` 与 `finalize`。不得复用刷新前的模型结果或草稿；若正常调用链仍传入旧结果，修复产生错误复用的调用方。保留邮件输入的 `source_hash` 和素材切片新鲜度检查；不新增 `direction_materials_fingerprint`、不要求模型结果回传素材指纹，也不规定按旧模型结果指纹拒绝的额外产品行为。
 
 兼容策略：旧 email 既无新快照版本也没有其方向的 live 素材时沿用旧 hash/行为，不为升级强制全量重生；若其方向已有 live 素材则要求 Stage4 补冻结，不能静默忽略新回答。新格式包含版本和空集合；删掉原有素材文件与新增素材一样属于切片变化，不能被解释成继续使用已撤回回答。格式损坏阻止读取该教授素材，未受影响教授照常。过期/无效 source_map 失败仍在已有产物写入前，不把历史邮件直接删除。普通文件I/O失败沿用错误通路；本计划不承诺硬崩溃跨文件事务。
 
 ## 4. 变更面、替代方案与实施顺序
 
-Owner：用户决定真实回答和是否补充；Stage4 selection agent/coordinator 管交互；professor-contact runner 管素材身份、保存、冻结与 freshness；Stage5 generator/validator 共同消费冻结证据；测试工程师只按 TP1.1。
+Owner：用户决定真实回答和是否补充；Stage4 selection agent/coordinator 管交互、保存后冻结最新素材；professor-contact runner 管素材身份、保存、冻结与 freshness；Stage5 generator 从本次邮件输入重新生成模型结果，validator 共同消费冻结证据；测试工程师按 TP1.4。
 修改点：runner 入口及窄素材读写 helper、`_stage4_commands.py`、`_email_core.py`、`_stage5_commands.py`、`_stage5_email.py`；必要时 wrapper 的参数/结果透传；selection/coordinator/email-generator/email-validator 指令及 SKILL/Stage5契约。不预先固定 helper 名称或行号，不搬迁无关模块。
 
 替代：写回 profile 简单但混淆通用背景并触发 Stage3 profile_changed；只塞 idea.note 绑定一次选择且来源不独立；全局语义素材库会扩大跨教授身份/匹配问题。选择独立教授本地方向素材 + 邮件冻结，最小满足持久归属与真实来源。
@@ -77,8 +77,8 @@ Owner：用户决定真实回答和是否补充；Stage4 selection agent/coordin
 实施顺序（本 PR 不执行）：
 1. 在批准 EP/TP 后，补独立素材模型/保存入口、教授归属与旧值保护；保持 profile/Stage3 不写。
 2. Stage4 selection/coordinator 接入缺素材补问、回答保存与 fresh 委派；Stage4 编译冻结素材并保留原选择事务。
-3. 接入 Stage5 生成/校验来源和受影响邮件 freshness；保留旧包兼容及旧产物保护。
-4. 同步正式指令、必要文档和 TP1.1 对应的最小测试资产；交本地测试工程师完善精确 selector/recipe，按 TP1.1 关口处理。
+3. 接入 Stage5 生成/校验来源和受影响邮件 freshness；对重新冻结的包重新规划并生成结果及草稿，修正任何复用上一轮输出的调用路径；保留旧包兼容及旧产物保护。
+4. 同步正式指令、必要文档和 TP1.4 对应的最小测试资产；交本地测试工程师核对精确 selector/recipe，按 TP1.4 关口处理。
 5. 只按真实影响复审；文档SHA变化不重跑，不把本功能变成 PR148 的旧功能补测。
 
 ## 5. 影响、不变量与现实反例
@@ -87,13 +87,15 @@ Owner：用户决定真实回答和是否补充；Stage4 selection agent/coordin
 - preserved_behavior：通用 profile/Stage3、现有 note、三项邮件合同、模板与 immutable 入口、教授级隔离。
 - prohibited_side_effect：编造原回答、静默跨方向/教授套用、取消选择删素材、修改全局安全/用户配置、自动清理旧邮件、向仓库提交真实经历。
 - 同方向换 idea：素材不以 idea 为键，仍可用；另一教授同名方向：目录隔离，不自动认同；回答否定经历：按原文生成，不升级经历。
-- 回答修改后复用旧结果：切片摘要与 Stage5 检查阻止误用；修改无关方向：只比较选中切片，不重开所有邮件；保存与冻结竞争：素材锁内读/核/写，失败不覆盖。
+- 回答修改后重新生成：Stage4 交付更新后的冻结包，Stage5 generator 重新取本轮输入、生成结果与草稿；不得让旧轮次的结果进入正常写入路径，若发生则修复调用方。修改无关方向只比较选中切片，不重开所有邮件；保存与冻结竞争时素材锁内读/核/写，失败不覆盖。
 - 输入不可信或保存失败：仅处理所属教授，原数据不清空；已有邮件保留但其受影响版本须刷新后再生成，不“回滚”为通过。
 - Critical assumptions / unresolved critical impacts：作者候选未认定阻断假设；以上决定交独立 reviewer 核实，不自授 P1–P4/PASS。跨教授显式复用暂不新增产品入口，用户可重新提供回答；自动复用明确非目标。
 
 ## 修订记录
 
-EP1.1：独立 EP1 审核 B1/B2 后补齐新素材模型结果的切片指纹绑定（plan-with-result/finalize 均核），并明确复用既有 --email-id 与批次失败语义；R1范围不变，不增加部分提交或来源认证。正式复核见 review.md。
+EP1.2（2026-10-28，验收决定人主动精简）：撤销 EP1.1 添加的模型结果 `direction_materials_fingerprint` 和旧指纹拒绝要求；改由 Stage4/Stage5 的正常调用流程保证更新素材重新冻结、重新规划、重新调用模型并使用本轮草稿。R1–R5、来源约束、live 素材与旧邮件包的新鲜度保护、旧包兼容及既有批次失败语义不变。直接影响 P2/P3/P4 的生成与失败处理决定，待定向复核；P1 的需求与现实依据沿用旧版未受影响部分。不把 EP1.1 的 APPROVED 复制到本版。
+
+EP1.1（历史版本，旧指纹要求已被 EP1.2 撤销）：独立 EP1 审核 B1/B2 后补齐新素材模型结果的切片指纹绑定（plan-with-result/finalize 均核），并明确复用既有 --email-id 与批次失败语义；R1范围不变，不增加部分提交或来源认证。正式复核见 review.md。
 
 
 基线指针更新（非语义修订）：发布前main合并PR146至 `b67dd3ca4d29dfc78f57988564b219c71b582674`。已读81bd256…b67dd3c差异：仅Stage2/3人工追加校验及状态历史、对应指令/测试/计划；Stage4/Stage5/material相关基础合同未变，runner新增Stage2/3命令未改EMAIL_SOURCE_HASH_FIELDS，Stage3新增历史保存未改变本计划所依赖的方向身份/选择重建。沿用本表固定版本源码定位；不恢复旧轮次要求、不重审PR146。独立reviewer确认影响分析后复用本轮结论。
