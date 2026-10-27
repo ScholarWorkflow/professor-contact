@@ -42,7 +42,7 @@ DISPLAY_ONLY_LINK = (
 DISPLAY_ONLY_EVIDENCE = (
     f"显示参考 zotero://select/library/items/{DISPLAY_ONLY_KEY}，证据原句保留。")
 DISPLAY_ONLY_RENDERED = f"- 后续论文依据：显示参考 {DISPLAY_ONLY_LINK}，证据原句保留。"
-U1_TARGET_DISPLAY_VERSION = 3
+U1_TARGET_DISPLAY_VERSION = 4
 GENERATED_STAMP_RE = re.compile(
     (r"(?m)^> (\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z) ｜ 数据来源：")
     .encode("utf-8"))
@@ -598,6 +598,16 @@ class FixedEvidenceBase(BaseEnv):
             env.blocking_issue("依据：后续由", evidence_title_line),
         ])
         analysis_before = (env.prof_dir / contact_state.ANALYSIS_MD).read_bytes()
+        # EP1.1: original fixed text is not a style repair target. The same
+        # ownership route remains available for explicit structural findings.
+        pack_before_scope = (env.prof_dir / contact_state.INPUT_PACK).read_bytes()
+        refused_scope = env.record(report)
+        self.assertEqual(refused_scope.get("reason_code"), "validation_scope_mismatch")
+        self.assertEqual((env.prof_dir / contact_state.INPUT_PACK).read_bytes(), pack_before_scope)
+        structural = json.loads(Path(report).read_text(encoding="utf-8"))
+        for issue in structural["files"][0]["issues"]:
+            issue["rule"] = "C9"
+        Path(report).write_text(json.dumps(structural, ensure_ascii=False), encoding="utf-8")
         report_bytes = Path(report).read_bytes()
         recorded = env.record(report)
         self.assertEqual(recorded["status"], "needs_correction", recorded)
@@ -674,6 +684,9 @@ class FixedEvidenceBase(BaseEnv):
             if "后续论文依据：" in line and link_url in line)
         link_report = link_env.write_report("u1c-link.json", [
             link_env.blocking_issue(link_url, link_line)])
+        structural = json.loads(Path(link_report).read_text(encoding="utf-8"))
+        structural["files"][0]["issues"][0]["rule"] = "C9"
+        Path(link_report).write_text(json.dumps(structural, ensure_ascii=False), encoding="utf-8")
         link_recorded = link_env.record(link_report)
         self.assertEqual(link_recorded["status"], "needs_correction", link_recorded)
         link_gap_id = contact_state.quote_id(link_env.gap_quotes["AAAA1111"])
@@ -700,6 +713,9 @@ class FixedEvidenceBase(BaseEnv):
             if blacklist_url in line and "依据：" in line)
         blacklist_report = blacklist_env.write_report("u1c-blacklist-link.json", [
             blacklist_env.blocking_issue(blacklist_url, blacklist_line)])
+        structural = json.loads(Path(blacklist_report).read_text(encoding="utf-8"))
+        structural["files"][0]["issues"][0]["rule"] = "C9"
+        Path(blacklist_report).write_text(json.dumps(structural, ensure_ascii=False), encoding="utf-8")
         blacklist_recorded = blacklist_env.record(blacklist_report)
         self.assertEqual(blacklist_recorded["status"], "needs_correction",
                          blacklist_recorded)
@@ -721,7 +737,7 @@ class FixedEvidenceBase(BaseEnv):
         pack_before = (excluded_env.prof_dir / contact_state.INPUT_PACK).read_bytes()
         refused = excluded_env.record(excluded)
         self.assertNotIn(refused["status"], {"ok", "needs_correction"}, refused)
-        self.assertEqual(refused.get("reason_code"), "validation_issue_not_repairable",
+        self.assertEqual(refused.get("reason_code"), "validation_scope_mismatch",
                          refused)
         self.assertEqual((excluded_env.prof_dir / contact_state.INPUT_PACK).read_bytes(),
                          pack_before)
@@ -764,6 +780,9 @@ class FixedEvidenceBase(BaseEnv):
         fixed_line = env.physical_line("评估时间：", expected=2)[0]
         round2 = env.write_report("u1d-round2.json", [
             env.blocking_issue("评估时间：", fixed_line)])
+        structural = json.loads(Path(round2).read_text(encoding="utf-8"))
+        structural["files"][0]["issues"][0]["rule"] = "C9"
+        Path(round2).write_text(json.dumps(structural, ensure_ascii=False), encoding="utf-8")
         terminal = env.record(round2)
         self.assertEqual(terminal["status"], "ok", terminal)
         self.assertEqual(terminal["round"], 2, terminal)
@@ -918,8 +937,9 @@ class FixedEvidenceBase(BaseEnv):
         self.assertEqual(validator["results"], validator_before["results"])
 
         round2_line = pending_env.physical_line("评估时间：", expected=1)
-        round2 = pending_env.write_report("u1d-pending-round2.json", [
-            pending_env.blocking_issue("评估时间：", round2_line)])
+        round2_issue = pending_env.blocking_issue("评估时间：", round2_line)
+        round2_issue["rule"] = "C9"  # Fixed structure routes to its owner, not prose repair.
+        round2 = pending_env.write_report("u1d-pending-round2.json", [round2_issue])
         round2_bytes = Path(round2).read_bytes()
         terminal = pending_env.record(round2)
         self.assertEqual(terminal["status"], "ok", terminal)

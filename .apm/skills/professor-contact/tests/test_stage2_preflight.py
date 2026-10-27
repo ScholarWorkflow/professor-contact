@@ -30,6 +30,7 @@ SCRIPT = ROOT / "scripts" / "contact_state.py"
 sys.path.insert(0, str(ROOT / "scripts"))
 
 import contact_state  # noqa: E402
+from test_contact_state import stage2_style_validation_report
 
 PROFESSOR = "試験 教授"
 YEAR = datetime.now().year
@@ -274,15 +275,8 @@ class PreflightBase(unittest.TestCase):
         direction_ids = {contact_state.direction_machine_id(row)
                          for row in pack["directions"]}
         self.assertEqual(set(keys), direction_ids)
-        validation = {
-            "result": "ok",
-            "files": [{
-                "file": str((self.prof_dir / contact_state.ANALYSIS_MD).resolve()),
-                "artifact": "analysis", "verdict": "pass", "blocking": 0,
-                "minor": 0, "issues": [],
-            }],
-            "notes": "",
-        }
+        validation = stage2_style_validation_report(
+            (self.prof_dir / contact_state.ANALYSIS_MD).resolve())
         path = self.root / "validation.json"
         path.write_text(json.dumps(validation, ensure_ascii=False), encoding="utf-8")
         out = parse(run_cli("stage2-record-validation", "--professor-dir", self.prof_dir,

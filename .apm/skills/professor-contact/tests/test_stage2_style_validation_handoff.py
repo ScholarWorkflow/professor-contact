@@ -722,7 +722,7 @@ class Stage2ValidationHandoffTests(BaseEnv):
         title_line = title_lines[0]
         self.assertIn("教授从", title_line)
         first = self.write_validation(
-            "first-round.json", quote=later_title,
+            "first-round.json", quote="教授从",
             location=str(analysis_lines.index(title_line) + 1))
         recorded = self.record_validation(first)
         self.assertEqual(recorded["status"], "needs_correction", recorded)

@@ -1644,6 +1644,7 @@ stage2_refine_context = _stage2_validation.stage2_refine_context
 cmd_stage2_refine_plan = _stage2_validation.cmd_stage2_refine_plan
 cmd_stage2_refine_finalize = _stage2_validation.cmd_stage2_refine_finalize
 cmd_stage2_record_validation = _stage2_validation.cmd_stage2_record_validation
+cmd_stage2_prepare_validation = _stage2_validation.cmd_stage2_prepare_validation
 
 
 # Binding point for the human-authorized continuation commands. Both need the
@@ -2188,6 +2189,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--professor-dir", required=True)
     p.add_argument("--validation-file", required=True)
     p.set_defaults(func=cmd_stage5_record_validation)
+
+    p = sub.add_parser("stage2-prepare-validation")
+    p.add_argument("--professor-dir", required=True)
+    p.set_defaults(func=cmd_stage2_prepare_validation)
 
     p = sub.add_parser("stage2-record-validation")
     p.add_argument("--professor-dir", required=True)

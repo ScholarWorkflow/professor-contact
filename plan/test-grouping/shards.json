@@ -832,6 +832,10 @@
     {
      "name": "test_stage2_source_evidence_repair",
      "stage": "stage2"
+    },
+    {
+     "name": "test_stage2_style_repair_scope",
+     "stage": "stage2"
     }
    ]
   }

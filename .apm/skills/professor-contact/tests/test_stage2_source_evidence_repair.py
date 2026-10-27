@@ -585,35 +585,20 @@ class SourceEvidenceRepairTests(SourceEvidenceRepairFixture):
         self.assertEqual(self.all_files_snapshot(), protected)
 
     def test_r_b_quote_and_generator_findings_keep_their_owner(self):
-        """A quote finding and a label finding authorize no cache field."""
-        quote_env = self.fresh_repair_env()
-        quote_env.generate_pack(quote_env.gap_override())
-        quote_env.record_findings("quote")
-        gap = quote_env.gap_id("AAAA1111")
-        entry = quote_env.cache_entry(gap)
-        protected = quote_env.all_files_snapshot()
-        payload = quote_env.rejected([
-            quote_env.repair_row("model_evidence", entry["model_evidence"],
-                                 entry["model_evidence"].replace("后续由", "后续工作由"))])
-        # A quote's owner is the source owner as well, so naming that owner is
-        # not authority to rewrite the cache.  The name is read from ``owners``
-        # only, so a stray occurrence elsewhere in the payload cannot satisfy it.
-        self.assertIn("source", quote_env.owners_named(payload), payload)
-        self.assertEqual(quote_env.all_files_snapshot(), protected)
-
-        label_env = self.fresh_repair_env()
-        label_env.generate_pack(label_env.gap_override())
-        label_env.record_findings("label")
-        gap = label_env.gap_id("AAAA1111")
-        entry = label_env.cache_entry(gap)
-        protected = label_env.all_files_snapshot()
-        payload = label_env.rejected([
-            label_env.repair_row("model_evidence", entry["model_evidence"],
-                                 entry["model_evidence"].replace("后续由", "后续工作由"))])
-        # The template/label owner is the generator, so the caller must be sent
-        # there instead of being told to repair the source text.
-        self.assertIn("generator", label_env.owners_named(payload), payload)
-        self.assertEqual(label_env.all_files_snapshot(), protected)
+        """Source/label style findings never grant a cache repair licence."""
+        for field in ("quote", "label"):
+            with self.subTest(field=field):
+                env = self.fresh_repair_env()
+                env.generate_pack(env.gap_override())
+                quote, prefix = FINDINGS[field]
+                protected = env.all_files_snapshot()
+                report = env.write_report(f"outside-{field}.json", [
+                    env.blocking_issue(quote, env.line_with(quote, prefix))])
+                result = env.record(report)
+                self.assertEqual(result.get("reason_code"), "validation_scope_mismatch", result)
+                self.assertEqual(env.all_files_snapshot(), protected)
+                # Refusing the report must not fabricate a registered finding.
+                self.assertNotIn("validator", env.pack())
 
     def test_r_b_stale_expectations_are_rejected_before_writing(self):
         """A stale cache digest, validation digest or old text stops the row."""

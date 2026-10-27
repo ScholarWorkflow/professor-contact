@@ -251,7 +251,7 @@ def build(*, Stage2Context,
                  "analysis; run the normal Stage 2 preflight -> process -> finalize update first "
                  "(old packs must not be reverse-engineered from Markdown)",
                  target=str(ANALYSIS_MD))
-        if ownership.get("version") != 1 \
+        if ownership.get("version") != 2 \
                 or ownership.get("body_sha256") != render_sha \
                 or ownership.get("line_count") != line_count:
             fail("validation_render_stale",
@@ -274,6 +274,41 @@ def build(*, Stage2Context,
             if start < span_end and end > span_start:
                 return True
         return False
+
+    def stage2_analysis_scope(professor_dir: Path, pack: dict) -> dict:
+        """Project only model-authored prose, preserving original coordinates."""
+        snapshot = stage2_bound_snapshot(professor_dir, pack)
+        lines = snapshot["body"].splitlines()
+        ownership = stage2_render_ownership(pack, snapshot["body_sha256"], len(lines))
+        fragments = []
+        for fragment in ownership["fragments"]:
+            if not isinstance(fragment, dict) or not fragment.get("style_checkable"):
+                continue
+            for line, start, end in fragment.get("ranges") or []:
+                text = lines[line][start:end]
+                if not text.strip():
+                    continue
+                fragments.append({
+                    "line": line + snapshot["line_offset"] + 1,
+                    "start": start, "end": end, "text": text,
+                    "direction_id": fragment.get("direction"),
+                    "gap_id": fragment.get("gap_id"), "field": fragment.get("field"),
+                    "missing": bool(fragment.get("missing")),
+                    "required": bool(fragment.get("required")),
+                })
+        fragments.sort(key=lambda row: (row["line"], row["start"], row["end"]))
+        scope = {"schema": 1, "file": str((professor_dir / ANALYSIS_MD).resolve()),
+                 "artifact": "analysis", "render_sha256": snapshot["body_sha256"],
+                 "fragments": fragments}
+        scope["scope_sha256"] = sha256_obj(scope)
+        return scope
+
+    def cmd_stage2_prepare_validation(args) -> None:
+        professor_dir = Path(args.professor_dir)
+        pack, error = load_input_pack(professor_dir)
+        if error or pack is None:
+            fail("missing_input_pack", f"input pack unreadable: {professor_dir / INPUT_PACK}")
+        emit({"status": "ok", "analysis_scope": stage2_analysis_scope(professor_dir, pack)})
 
     def stage2_validation_report(path: Path, professor_dir: Path, pack: dict, *,
                                 require_repairable: bool = True) -> dict:
@@ -398,6 +433,12 @@ def build(*, Stage2Context,
             direction_ids.add(did)
         lines = body.splitlines()
         ownership = stage2_render_ownership(pack, render_sha, len(lines))
+        scope = stage2_analysis_scope(professor_dir, pack)
+        scope_binding = {key: scope[key] for key in ("schema", "render_sha256", "scope_sha256")}
+        if entry.get("analysis_scope") != scope_binding:
+            fail("validation_scope_mismatch",
+                 "analysis report must bind the current prepared scope; run "
+                 "stage2-prepare-validation and repeat the check without editing the report")
 
         def stage2_quote_mapping(hit: int, start: int, end: int):
             """Resolve one quote interval through the renderer ownership map.
@@ -464,10 +505,23 @@ def build(*, Stage2Context,
             quote_start = lines[hit].find(quote)
             quote_end = quote_start + len(quote)
             did, overlaps, covered = stage2_quote_mapping(hit, quote_start, quote_end)
-            regions = {fragment.get("region") for fragment in overlaps}
-            fixed_fragments = [fragment for fragment in overlaps
+            structural = issue["rule"].strip().upper() in ("8", "9", "C8", "C9")
+            checkable = [fragment for fragment in overlaps
+                         if fragment.get("style_checkable") and any(
+                             lines[hit][max(start, quote_start):min(end, quote_end)].strip()
+                             for line, start, end in fragment.get("ranges") or []
+                             if line == hit and max(start, quote_start) < min(end, quote_end))]
+            if not checkable and not structural:
+                fail("validation_scope_mismatch",
+                     "style finding contains no prepared editable prose; repeat the "
+                     "check on analysis_scope, not source text or fixed labels", quote=quote)
+            # A label/title crossed by a prose quote is context, not a second
+            # repair owner. Pure structural findings retain their real owner.
+            routed = checkable if checkable else overlaps
+            regions = {fragment.get("region") for fragment in routed}
+            fixed_fragments = [fragment for fragment in routed
                                if fragment.get("region") == "fixed"]
-            narrative_fragments = [fragment for fragment in overlaps
+            narrative_fragments = [fragment for fragment in routed
                                    if fragment.get("region") == "narrative"]
             if did is not None and covered:
                 issues_by_direction.setdefault(did, []).append(issue)
@@ -526,7 +580,8 @@ def build(*, Stage2Context,
                 "verdict": entry["verdict"], "notes": data["notes"],
                 "issues": entry["issues"], "issues_by_direction": issues_by_direction,
                 "blocking_by_direction": blocking_by_direction,
-                "fixed_blocking_by_direction": fixed_blocking_by_direction}
+                "fixed_blocking_by_direction": fixed_blocking_by_direction,
+                "analysis_scope": scope_binding}
 
     def stage2_validation_legality(pack: dict | None,
                                    validator: dict | None = None) -> tuple[dict | None, str | None]:
@@ -1156,6 +1211,7 @@ def build(*, Stage2Context,
             "validation_sha256": evidence["validation_sha256"],
             "pack_sha256": pack_sha,
             "raw_verdict": evidence["verdict"],
+            "analysis_scope": evidence["analysis_scope"],
             "notes": evidence["notes"],
             "issues": evidence["issues"],
             "results": results,
@@ -1192,6 +1248,8 @@ def build(*, Stage2Context,
               "terminal": phase == "terminal"})
 
     return types.SimpleNamespace(
+        stage2_analysis_scope=stage2_analysis_scope,
+        cmd_stage2_prepare_validation=cmd_stage2_prepare_validation,
         stage2_pack_scope=stage2_pack_scope,
         stage2_bound_render=stage2_bound_render,
         stage2_merge_later_paper_source=stage2_merge_later_paper_source,

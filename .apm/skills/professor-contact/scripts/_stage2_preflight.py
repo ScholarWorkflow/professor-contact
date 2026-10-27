@@ -57,7 +57,7 @@ STAGE2_LEVEL_STATISTICS_VERSION = 1
 # reference authority, the renderer map as the only direction authority, and
 # the lossless raw-byte acceptance/read contract.
 # v3: source item_key citations share the trusted-title display contract.
-STAGE2_U1_DISPLAY_VERSION = 3
+STAGE2_U1_DISPLAY_VERSION = 4
 
 # v2: issue #7 resolved directions become part of the Stage-2 contract the
 # preflight must prove — provisional→resolved set mapping in cache.preflight,

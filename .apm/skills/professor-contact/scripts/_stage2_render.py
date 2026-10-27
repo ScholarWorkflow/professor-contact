@@ -356,10 +356,9 @@ def build(*, fail,
                                                 direction, gap_id, field):
         """Return ``(text, owner)`` spans for declared paper references.
 
-        The source owns the paper facts (including a trusted title); the renderer
-        owns the link punctuation and Zotero destination it generates.  Existing
-        Markdown links keep their source owner, including an existing Zotero link
-        whose label is redrawn to the trusted title.
+        Source spans are model-authored explanation. Reference spans contain
+        trusted titles or existing URLs/links and are not style-editable. The
+        renderer owns punctuation and Zotero destinations it generates.
         """
         if not isinstance(text, str) or not text:
             return []
@@ -377,7 +376,7 @@ def build(*, fail,
                 title_for, key, direction=direction, gap_id=gap_id, field=field)
 
         def generated_link(title, destination):
-            return [("[", "generator"), (title, "source"),
+            return [("[", "generator"), (title, "reference"),
                     (f"]({destination})", "generator")]
 
         def replace_bare_keys(segment):
@@ -429,9 +428,9 @@ def build(*, fail,
                 key = destination[len(STAGE2_ZOTERO_PREFIX):].strip()
                 title = trusted_title(key)
                 parts.append((match.group(0) if label == title
-                              else f"[{title}]({destination})", "source"))
+                              else f"[{title}]({destination})", "reference"))
             else:
-                parts.append((match.group(0), "source"))
+                parts.append((match.group(0), "reference"))
             cursor = end
         parts.extend(convert_segment(text[cursor:]))
         return [(part, owner) for part, owner in parts if part]
@@ -513,7 +512,7 @@ def build(*, fail,
                          if not str(key).startswith("_")}
                 entry["ranges"] = ranges[id(meta)]
                 fragments.append(entry)
-            return body, {"version": 1, "line_count": len(lines),
+            return body, {"version": 2, "line_count": len(lines),
                           "fragments": fragments}
 
     def build_direction_pack(ctx: Stage2Context, plan: dict, statuses: dict,
@@ -714,9 +713,12 @@ def build(*, fail,
             return stage2_trusted_paper_title(paper_record(key), key)
 
         def meta(region: str, owner: str, direction=None, gap_id=None, field=None,
-                 repairable: bool = False) -> dict:
+                 repairable: bool = False, *, style_checkable: bool = False,
+                 missing: bool = False, required: bool = False) -> dict:
             return {"region": region, "owner": owner, "direction": direction,
-                    "gap_id": gap_id, "field": field, "repairable": bool(repairable)}
+                    "gap_id": gap_id, "field": field, "repairable": bool(repairable),
+                    "style_checkable": style_checkable, "missing": missing,
+                    "required": required}
 
         def excluded(direction=None) -> dict:
             return meta("excluded", "excluded", direction)
@@ -727,16 +729,22 @@ def build(*, fail,
         def source(direction, gap_id, field) -> dict:
             return meta("fixed", "source", direction, gap_id, field)
 
-        def narrative(direction, gap_id, field) -> dict:
-            return meta("narrative", "narrative", direction, gap_id, field, True)
+        def narrative(direction, gap_id, field, *, missing=False, required=False) -> dict:
+            return meta("narrative", "narrative", direction, gap_id, field, True,
+                        style_checkable=True, missing=missing, required=required)
 
         def citation_segments(text, declared, direction, gap_id, field):
-            return [
-                (part, source(direction, gap_id, field) if owner == "source"
-                 else generator(direction, gap_id, field))
-                for part, owner in stage2_replace_declared_citations_parts(
+            parts = []
+            for part, owner in stage2_replace_declared_citations_parts(
                     text, declared, title_for, direction=direction,
-                    gap_id=gap_id, field=field)]
+                    gap_id=gap_id, field=field):
+                item = (generator(direction, gap_id, field) if owner == "generator"
+                        else source(direction, gap_id, field))
+                # Only the model's explanation is editable; a title or URL is
+                # a reference even when embedded inside that explanation.
+                item["style_checkable"] = owner == "source"
+                parts.append((part, item))
+            return parts
 
         doc = Stage2RenderDocument()
         doc.add_line(f"# 套磁候选分析 — {professor}", excluded())
@@ -808,15 +816,13 @@ def build(*, fail,
                 def narrative_meta(field, direction_id=did):
                     if field == "template":
                         return excluded(direction_id)
-                    # Only the model-authored narrative wording (and an allowed
-                    # expanded later-paper title) stays repairable. A P-paper
-                    # title is a trusted fact, and G placeholder text is
-                    # generated, so a blocking quote on them is not a rewrite
-                    # licence (the claim stays a source/generator finding).
+                    # All expanded paper titles and G labels are immutable
+                    # references, irrespective of P/L citation type.
                     repairable = field in ("text", "concrete_object", "input_example",
-                                           "output_example", "citation-l")
+                                           "output_example")
                     return meta("narrative", "narrative", direction_id, None,
-                                f"positioning.{field}", repairable)
+                                f"positioning.{field}", repairable,
+                                style_checkable=repairable)
                 doc.add(*render_positioning_block_parts(
                     block, paper_lookup, gap_no, ctx.professor_dir, seen,
                     {**ctx.papers, **reference_lookup},
@@ -824,8 +830,9 @@ def build(*, fail,
             doc.blank()
             doc.add_line("### 论文一览", excluded())
             doc.blank()
-            doc.add_line("| 论文 | 年份 | 署名 | 分析 | 来源 |", excluded())
-            doc.add_line("|---|---|---|---|---|", excluded())
+            doc.add_line("| 论文 | 年份 | 署名 | 分析 | 来源 |",
+                         generator(did, field="paper_table"))
+            doc.add_line("|---|---|---|---|---|", generator(did, field="paper_table"))
             for p in projected[did]:
                 analysis_cell = "—"
                 if p.get("analysis_file"):
@@ -839,7 +846,7 @@ def build(*, fail,
                 doc.add_line(
                     f"| [{p['title']}](zotero://select/library/items/{p['item_key']}) "
                     f"| {p.get('year') or '—'} | {p.get('authorship') or 'pending'} "
-                    f"| {analysis_cell} | {source_cell} |", excluded(did))
+                    f"| {analysis_cell} | {source_cell} |", source(did, None, "paper_table"))
             doc.blank()
             doc.add_line("### 用户笔记（原文）", excluded())
             doc.blank()
@@ -856,6 +863,8 @@ def build(*, fail,
                 gap_id = gap["gap_id"]
                 note_entry = gap_notes.get(gap_id, {})
                 summary_text = note_entry.get("summary")
+                if isinstance(summary_text, str) and not summary_text.strip():
+                    summary_text = None
                 if summary_text:
                     summary = summary_text
                     summary_meta = narrative(did, gap_id, "summary")
@@ -863,9 +872,13 @@ def build(*, fail,
                     summary = truncate(gap.get("translation_zh") or gap.get("quote"), 60)
                     summary_meta = source(did, gap_id, "summary")
                 explanation = note_entry.get("explanation")
+                if isinstance(explanation, str) and not explanation.strip():
+                    explanation = None
                 number = gap["no"]
                 doc.add((f"1. 【作者 future work】", excluded(did)),
                         (summary, summary_meta),
+                        (("（可补充白话摘要）" if not summary_text else ""),
+                         narrative(did, gap_id, "summary", missing=True)),
                         ("（源自 ", excluded(did)),
                         (f"[{gap.get('paper_title')}]"
                          f"(zotero://select/library/items/{gap.get('item_key')})",
@@ -883,9 +896,10 @@ def build(*, fail,
                 doc.add(("- 中译：", generator(did, card_id, "label")),
                         (str(gap.get("translation_zh")),
                          source(did, card_id, "translation_zh")))
-                if explanation:
-                    doc.add(("- 大白话：", generator(did, card_id, "label")),
-                            (explanation, narrative(did, card_id, "explanation")))
+                doc.add(("- 大白话：", generator(did, card_id, "label")),
+                        (explanation or "（待补充大白话）",
+                         narrative(did, card_id, "explanation",
+                                   missing=not bool(explanation), required=True)))
                 doc.add(("- 页码：p.", generator(did, card_id, "label")),
                         (str(gap.get("page")), source(did, card_id, "page")),
                         ("（", generator(did, card_id, "label")),
