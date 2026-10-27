@@ -15,7 +15,7 @@
 | R-A 部分 gap 三字段措辞进入投影 | 通过 | `Ran 3 tests in 3.732s / OK`，`r-a.exit=0`（`r-a.log`） |
 | R-B 未授权、owner、陈旧输入与部分批次 | 通过 | `Ran 4 tests in 3.923s / OK`，`r-b.exit=0`（`r-b.log`） |
 | R-C 人工改正文冲突与 no-op | 通过 | `Ran 2 tests in 3.024s / OK`，`r-c.exit=0`（`r-c.log`） |
-| R-D 源数据说明与 CLI 契约 | 未执行（非自动化目标） | TP2 规定由 reviewer 阅读 `SKILL.md` 与两个 analyzer 并记录位置；本记录只给出交付位置（见下），不声称已通过 |
+| R-D 源数据说明与 CLI 契约 | 已执行（阅读判定） | 独立 `implementation_reviewer` 阅读 `SKILL.md` 与两个 analyzer，TP2 六个观察点均有位置；TP2 未设自动化 selector，本记录转录该阅读结论与位置 |
 | shard 索引检查 | 通过 | `python3 scripts/check_test_shards.py`：`OK: 83 test modules across 4 shards, each with a stage`（`shards.out`） |
 | 既有回归（非必测，实现自检） | 通过 | 253 项 `OK`（16 个直接受影响模块）+ 90 项 `OK`（`test_contact_state`）+ 20 项 `OK`（caller contract，文档修正后）；见“实现自检”与“推送后 CI 复核” |
 
@@ -39,7 +39,9 @@
 - `test_r_c_manual_markdown_change_keeps_the_conflict_path` OK。人工改页后单次 finalize 返回 `needs_decision` 或 `error/validation_render_stale`，Markdown 与已记录 validator 不变；显式 `{"decision": "overwrite"}` 后 `ok`，人工标记被替换为新渲染、旧 validator 丢弃。
 - `test_r_c_no_op_repair_changes_nothing_and_keeps_the_recorded_rounds` OK。两轮校验已到 `terminal`（round 2、`fail_after_2_rounds`）时提交与当前文本相同的替换，命令返回 `ok` 而不是 `pass`，缓存、Markdown、输入包与 validator 字节均不变，已记录轮次没有被重置。
 
-### R-D 交付位置（供 reviewer 阅读，未作为自动化目标）
+### R-D 阅读判定与交付位置（无自动化 selector）
+
+独立 `implementation_reviewer` 按 TP2 的六项观察点阅读以下三份文档，并在审核结论中确认六项均有位置；本记录转录该结论与位置，不把它转成关键词断言，正式 Gate3 仍由独立 reviewer 采用本记录判定。
 
 - `.apm/skills/professor-contact/SKILL.md` 第 258 行：三字段白名单、显示字段到缓存字段的映射、每字段独立授权、语义由 source owner 核对、成功返回 `needs_refresh` 且需重新校验、no-op 不重置轮次、其它 owner 分流。
 - `packages/professor-contact-codex/.apm/agents/professor-contact-analyzer.agent.md` 第 636 行：同一套白名单/映射/独立授权、`needs_refresh` 与非 PASS、重新 preflight→plan→finalize 和重新校验、其它 owner 分流。
@@ -60,5 +62,5 @@
 
 - Gate2：TP2 的 recipe 已可直接执行，独立 Gate2 审核尚未在本记录中确认；下一负责人为独立 Gate2 审核者。
 - Gate3：由独立 reviewer 采用本记录并按业务结果判定 PASS/业务失败/无法判断/未执行；本记录不自行给出关口结论。
-- R-D：保持“未执行（reviewer 阅读）”，本记录没有把它转成自动化断言。
-- 实现符合性审核：由 `implementation_reviewer` 按 EP2 与本记录复核；记录通过后仍需独立的合并审核，不因本记录自动获得合并许可。
+- R-D：已由独立 reviewer 阅读判定，记录的是阅读结论与位置，不是自动化断言；正式 Gate3 仍由独立 reviewer 采用本记录。
+- 实现符合性审核：`implementation_reviewer` 已复核 259cab0–fa74ef9 的产物，结论为“完整（仅实现符合性）”，并在补记 `42a884c` 后复核通过；该结论不是 Gate2/Gate3 或合并批准。
