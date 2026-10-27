@@ -41,7 +41,7 @@ import tempfile
 from pathlib import Path
 
 from stage2_upstream_fixture import run_bound_stage2_finalize
-from test_contact_state import BaseEnv, contact_state, parse, run_cli
+from test_contact_state import BaseEnv, contact_state, parse, run_cli, stage2_style_validation_report
 from test_stage3_direction_groups import Stage3DirectionGroupBase
 
 NOTE = "用户明确要求继续修订合成稿件。"
@@ -177,11 +177,7 @@ class Stage2Fixture(BaseEnv):
                                      for issue in issues)
                        else "pass_with_minor" if issues else "pass")
         analysis = self.prof_dir / contact_state.ANALYSIS_MD
-        payload = {"result": "ok", "files": [{
-            "file": str(analysis), "artifact": "analysis", "verdict": verdict,
-            "blocking": sum(issue["severity"] == "blocking" for issue in issues),
-            "minor": sum(issue["severity"] == "minor" for issue in issues),
-            "issues": issues}], "notes": ""}
+        payload = stage2_style_validation_report(analysis, verdict, issues)
         path = self.root / name
         path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
         return path

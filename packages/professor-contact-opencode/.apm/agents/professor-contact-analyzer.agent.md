@@ -612,12 +612,20 @@ runner 校验全部 result JSON（gap ID ∈ 待判集、candidate_paper_ids ⊆
 
 ### Step 6.5 — 白话校验循环（professor-contact-style-validator）
 
-`套磁候选分析.md` 由 `stage2-finalize` 渲染写盘后，用 OpenCode 原生 Task 委派白话校验器，并等待结果：
+`套磁候选分析.md` 由 `stage2-finalize` 渲染写盘后，每轮（包括修订后的重查）先运行只读准备入口：
+
+```bash
+<professor-contact-skill-dir>/scripts/contact_state stage2-prepare-validation --professor-dir <教授目录>
+```
+
+用 OpenCode 原生 Task 委派白话校验器，并等待结果：
 
 ```
 task(subagent_type: "professor-contact-style-validator",
-     prompt: "files: <该教授 套磁候选分析.md 绝对路径>\nartifact: analysis")
+     prompt: "files: <analysis_scope.file>\nartifact: analysis\nanalysis_scope: <准备入口返回的完整对象>")
 ```
+
+不得手工摘抄片段、改变范围或沿用上一轮 scope。文风仅检查 `analysis_scope.fragments` 中的可修生成文本，原稿只供原规则 8/9 的结构检查，不把论文原文、忠实中译、标题、来源状态或固定标签作为文风问题。缺 explanation 的必填槽按原要求补齐；缺 summary 的槽仅供可选补写，不新增必填。每个 analysis 报告项必须原样带回 `analysis_scope: {schema: 1, render_sha256, scope_sha256}` 三项绑定。缺失/陈旧绑定或纯排除片段误报会被拒绝，不写状态、不消耗轮次；只能按当前 scope 重新委派，不能修改报告为通过。
 
 - 校验器**只报告不改写**，返回完整的原始 `result + files[] + notes`。把第 1 轮报告原样保存为 `validation-round-1.json`；不得摘抄、重排或改写字段，也不得补造 `results[]`、`direction_id` 或 `rounds`。
 - Stage 2 位置约定：报告每条 `issues[]` 的 `location` 必须能唯一定位受管正文的实际物理行（含 frontmatter 偏移），支持正整数、纯 ASCII 十进制行号字符串和精确写法“第N行”；短文本片段只在 `quote` 恰好命中当前正文一行时兼容。同一引文命中多行时，每一处分别输出一条并填该处行号，不得用“第N行及多处”“多处”统称多个位置——记录器会以 `validation_location_ambiguous` 拒绝并要求按实际行号逐条重做，期间不写校验状态、不改正文或输入包。协调代理不得手工改写原始报告；报告含糊只能由校验器在同一受管文本上重新给出合规报告。
@@ -640,9 +648,9 @@ task(subagent_type: "professor-contact-style-validator",
   若原 facts 文件仍在，也可把两条命令的 `--professor-dir` 换成同一份 `--facts <原 facts.json>`，runner 会先核对 input fingerprint；原 facts 不在时必须使用 `--professor-dir` 的 pack-only 路径。`stage2-refine-finalize` 只替换结构化 `narrative.positioning/gap_notes`，保留 freshness、gap、用户笔记和论文事实。
 - 修订成功后，重新用 OpenCode 原生 Task 委派同一校验器并等待；将新报告原样保存为 `validation-round-2.json`，再运行 `stage2-record-validation --professor-dir <教授目录> --validation-file <validation-round-2.json>`。第 1 轮 `pass` 或 `pass_with_minor` 记录后结束；第 2 轮记录后，若为 `fail_after_2_rounds` 则保留失败并在返回 `notes` 说明；未获有效追加授权时到此停止，已获授权时按累计上限继续。默认两轮是硬上限：只有人类在该教授该阶段已记录到上限并真实失败后，明确给出追加轮数、并让 `stage2-continue-validation --professor-dir <教授目录> --additional-rounds <正整数> --authorization <人类原话> --expected-round <人类看到的轮次> --expected-state-sha256 <状态文件摘要>` 成功记录后，累计上限才提高（+2 → 4，再 +1 → 5），之后仍按既有修订与记录流程推进；扩展周期在真实上限失败时记为 `fail_after_max_rounds` 并带实际 `rounds`/`max_rounds`。代理不得自选轮数、不得把「继续」当授权、不得例行重试或代填授权文字。未获得有效追加授权时不得产生第 3 轮修订；已由 `stage2-continue-validation` 成功记录授权后，按累计上限继续下一轮修订，每轮仍先 `stage2-record-validation`，到达累计上限的那一轮记录即为终局。固定证据/来源问题始终归原负责人处理，授权只增加可记录轮数，不把它们变成可改写的叙事。
 - 记录入口负责校验报告格式、方向归属和轮次；它不会覆盖阶段 2 的 `partial`、论文失败或 freshness 状态。任何记录失败均不得继续修订。
-- 固定证据卡（`evidence`/`completed_part`/`remaining_gap` 与禁锚 `evidence`）的阻挡由 runner 按生成时片段归属判定：记录结果可能带 `fixed_blocking` 与 `needs_owner_fix=true`，表示事实归源数据 owner、标签/模板/链接排版归 renderer（generator）owner。此时必须停止修订循环，把具体 gap/字段/owner 交对应 owner；`stage2-refine-plan`/`stage2-refine-finalize` 会返回 `needs_owner_fix`、零 job 和零正文写入，传 `--direction-id` 也不能绕过。固定失败不得登记为 pass/skipped，也不得重复提交同一份失败报告。第 2 轮首次出现固定阻挡时记为 `fail_after_2_rounds` 并同样交 owner，不再产生修订或第 3 轮；人类显式授权追加轮次也不改变这一点——固定证据问题始终归源数据或 renderer owner，授权只增加可记录轮数。
+- 卡片中的三类生成解释（`model_evidence`、`completed_part`、`remaining_gap`）仍受文风检查，结构问题也保留原规则 8/9 的 owner 路由；论文原文、忠实中译、标题和固定标签不产生文风阻挡。runner 根据命中的可修片段归属，不把相邻标签附加为 blocker。记录结果带 `fixed_blocking` 与 `needs_owner_fix=true` 时，停止 narrative 修订并把具体 gap/字段交相应 owner：三类解释措辞走下述窄修复；真实来源问题归源数据 owner，模板结构问题归 renderer owner。`stage2-refine-plan`/`stage2-refine-finalize` 此时返回 `needs_owner_fix`、零 job 和零正文写入，`--direction-id` 或追加轮次不能绕过。不得将 owner 问题登记为 pass/skipped，也不得重复提交同一份失败报告。
 - 固定卡的措辞不由模型改写，但 `fixed_blocking` 中 `owner=source` 的同方向同 gap 记录可以交给源数据 owner 走 `stage2-repair-evidence --professor-dir <教授目录> --repair-file <修复批次.json>`：只允许缓存 `model_evidence`、`completed_part`、`remaining_gap` 三个措辞字段，显示字段映射固定为 `evidence`/`blacklist_evidence` → `model_evidence`、`completed_part` → `completed_part`、`remaining_gap` → `remaining_gap`，且每个字段都必须有自己的已登记 source 记录（一个字段的记录不授权另外两个）。批次为 schema 1 的 `{"schema":1,"repairs":[...]}`，每行带 `direction_id`、`gap_id`、`field`、`expected_old_text`、`replacement`、`expected_validation_sha256`、`expected_cache_sha256`；任一行旧文本或摘要不符、未获授权或重复时整批拒绝、零写入。措辞是否仍表达同一事实由源数据 owner 负责，本 agent 不代判断，也不把命令返回当 PASS。命令成功只改 freshness 缓存的这三个字段并返回 `needs_refresh`；随后必须重新运行 `stage2-preflight --target-file <教授目录>/套磁目标.json` → `stage2-plan` → `stage2-finalize` 让新措辞进入受管正文，再重新委派 style validator。引文/译文/页码/状态等固定事实、renderer（generator）的标签/模板/排版问题和校验报告本身的格式问题仍交各自 owner，不走这个入口。
-- 只有源数据或生成逻辑真正修复后，由普通 `stage2-finalize` 接受新的业务版本或实质新正文，旧 validator 才失效、下一轮从第 1 轮开始；仅生成时间、U1 展示标记或归属 map 更新时保留既有 round/phase/pending/results，人工改正文仍走原保护。旧包缺 U1 展示完成信息时 `stage2-preflight` 返回 `process` 和 `fixed_evidence_display_update`，按正常 `preflight → process → plan → finalize` 更新，不新增刷新命令、不强迫重跑仍有效资产，也不得手工改受管 Markdown；缺归属 map 的旧包不能直接记录校验。
+- 源数据或生成逻辑真正修复后，由普通 `stage2-finalize` 接受新的业务版本或实质新正文，旧 validator 失效、下一轮从第 1 轮开始。同版仅生成时间、展示元数据或归属 map 更新仍保留既有 round/phase/pending/results，人工改正文仍走原保护。唯一范围迁移例外：旧展示版本升级到本版 scope 时，旧的 scope-less validator 一次性移入既有 `validation_history`（保留其轮次、失败和人工授权），当前状态回到未校验，绝不视为 PASS；之后同版刷新不再撤下或重置轮次。旧包缺 U1 展示完成信息或展示版本陈旧时 `stage2-preflight` 返回 `process` 和 `fixed_evidence_display_update`，按正常 `preflight → process → plan → finalize` 更新，不新增刷新命令、不强迫重跑仍有效资产，也不得手工改受管 Markdown；缺归属 map 的旧包不能直接记录校验。
 - 校验依据见 `professor-contact-style-validator` 的规则节（AGENTS.md 输出文风规定 + 术语首现解释 + 黑话禁用词 + 形容词结论禁令）。
 
 **教授 writer scope 收尾（强制 finally）**：完成该教授全部写入/runner/validator 路径后，或任一 acquire 后的 early return/error 前，进入 `finally`，调用 4.5.E 的 `local-lease-release`。release 失败要记进 notes/reason，不得假装无 lease；正常情况下下一位教授再独立 acquire 自己的 token。

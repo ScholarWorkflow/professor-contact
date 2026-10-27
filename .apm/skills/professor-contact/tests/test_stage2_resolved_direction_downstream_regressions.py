@@ -14,6 +14,7 @@ from test_stage2_resolved_direction import (
     write_json,
     write_resolve_results,
 )
+from test_contact_state import stage2_style_validation_report
 from stage2_test_support import run_bound_stage2_plan
 from stage2_upstream_fixture import run_bound_stage2_finalize
 
@@ -151,18 +152,8 @@ class ResolvedDirectionDownstreamRegressionTests(ResolvedPipelineMixin, unittest
             issues.append({"rule": "A1", "severity": "blocking",
                            "location": str(line_number), "quote": marker,
                            "suggestion": "改成更日常的说法。"})
-        report = {
-            "result": "ok",
-            "files": [{
-                "file": str(self.prof_dir / self.ANALYSIS_MD),
-                "artifact": "analysis",
-                "verdict": "fail",
-                "blocking": len(issues),
-                "minor": 0,
-                "issues": issues,
-            }],
-            "notes": "",
-        }
+        report = stage2_style_validation_report(
+            self.prof_dir / self.ANALYSIS_MD, verdict="fail", issues=issues)
         path = self.root / name
         write_json(path, report)
         return path

@@ -116,9 +116,14 @@ def parse(result):
 def stage2_style_validation_report(analysis_md: Path, verdict="pass", issues=None,
                                    notes=""):
     issues = issues or []
+    prepared = parse(run_cli("stage2-prepare-validation", "--professor-dir", analysis_md.parent))
+    scope = prepared.get("analysis_scope")
+    binding = ({key: scope[key] for key in ("schema", "render_sha256", "scope_sha256")}
+               if isinstance(scope, dict) else None)
     return {
         "result": "ok",
         "files": [{
+            "analysis_scope": binding,
             "file": str(analysis_md),
             "artifact": "analysis",
             "verdict": verdict,

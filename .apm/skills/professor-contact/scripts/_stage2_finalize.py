@@ -1489,7 +1489,16 @@ def build(*, Stage2Context,
                          f"accepted Stage-2 state is invalid: {old_error}",
                          target=str(md_path))
         elif not business_changed and body_equivalent and old_validator is not None:
-            carried_validator = copy.deepcopy(old_validator)
+            previous_render_entry = (((raw_old_pack or {}).get("cache") or {})
+                                     .get("render") or {}).get(ANALYSIS_MD) or {}
+            previous_display = (previous_render_entry.get("u1") or {}).get("display_version")
+            scope_upgrade = (previous_display != STAGE2_U1_DISPLAY_VERSION
+                             and not isinstance(old_validator.get("analysis_scope"), dict))
+            # Only a real scope-version migration expires a scope-less record.
+            # Its full cycle (including human grants) is retained below; this
+            # is an unvalidated new scope, never an inferred pass.
+            if not scope_upgrade:
+                carried_validator = copy.deepcopy(old_validator)
         # A genuine new generation replaces the whole cycle.  The replaced record
         # (its grants, its per-round history and its last results) moves aside
         # instead of disappearing: an earlier failure stays provable after the
@@ -1526,6 +1535,7 @@ def build(*, Stage2Context,
         if body_equivalent and not old_error and isinstance(previous_entry, dict):
             previous_ownership = previous_entry.get("ownership")
             if isinstance(previous_ownership, dict) \
+                    and previous_ownership.get("version") == ownership.get("version") \
                     and previous_ownership.get("body_sha256") == final_sha:
                 render_entry["ownership"] = copy.deepcopy(previous_ownership)
         pack = {
@@ -1966,7 +1976,7 @@ def build(*, Stage2Context,
             if old_u1.get("display_version") != STAGE2_U1_DISPLAY_VERSION:
                 soft_exit("needs_refresh", "refresh_requires_process",
                           drift=["fixed_evidence_display_update"])
-            if (old_ownership.get("version") != 1
+            if (old_ownership.get("version") != 2
                     or old_ownership.get("body_sha256") != old_render_file.get("body_sha256")
                     or old_ownership.get("line_count") != len(old_render_file.get("body", "").splitlines())
                     or not isinstance(old_ownership.get("fragments"), list)):
