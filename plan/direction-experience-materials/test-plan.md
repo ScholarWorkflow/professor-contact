@@ -1,8 +1,8 @@
 # 方向真实素材：测试计划
 
-- Test plan revision: TP1.1；2026-10-27；对应 [EP1.1/R1](execution-plan.md)。
+- Test plan revision: TP1.2；2026-10-27；对应 [EP1.1/R1](execution-plan.md)。
 - Target repository baseline: ScholarWorkflow/professor-contact `b67dd3ca4d29dfc78f57988564b219c71b582674`。
-- Proposed review status: pending。本轮仅计划设计与独立审核；新能力尚未实现，以下全部未执行，不声明 PASS。第一关由独立 reviewer 确认清单；第二关待实现后补齐实际入口和精确 recipe；第三关未执行。
+- Proposed review status: pending。测试资产与可执行 recipe 已按本计划准备；产品新能力尚未实现，T1–T6 全部未执行，不声明 PASS。第一关由独立 reviewer 确认清单；第二关待审核本轮 recipe 的可执行性与范围；第三关未执行。
 - 本文件是唯一完整测试计划与步骤承载位置，不另建问卷评估、采集器、判定器或证据账本。
 
 ## 1. 唯一必测清单（验收上限）
@@ -18,16 +18,100 @@
 
 T1规则观察不是模型行为实测；T2–T6合成数据验证正式产品入口的确定性行为，不用手工补写email-pack替代被测冻结。仅兼容输入T5可以准备旧格式夹具。fixture/model JSON是明确测试输入，不替代产品传递原回答。
 
-## 2. 准备与执行责任（尚未执行）
+## 2. 可执行 recipe（本轮已准备；实现落地后执行）
 
-本 PR 没有新增产品或测试实现，因此不能提供一个“已经能运行并证明新能力”的selector。以下是实施后的最小执行交接，不构成当前Gate2通过：
+本节是可执行的唯一 recipe。测试代码已按本表写好；产品入口尚未实现，因此本轮只记录未执行，不代表第二关或第三关通过。
 
-1. 产品负责人完成EP1.1；本地测试工程师在producer原有unittest框架添加/复用T2–T6对应的方法，**不扩必测清单**。优先参考现有 `test_stage5_immutable.py` 的正式wrapper夹具、Stage4测试支持和 `test_contact_state.py`，不要新增运行平台。命令行功能名以最终实现为准。
-2. 在本文件补齐准确产品/测试SHA、模块/方法selector、临时目录创建与输入准备方式、执行命令及日志位置；由第二关审核其可执行性与是否越界。本轮作者不写不存在的测试方法并伪装可执行。
-3. 使用合成教授/方向/回答，全部可变数据留在独立 `/tmp/contact-direction-materials.<run>/`。不读取或更新真实profile、邮件或用户素材；不连接Zotero/浏览器/MCP，不需要安装或模型provider。unittest运行在producer隔离源码工作区，不把它描述为安装消费端验收。
-4. 使用producer既有Python解释器/测试约定；准备只需确认相关命令和测试方法存在、隔离目录可写。执行示意为 `python -m unittest <本表对应的精确selectors> -v`；**占位命令不可直接作为正式recipe执行**。测试工程师把最终命令补入本文件后再进入第二关。
-5. T1由独立reviewer一次阅读受影响规则/接线，列结果和位置；不要求截图认证、对话全量转录或再建模型判定器。
-6. 正式输出只保留unittest报告、必要失败输出及简短人工观察。敏感真实材料不入Git。每项记录通过/业务失败/无法判断/未执行，禁止用代码自查或旧CI绿代替新能力通过。
+| 项目 | 本轮固定值 |
+| --- | --- |
+| 受测仓库 | `ScholarWorkflow/professor-contact`，从 `main` 的 `b67dd3c` 之后的产品实现提交检出；执行时用 `git rev-parse HEAD` 记录实际提交 |
+| 测试模块 | `.apm/skills/professor-contact/tests/test_direction_materials.py`（新增 8 项） |
+| 解释器 | `/nix/store/0kcws5blwbdyxqxjd1w8hjipz61xny3k-python3-3.14.7/bin/python3`（Python 3.14.7）。该路径不存在时改用本机已装的 Python 3.12+，并在执行记录写明实际路径 |
+| 工作目录 | 受测 checkout 的 `.apm/skills/professor-contact/tests` |
+| 隔离目录 | `RUN=$(mktemp -d /tmp/contact-direction-materials.XXXXXX)`；`TMPDIR="$RUN/tmp"`，所有合成教授、素材、邮件和状态只落在该目录下 |
+| 外部依赖 | 无。不读真实 profile/邮件/用户素材，不连 Zotero、浏览器、MCP，不需要安装、模型 provider 或 eval 服务 |
+| 素材保存入口 | `contact_state.py direction-materials-save`（EP1.1 的拟名；实现可一致重命名，重命名时本表与测试模块须在同一提交内同步） |
+| 素材文件 | `<教授目录>/方向素材.json`，schema 1；`directions[<direction_id>]` 为条目列表或映射，每条含 `material_id`、`question`、`answer` |
+| 素材来源 ID | `direction_material:<direction_id>:<material_id>`，须出现在该 email 的 `allowed_sources` |
+| 冻结字段 | 邮件包每条 email 的 `direction_materials[]`（含 `direction_id`、`material_id`、`question`、`answer`）；stage5-plan 的 `model_input.direction_materials` 与 `model_input.direction_materials_fingerprint`，结果 schema 内的 `direction_materials_fingerprint` |
+| 新鲜度 | 素材切片变化后 `stage5-plan`/`stage5-finalize` 返回 `status=needs_refresh`，邮件、纯文本与状态文件字节不变 |
+| 保存入口输出 | `status=ok`、`material_id`、`materials_file`；拒绝时非零退出码且原文件字节不变 |
+| 保存入口标志 | `--program-root`、`--professor-dir`、`--direction-id`、`--answer`、可选 `--question`、`--material-id`、`--expected-sha256`、`--expect-missing` |
+
+必测目标到测试方法的唯一映射（模块共 8 项）：
+
+| 目标 | 测试方法 |
+| --- | --- |
+| T2 正常保存 | `DirectionMaterialsSaveTests.test_t2_saved_answer_is_frozen_for_the_selected_direction_only` |
+| T2 同方向复用与取消选择 | `DirectionMaterialsSaveTests.test_t2_selection_changes_do_not_delete_saved_materials` |
+| T3 合法引用 | `DirectionMaterialsProvenanceTests.test_t3_frozen_material_reference_is_accepted_and_rendered` |
+| T3 非法引用与 ③ 仍须 gap | `DirectionMaterialsProvenanceTests.test_t3_unfrozen_material_cannot_be_cited` |
+| T4 更新后刷新与旧指纹拒绝 | `DirectionMaterialsFreshnessTests.test_t4_answer_update_requires_a_stage4_refreeze` |
+| T5 无素材旧包兼容 | `DirectionMaterialsCompatibilityTests.test_t5_pack_without_materials_keeps_old_behavior` |
+| T5 素材被移走 | `DirectionMaterialsCompatibilityTests.test_t5_removed_material_is_a_slice_change` |
+| T6 保存入口防错归属/覆盖 | `DirectionMaterialsSaveGuardTests.test_t6_save_rejects_foreign_binding_and_stale_digest` |
+
+T1 无测试方法：由独立 reviewer 一次静态阅读实现后的 selection/coordinator/generator 合同与 `pending_materials` 接线，记录具体文件与字段位置。
+
+1. 正式执行前先确认受测版本包含测试模块与产品入口：
+
+```bash
+set -o pipefail
+RUN=$(mktemp -d /tmp/contact-direction-materials.XXXXXX)
+mkdir -p "$RUN/tmp"
+export TMPDIR="$RUN/tmp"
+PYTHON=/nix/store/0kcws5blwbdyxqxjd1w8hjipz61xny3k-python3-3.14.7/bin/python3
+"$PYTHON" --version 2>&1 | tee "$RUN/python-version.txt"
+git rev-parse HEAD 2>&1 | tee "$RUN/tested-commit.txt"
+git cat-file -e HEAD:.apm/skills/professor-contact/tests/test_direction_materials.py
+cd .apm/skills/professor-contact/tests
+"$PYTHON" -B - <<'PROBE' 2>&1 | tee "$RUN/save-entry-present.txt"
+import argparse, importlib.util, sys
+spec = importlib.util.spec_from_file_location("cs", "../scripts/contact_state.py")
+module = importlib.util.module_from_spec(spec)
+sys.modules["cs"] = module
+spec.loader.exec_module(module)
+for action in module.build_parser()._actions:
+    if isinstance(action, argparse._SubParsersAction):
+        print("direction-materials-save" in action.choices)
+        break
+PROBE
+```
+
+2. 运行全部 8 项：
+
+```bash
+"$PYTHON" -B -m unittest -v test_direction_materials 2>&1 | tee "$RUN/direction-materials.out"
+```
+
+单项复跑使用同一解释器与工作目录，例如：
+
+```bash
+"$PYTHON" -B -m unittest -v test_direction_materials.DirectionMaterialsFreshnessTests.test_t4_answer_update_requires_a_stage4_refreeze 2>&1 | tee "$RUN/t4.out"
+```
+
+3. 判定与记录：逐项记录通过、业务失败、无法判断、未执行，并记下 `Ran N tests` 的数量；`save-entry-present.txt` 为 `False` 时 T2–T6 记未执行（模块内以 `skipTest` 表达同一结论），不得记通过。日志与原始产物只留在 `$RUN`，仓库只提交脱敏摘要。
+
+4. 夹具构成（全部合成，已在预检中确认可生成）：单教授 `試験 教授`、方向 `DIR00001`/`DIR00002`，各 3 个候选、已选 idea；Stage-2/3 事实来自同仓 `BaseEnv` 的既有夹具，联系方式证据与核验缓存来自 `_stage5_issue59_test_support.py` 的既有写入器；模板来自 `stage5_templates()`。素材回答为固定合成日文，`question` 固定一句。测试不自行计算素材指纹：指纹一律从 `stage5-plan` 输出原样回填，避免夹具变成第二份产品实现。
+
+5. 兼容输入（T5）只准备旧格式夹具：把 Stage-4 邮件包去掉 `direction_material*` 字段后写回临时目录，不迁移历史真实包。
+
+## 2.1 准备与预检记录（2026-10-27）
+
+- 准备时 PR head：`37dc2b92a2145ad8dfcd4edd5aa9ca6692e60934`（仅计划，无产品实现）。
+- 交付资产：
+  - `.apm/skills/professor-contact/tests/test_direction_materials.py`：T2–T6 共 8 项，复用 `test_contact_state.py` 的 `BaseEnv`/`run_cli`、`_stage5_issue59_test_support.py` 的证据与核验写入器、`_stage4_handoff_test_support.py` 的行读取器；不新增运行平台。
+  - `plan/test-grouping/shards.json`：模块登记到 shard3，stage 记为 `mixed:stage4+stage5`，`seconds` 记实测 22.7s（同一跳过路径测两次：20.4s／25.0s），`tests` 记 8，`signals` 按文档规则记 stage3 3、stage4 3、stage5 6（CLI 子命令字符串权重 3）；分片与全库合计按清单逐项求和后为 85 个模块、1116 项用例、468.7s。`python3 scripts/check_test_shards.py` 返回 `OK: 85 test modules across 4 shards, each with a stage`。
+  - `plan/test-grouping/README.md`：按清单重新生成分片统计与逐模块表（85 行），并注明基线 `6e624e0` 的 1025 项／416.0s 实测未随新模块重算。
+- 有限预检（临时目录 `/tmp/pr149-prep-20261027`，未执行必测用例的断言）：
+  - 解释器可用（Python 3.14.7）；模块 `py_compile` 通过，`unittest` 收集到 8 项。
+  - 既有夹具可生成两方向 Stage-4 交接：`stage3-finalize` 两方向均 `ok`，状态方向为 `DIR00001`/`DIR00002`；`stage4-finalize` `ok`，邮件包两条 email 各带 `allowed_sources`、`source_hash`、1 个可锚 gap；`stage5-plan` `ok`。
+  - 无操作重编译两次，两条 email 的 `source_hash` 均不变（T4“无关方向不改变指纹”的前提成立）。
+  - 取消选择后再次选择：`stage4-finalize` 均为 `ok`，取消后邮件包只剩 `DIR00002`，重选后两条恢复（T2 复选序列的前提成立）。
+  - 预检同时观察到两个当前事实，供实现参考，不是正式结论：`stage5-finalize` 的邮件文件名是带方向与哈希后缀的 `套磁邮件_<方向>_<想法>_<hash>.md`，不是固定名；`validate_email_raw` 对未列入 `allowed_sources` 的来源返回 `source_map <句>: source <id> not in allowed_sources`。
+  - 当前 runner 没有 `direction-materials-save` 子命令（符合实现前状态）；以未实现入口运行模块，8 项全部 `skipped`（`OK (skipped=8)`），记为未执行。
+  - 按 §2 第 1 步的探测脚本实跑，`save-entry-present.txt` 输出 `False`，与上一条一致。
+- 未完成：第二关（本 recipe 的独立审核）、第三关（正式结果）；产品实现由实现负责人完成。下一负责人：独立 reviewer 确认第二关，再由本地执行工程师按本 recipe 运行。
 
 ## 3. 结果复用与范围控制
 
@@ -40,9 +124,13 @@ T1规则观察不是模型行为实测；T2–T6合成数据验证正式产品�
 
 正式测试失败保留该次输出：明确产品偏离交实现负责人；recipe/环境错误记无法判断并停受影响项；未实现/没运行记未执行。按修订影响只重做受影响项，未受影响结果可复用。
 本范围无外部服务采样，不安排自动重试。命令/环境失效时停止，确认原因并补齐步骤后再一次执行受影响项；业务失败不得通过换输入、放宽断言或重复采样求通过，原失败不得覆盖。
-Gate1/设计由独立审核记录给结论；Gate2待真实recipe；Gate3待有效结果。产品实施与正式执行均非本docs-only PR交付，本轮不声明可合并或已完成产品。
+Gate1/设计由独立审核记录给结论；Gate2待独立 reviewer 审核本 recipe 的可执行性与范围；Gate3待有效结果。产品实施与正式执行均非本 PR 交付，本轮不声明可合并或已完成产品。
 
 ## 修订记录
+
+TP1.2（本地测试工程师，2026-10-27）：按 §2 补齐可执行 recipe（受测入口、素材文件与来源 ID、冻结字段、保存入口标志与输出、解释器、隔离目录、命令、逐项目标映射、夹具构成），新增 T2–T6 的 8 项 producer 测试，并把模块连同 `seconds`/`tests`/`signals` 登记进 shard3、按清单重新生成 `plan/test-grouping/README.md` 的表。必测清单 T1–T6 与检查入口未改，没有新增测试目标或样本矩阵；产品实现与正式结果仍待完成。
+
+TP1.2 复审修正（同一提交内）：按独立实现符合性审核 F1–F3 补齐分片清单的规模与信号字段并重生成 README；F5 把 T3 的来源断言从“素材 ID 出现在正文”收紧为“① 行来源列不等于裸机器 ID”；F6 的越界目录同时覆盖 program_root 之外与 `教授研究` 之外两种；F7 更正模块 docstring 的计划版本。必测目标与样本数量不变。
 
 TP1.1：按独立审核补齐T4同一更新序列中“Stage4已重冻但模型结果仍旧”的拒绝预期；未新增编号、样本矩阵或真实模型测试。其余目标和Gate2/Gate3待办不变。
 
