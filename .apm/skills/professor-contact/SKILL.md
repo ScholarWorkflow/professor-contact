@@ -120,9 +120,9 @@ analyzer 完成方向可信度、署名、相关论文选择、成本门、幂�
 
 `<教授目录>/论文分析/_chatgpt_handoff/stage2-<handoff_id>.zip`
 
-ZIP 只带按物理页标记的论文原文、必要 job/证据数据和指令；PDF/图片不进入 ZIP 或本地 handoff 临时目录。原 PDF 留在原路径计算 `input_sha256`，源路径仅写本地记录，不上传；PDF job 保留 `carrier=pdf` 和 facts/future-work 契约，文本另由 `text_transport` 记录路径与哈希。
+ZIP 只带按物理页标记的论文原文、必要 job/证据数据和指令；PDF/图片不进入 ZIP 或本地 handoff 临时目录。原 PDF 留在原路径计算 `input_sha256`，源路径仅写本地记录，不上传；PDF job 保留 `carrier=pdf` 和 facts/future-work 契约，文本另由 `text_transport` 记录路径与哈希。新包的 future-work 契约是 `source-items-v1`：分析与 future work 都从这份 `text_transport` 已读正文取值，future-work 证据用同一份完整 prepare，bundled candidates 只是阅读优先提示；旧 `exact-items-v1`/`ocr-excerpt-v1` 只用于已存在的旧包。
 
-文本准备复用同一安装 paper-analysis/pdf-processing-core 的缓存校验、prepare 全文及分级；旧 prepare 无全文时走既有 extract。没有缓存会从原 PDF 提取，无需用户先寻找文本。必要 OCR 按既有页级授权流程处理，builder 不自动 OCR；允许的非 required 空页保留页位并说明缺失。网页无法从文字确认的图表等内容须诚实标为证据不足。
+文本准备复用同一安装 paper-analysis 的缓存校验、prepare 全文及分级；旧 prepare 无 `source_pages` 时由同一 `future_work.py prepare` 从原 PDF 补一份完整 prepare（不复制 PDF、不自造抽取器）。运输文字与 future-work 证据共用这一份 prepare：普通可读页保留 prepare 原文，坏页只用同源指纹校验通过的页级/全文 OCR 缓存，并经原 `merge-ocr` 写回同一 prepare；全文缓存不再独立覆盖运输文字。必要 OCR 按既有页级授权流程处理，builder 不自动 OCR；required 页仍缺正文时只报 `upload_ready=false` 与具体页，允许的非 required 空页保留页位、说明缺失且不能作为引用证据。网页无法从文字确认的图表等内容须诚实标为证据不足。
 
 ZIP 同时原样附本次实际加载的 paper-analysis skill、agent 指令及已引用 helper 源码；`context.json` 记录包内路径与 SHA256，网页按 `instructions.md` 读取。导出需要同一安装的 skill/agent 路径，缺源明确报错；不附 profile、全局配置或无关依赖，不联网补齐。运行入口与 sidecar finalize 仍由本地负责。
 

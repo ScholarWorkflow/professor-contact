@@ -57,50 +57,100 @@ class TextTransportTests(unittest.TestCase):
         self.assertFalse(list((self.f.prof / '论文分析/_chatgpt_handoff').rglob('*.pdf')))
         self.assertEqual(self.f.pdf.read_bytes(), original)
 
-    def test_old_prepare_uses_installed_extract(self):
+    def test_old_prepare_regenerates_full_prepare_from_installed_helper(self):
         self.prepared.pop('source_pages'); self.save()
         def run(script, *args):
-            self.assertEqual(script.name, 'pdf_runtime.py')
-            self.assertEqual(args[0], 'extract')
-            Path(args[args.index('--output') + 1]).write_text('<!-- PDF_PAGE: 1 -->\nOriginal paper sentence.\n\n<!-- PDF_PAGE: 2 -->\n')
+            self.assertEqual(script.name, 'future_work.py')
+            self.assertEqual(args[0], 'prepare')
+            debug = Path(args[args.index('--debug-dir') + 1])
+            debug.mkdir(parents=True, exist_ok=True)
+            payload = {**self.prepared,
+                       'source_pages': [{'page': 1, 'text': 'Original paper sentence.'},
+                                        {'page': 2, 'text': ''}]}
+            (debug / 'prepare.json').write_text(json.dumps(payload))
+            (debug / 'candidates.json').write_text(json.dumps({'candidates': payload['candidates']}))
             return subprocess.CompletedProcess([], 0)
         with patch.object(handoff._impl, '_run_future_work', side_effect=run) as mock:
             self.assertTrue(self.build()['upload_ready'])
         self.assertEqual(mock.call_count, 1)
 
-    def test_fulltext_cache_valid_or_stale_reuses_or_falls_back(self):
+    def test_fulltext_cache_only_fills_bad_pages_through_merge(self):
         Path(str(self.f.pdf) + '.llm_ocr.txt').write_text('cache')
         for valid in (True, False):
             with self.subTest(valid=valid):
                 def run(script, *args):
-                    self.assertEqual(args[0], 'validate-fulltext-ocr-cache')
-                    if valid:
-                        Path(args[args.index('--output') + 1]).write_text('<!-- PDF_PAGE: 1 -->\nCached exact page\n<!-- PDF_PAGE: 2 -->\nCached second page')
-                    return subprocess.CompletedProcess([], 0 if valid else 1)
+                    if args[0] == 'validate-fulltext-ocr-cache':
+                        if valid:
+                            Path(args[args.index('--output') + 1]).write_text(
+                                '<!-- PDF_PAGE: 1 -->\nCached exact page\n<!-- PDF_PAGE: 2 -->\nCached second page')
+                        return subprocess.CompletedProcess([], 0 if valid else 1)
+                    self.assertEqual(args[0], 'merge-ocr')
+                    prepared = json.loads(Path(args[args.index('--prepared') + 1]).read_text())
+                    ocr = json.loads(Path(args[args.index('--ocr') + 1]).read_text())
+                    for page in prepared['source_pages']:
+                        text = ocr['pages'].get(str(page['page']))
+                        if text is not None:
+                            page['text'] = text
+                    prepared['ocr_required_pages'] = []
+                    prepared['ocr_resolved_pages'] = sorted(
+                        set(prepared.get('ocr_resolved_pages') or [])
+                        | {int(page) for page in ocr['pages']})
+                    return subprocess.CompletedProcess([], 0, json.dumps(prepared))
                 with patch.object(handoff._impl, '_run_future_work', side_effect=run):
                     result = self.build()
+                self.assertTrue(result['upload_ready'])
                 with zipfile.ZipFile(result['bundle_path']) as zf:
                     text = zf.read('papers/ABC/paper.txt').decode()
-                self.assertIn('Cached exact page' if valid else 'Original paper sentence.', text)
+                pages = handoff._impl._text.page_texts(text, 2)
+                # A cached full text never overwrites readable prepared pages; it
+                # only supplies exact text for a bad page, then merge-ocr updates
+                # the prepare the transport and the evidence share.
+                self.assertEqual(pages[1].strip(), 'Original paper sentence.')
+                self.assertEqual(pages[2].strip(), 'Cached second page' if valid else '')
+                self.assertEqual(
+                    self.f._manifest(result)['jobs'][0]['text_transport']['missing_text_pages'],
+                    [] if valid else [2],
+                )
 
-    def test_page_cache_and_actual_resolved_text(self):
+    def test_page_cache_resolves_bad_page_through_merge(self):
         self.prepared['page_quality'][0]['tier'] = 'untrusted'
         self.prepared['ocr_resolved_pages'] = [1]
         self.prepared.pop('source_pages'); self.save()
         def run(script, *args):
-            output = Path(args[args.index('--output') + 1])
-            if args[0] == 'extract':
-                output.write_text('<!-- PDF_PAGE: 1 -->\nbroken\n<!-- PDF_PAGE: 2 -->\n')
-            else:
-                output.write_text(json.dumps({'pages': {'1': 'Exact OCR page', '2': 'Exact second OCR page'}}))
-            return subprocess.CompletedProcess([], 0)
+            if args[0] == 'prepare':
+                debug = Path(args[args.index('--debug-dir') + 1])
+                debug.mkdir(parents=True, exist_ok=True)
+                payload = {**self.prepared,
+                           'source_pages': [{'page': 1, 'text': 'broken'},
+                                            {'page': 2, 'text': ''}]}
+                (debug / 'prepare.json').write_text(json.dumps(payload))
+                (debug / 'candidates.json').write_text(json.dumps({'candidates': payload['candidates']}))
+                return subprocess.CompletedProcess([], 0)
+            if args[0] == 'validate-ocr-cache':
+                Path(args[args.index('--output') + 1]).write_text(
+                    json.dumps({'pages': {'2': 'Exact second OCR page'}}))
+                return subprocess.CompletedProcess([], 0)
+            self.assertEqual(args[0], 'merge-ocr')
+            prepared = json.loads(Path(args[args.index('--prepared') + 1]).read_text())
+            ocr = json.loads(Path(args[args.index('--ocr') + 1]).read_text())
+            for page in prepared['source_pages']:
+                text = ocr['pages'].get(str(page['page']))
+                if text is not None:
+                    page['text'] = text
+            prepared['ocr_required_pages'] = []
+            prepared['ocr_resolved_pages'] = sorted(
+                set(prepared.get('ocr_resolved_pages') or [])
+                | {int(page) for page in ocr['pages']})
+            return subprocess.CompletedProcess([], 0, json.dumps(prepared))
         with patch.object(handoff._impl, '_run_future_work', side_effect=run):
-            self.assertFalse(self.build()['upload_ready'])  # old flag is not page text
-            Path(str(self.f.pdf) + '.llm_ocr.pages.json').write_text('{}')
+            self.assertFalse(self.build()['upload_ready'])  # no page cache yet
+            Path(str(self.f.pdf) + '.llm_ocr.pages.json').write_text(json.dumps({
+                'schema': 1, 'pdf_sha256': handoff._sha256_file(self.f.pdf),
+                'pages': {'2': 'Exact second OCR page'}}))
             result = self.build()
             self.assertTrue(result['upload_ready'])
         with zipfile.ZipFile(result['bundle_path']) as zf:
-            self.assertIn(b'Exact OCR page', zf.read('papers/ABC/paper.txt'))
+            self.assertIn(b'Exact second OCR page', zf.read('papers/ABC/paper.txt'))
 
     def test_required_pages_leave_continue_lease_without_upload(self):
         self.prepared['ocr_required_pages'] = [2]; self.save()

@@ -158,6 +158,20 @@ def _validate_future_work_inputs(result: dict[str, Any]) -> None:
         raise ValueError(f"external_future_work_invalid: {error}") from error
 
 
+def _selection_contract(job: dict[str, Any], required_pages: list[int]) -> str:
+    """Pick the declared selection contract for one normalized job.
+
+    ``source-items-v1`` is only valid for a local PDF job whose text transport
+    exists and whose OCR-required pages are already resolved; every other job
+    keeps the legacy ``exact-items-v1``/``ocr-excerpt-v1`` protocol.
+    """
+    if required_pages:
+        return "ocr-excerpt-v1"
+    if job.get("source_mode") == "local" and isinstance(job.get("text_transport"), dict):
+        return "source-items-v1"
+    return "exact-items-v1"
+
+
 def _verify_manifest_integrity(manifest: dict[str, Any]) -> None:
     """Bind every authoritative manifest field to job/source/handoff IDs."""
     professor = manifest.get("professor")
@@ -228,7 +242,12 @@ def _verify_manifest_integrity(manifest: dict[str, Any]) -> None:
                 or not isinstance(required_pages, list)
             ):
                 raise ValueError("external_result_hash_mismatch")
-            expected_contract = "ocr-excerpt-v1" if required_pages else "exact-items-v1"
+            expected_contract = (
+                "ocr-excerpt-v1" if required_pages
+                else "source-items-v1" if job.get("source_mode") == "local"
+                and isinstance(job.get("text_transport"), dict)
+                else "exact-items-v1"
+            )
             if future_work.get("selection_contract") != expected_contract:
                 raise ValueError("external_result_hash_mismatch")
         elif future_work is not None:
@@ -306,7 +325,7 @@ def _build_manifest(professor: str, normalized_jobs: list[dict[str, Any]]) -> di
                 "prepare_sha256": job["future_work_prepare_sha256"],
                 "candidates_sha256": job["future_work_candidates_sha256"],
                 "ocr_required_pages": required_pages,
-                "selection_contract": "ocr-excerpt-v1" if required_pages else "exact-items-v1",
+                "selection_contract": _selection_contract(job, required_pages),
             }
         if job.get('source_mode') == 'local':
             entry['source_mode'] = 'local'
@@ -656,7 +675,22 @@ def _finalize_future_work(
     prepared_payload = _impl._load_json(prepared)
     required_pages = list(prepared_payload.get("ocr_required_pages") or [])
     selection_contract = fw.get("selection_contract")
-    if required_pages:
+    # Legacy contracts validate against candidates.json; the source-text
+    # contract validates against the manifest-bound full prepare, which is the
+    # same file the transport text was built from.
+    evidence = candidates
+    if selection_contract == "source-items-v1":
+        if required_pages:
+            raise ValueError("external_future_work_invalid")
+        if (prepared_payload.get("pdf_sha256") != job.get("input_sha256")
+                or not isinstance(prepared_payload.get("source_pages"), list)
+                or not prepared_payload["source_pages"]):
+            raise ValueError("external_future_work_invalid")
+        items = source_dir / "future_work_items.json"
+        if not items.is_file():
+            raise ValueError("external_result_incomplete")
+        evidence = prepared
+    elif required_pages:
         if selection_contract != "ocr-excerpt-v1":
             raise ValueError("external_future_work_invalid")
         ocr = source_dir / "future_work_ocr.json"
@@ -680,6 +714,7 @@ def _finalize_future_work(
         candidates = staged_dir / "merged_candidates.json"
         _impl._atomic_json(working_prepared, merged_payload)
         _impl._atomic_json(candidates, {"candidates": merged_candidates})
+        evidence = candidates
         items = staged_dir / "future_work_items.json"
         try:
             readable_items = _read_readable_exact_items(
@@ -700,7 +735,7 @@ def _finalize_future_work(
 
     proc = _impl._run_future_work(
         args.future_work_script,
-        "validate", "--items", str(items), "--candidates", str(candidates),
+        "validate", "--items", str(items), "--candidates", str(evidence),
     )
     if proc.returncode != 0:
         raise ValueError("external_future_work_invalid")
@@ -708,7 +743,7 @@ def _finalize_future_work(
     proc = _impl._run_future_work(
         args.future_work_script,
         "finalize", "--analysis", str(staged_analysis),
-        "--items", str(items), "--candidates", str(candidates), "--patch",
+        "--items", str(items), "--candidates", str(evidence), "--patch",
         "--pdf-sha256", str(prep_payload.get("pdf_sha256") or ""),
         "--evidence-level", "fulltext",
     )
@@ -730,14 +765,15 @@ This ZIP contains only the exact Stage-2 per-paper analysis jobs selected by the
 
 Read `context.json`, then its `skill` and `agent` files in full. They are verbatim snapshots of the caller-selected paper-analysis installation; per-file SHA256 values identify the exact supplied version without requiring network access. For a TOML agent, read `developer_instructions`. Follow its analysis roles, Markdown template and writing rules; the supplied `scripts/` files document canonical input and draft schemas.
 
-Web adaptation: use the bundled inputs and perform the semantic analysis described by that agent (parallel roles when available, otherwise the same roles sequentially). Registered local agents, fixed Nix launchers, uv/MCP, local caches and helper execution are local-runtime operations; do not claim they ran on the web. Return drafts under the paths below. The local importer handles validation, sidecar finalization and installation. The transport's existing exact-items/OCR selection contract below remains applicable; broader source-selection behavior in an installed agent does not enlarge this handoff's candidate set. Report unavailable evidence or capabilities as partial/error.
+Web adaptation: use the bundled inputs and perform the semantic analysis described by that agent (parallel roles when available, otherwise the same roles sequentially). Registered local agents, fixed Nix launchers, uv/MCP, local caches and helper execution are local-runtime operations; do not claim they ran on the web. Return drafts under the paths below. The local importer handles validation, sidecar finalization and installation. The job's `future_work.selection_contract` below is binding: `source-items-v1` selects from the supplied source text, while `exact-items-v1`/`ocr-excerpt-v1` keep the legacy candidate-only scope of an existing bundle. Report unavailable evidence or capabilities as partial/error.
 
 For each `manifest.json.jobs[]` entry:
 1. For PDF jobs, read `text_transport.path`: it contains the original text with physical PDF page markers. `input_path` names the original PDF logically; the PDF stays local and is not in this ZIP. Other jobs use `input_path`. Do not use Zotero/MCP or invent missing local context. Disclose `text_transport.missing_text_pages` and any needed diagrams/tables/formulas unavailable in text; return partial/error when these prevent supported conclusions.
 2. Preserve `job_id`, `item_key`, `input_sha256`, direction IDs, and target identity exactly. For PDF jobs input_sha256 identifies the original PDF, while text_transport.sha256 identifies text bytes; do not replace either or request the original PDF for local import. New text-only jobs do not ask you to OCR images that were not supplied.
 3. Write the ordinary paper-analysis Markdown template to `results/<safe-job>/analysis.md`, where `<safe-job>` is the deterministic safe form of that exact `job_id`; do not add or override a `result_dir` field in the result row.
 4. For every PDF job with `expected.future_work=true`, follow `future_work.selection_contract` exactly:
-   - `exact-items-v1`: return `future_work_items.json` selected/translated only from the bundled exact candidates. `id` may be omitted; the local helper derives/verifies it.
+   - `source-items-v1`: return `future_work_items.json` selected only from the author's own explicitly stated pending or follow-up work in the supplied `text_transport` source text. The bundled `future_work/prepare.json` candidates only prioritize reading; any complete verbatim passage from a read page is eligible. Use the 1-based physical PDF page that contains the quote (at most the single adjacent two-page seam the local helper already accepts). `id` may be omitted; the local helper derives and verifies it from the exact quote. Never rewrite the quote, never substitute a page that does not contain it, and never request the original PDF or page images. Return an empty `items` list when the text states no author future work; report a missing or unreadable passage as partial instead of guessing it.
+   - Legacy bundles only, `exact-items-v1`: return `future_work_items.json` selected/translated only from the bundled exact candidates. `id` may be omitted; the local helper derives/verifies it.
    - Legacy full-PDF bundles only: `ocr-excerpt-v1`: OCR every page in `future_work.ocr_required_pages` into `future_work_ocr.json` as `{\"pages\":{\"N\":\"text\"}}`. Return `future_work_selections.json` for selections whose page IS in `ocr_required_pages`, using only `{page,quote_excerpt,translation_zh,source}`; the list may be empty, but the file must be present. Do NOT guess candidate ids for OCR pages. If you also select any bundled exact candidate from a readable page whose page is NOT in `ocr_required_pages`, return those readable-page selections in `future_work_items.json` using the ordinary exact-item fields. The local importer runs `merge-ocr`, keeps the readable-page candidates, uniquely binds OCR page+excerpt selections to regenerated candidates, combines both selection sets, then runs `validate` and `finalize`.
 5. For every PDF job with `expected.facts=true`, also return `facts.json`: the compact structured-facts draft already established during the same analysis pass — `paper` (title/authors/year/venue/doi), `research_problem`, `research_object`, `approach`, `findings[]`, `contributions[]`, `topic_terms[]`, `limitations[]`, optional `source_anchors` and `confidence`. Never include `future_work_ids`; the local importer joins them from the validated future-work sidecar. Never re-read the paper a second time just to build the draft.
 6. Bind completed rows in `result_manifest.json` with schema/kind/handoff/source/job/item/input hash and `status=ok|partial|error`.
