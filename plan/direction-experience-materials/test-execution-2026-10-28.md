@@ -1,7 +1,7 @@
 # 方向真实素材：测试执行记录（2026-10-28）
 
 - 执行计划：[execution-plan.md](execution-plan.md) EP1.2（Proposed review status: pending；[review.md](review.md) 的 P1–P4 PASS / APPROVED 对应 EP1.1，EP1.2 的语义修订仍待定向复核，本记录不把旧版批准复制给新版）。
-- 测试计划：[test-plan.md](test-plan.md) TP1.5。必测清单 T1–T6 与 8 项测试方法未改；本轮按 §2 的精确 recipe 运行。TP1.5 的 Gate2 定向复核与 Gate3 结论属于独立 reviewer，本记录只提供实际命令、版本和逐项结果。
+- 测试计划：[test-plan.md](test-plan.md) TP1.5（当前文件已更新为 TP1.6；TP1.6 只删除 T6 的并发/锁审查义务，8 项测试方法、recipe 与输入未变）。必测清单 T1–T6 与 8 项测试方法未改；本轮按 §2 的精确 recipe 运行。Gate2 定向复核与 Gate3 结论属于独立 reviewer，本记录只提供实际命令、版本和逐项结果。
 - 被测版本：首轮 `adac83f2f673d4034850101c6c49903a4f6c31cb`（`feat(stage4, stage5): add direction-scoped experience materials`），8/8 通过；实现符合性审核修正 `ddd921223e5acbd1facea4a93d26ab30e4b89b14`（`fix: close direction-material review gaps`）后在同一 recipe 上复跑 8/8 通过（`RUN=/tmp/contact-direction-materials.PE7cvb`）；rebase 到 main 后（tip `6371cab3df2fb5f007fd61d42db1aa8a7857d7d4`）再次复跑 8/8 通过（`RUN=/tmp/contact-direction-materials.JeBgfh`）。测试资产来自 PR head `6858cb08`；实现提交未改 TP1 的 8 个测试方法、selector、输入或预期结果。唯一的既有测试改动是 `test_stage3_direction_groups.py` 的 `source_hash` 辅助函数补上 EP1.2 新增的 `direction_materials` 字段，与 TP1 的旧包夹具（`legacy_source_hash()` 固定旧字段元组）互不影响。
 - 实现范围：教授本地 `方向素材.json`（schema 1）与 `direction-materials-save`；Stage-4 冻结 `direction_materials[]`、`direction_material:<direction_id>:<material_id>` 来源与 `source_hash`；Stage-5 `model_input.direction_materials`、素材切片 freshness（`needs_refresh` / `direction_materials_changed`）和 md 来源表渲染；selection / generator / validator / SKILL / workflow-reference 的合同同步。
 - 环境：macOS arm64；解释器 `/nix/store/0kcws5blwbdyxqxjd1w8hjipz61xny3k-python3-3.14.7/bin/python3`（Python 3.14.7）；工作树 `/Users/rekidunois/code/skill-repos-dev/worktree/professor-contact-pr149-execution-20261028`。
@@ -30,19 +30,22 @@
 | `23324f65` | `7ec1e9fd` | 追加保存修正 |
 | `1641eb36` | `6371cab3` | 追加保存记录 |
 | `3c6879e` | `6858cb08` | 实现前 PR head |
+| `17f3499e` | `a0727689` | TP1.6 test-plan 记录（rebase 后恢复） |
 
 rebase 后复验：TP1 8 项 `Ran 8 tests in 13.607s`、`OK`（`RUN=/tmp/contact-direction-materials.JeBgfh`）；TP1 8 + PR150 interest 5 + immutable 13 = `Ran 26 tests in 31.778s`、`OK`；合同批 135 项、`test_contact_state` 90 项均 `OK`。本记录其余位置已同步为新提交号，rebase 前结果作为历史保留。
+
+远端在 rebase 基线 `1641eb36` 之后新增了 TP1.6 记录 `17f3499e`（只改 `test-plan.md`，删除 T6 的并发/锁审查义务）。本轮首次 force-push 前未把它纳入 rebase；发现后已把该提交恢复到 rebase 后的历史（`a0727689`，内容相同），并同步在本记录与测试计划中保留 TP1.6。此恢复不改变 8 项测试方法、recipe、输入或已记录结果。
 
 ## 结果总览
 
 | 编号 | 结果 | 证据 |
 | --- | --- | --- |
-| T1 补问只针对缺少的真实方向素材 | 未执行（本角色不执行静态阅读） | 合同位置见下节，待独立 reviewer 按 TP1.5 静态核对并记录位置 |
+| T1 补问只针对缺少的真实方向素材 | 未执行（本角色不执行静态阅读） | 合同位置见下节，待独立 reviewer 按当前计划（TP1.6）静态核对并记录位置 |
 | T2 正常保存与同方向复用 | 通过（2 项） | `direction-materials.out`：`test_t2_saved_answer_is_frozen_for_the_selected_direction_only`、`test_t2_selection_changes_do_not_delete_saved_materials` OK |
 | T3 精确来源贯通与非法引用拒绝 | 通过（2 项） | `test_t3_frozen_material_reference_is_accepted_and_rendered`、`test_t3_unfrozen_material_cannot_be_cited` OK |
 | T4 更新素材后重冻、重新生成且只刷新相关邮件 | 通过（1 项） | `test_t4_answer_update_requires_a_stage4_refreeze` OK |
 | T5 新旧包兼容与素材被移走 | 通过（2 项） | `test_t5_pack_without_materials_keeps_old_behavior`、`test_t5_removed_material_is_a_slice_change` OK |
-| T6 保存入口防错归属/覆盖 | 通过（1 项） | `test_t6_save_rejects_foreign_binding_and_stale_digest` OK |
+| T6 保存入口防错归属/覆盖 | 通过（1 项） | `test_t6_save_rejects_foreign_binding_and_stale_digest` OK；TP1.6 已从预期中删除“互斥设计按源码审查确认”，本项只按原文件内容/返回值判断 |
 | 全部 8 项 | 通过 | 首轮 `adac83f2`：`Ran 8 tests in 31.283s`，`OK`，退出码 0；修正 `ddd92122` 后复跑：`Ran 8 tests in 22.456s`，`OK`，退出码 0；追加保存修正 `7ec1e9fd` 后复跑：`Ran 8 tests in 45.001s`，`OK`，退出码 0；rebase 后 `6371cab3` 复跑：`Ran 8 tests in 13.607s`，`OK`，退出码 0 |
 
 ## 执行命令与结果
@@ -126,7 +129,7 @@ PROBE
 
 ## T1 合同位置（供独立 reviewer 静态核对）
 
-本角色不执行 T1 的人工静态阅读，也未把阅读结论写成自动断言。实现后的合同位置如下，供独立 reviewer 按 TP1.5 T1 的观察点逐项核对：
+本角色不执行 T1 的人工静态阅读，也未把阅读结论写成自动断言。实现后的合同位置如下，供独立 reviewer 按当前计划（TP1.6）T1 的观察点逐项核对：
 
 - `.apm/agents/professor-contact-selection.agent.md`：Input 的 `materials`；Step 2.5 的缺素材补问、已有回答不重复、Codex `needs_input` + `pending_materials`、用户回答后 fresh 委派、`direction-materials-save` 参数与独立保存语义；Return value 的 `pending_materials[]` 与 `needs_input` 行。
 - `.apm/skills/professor-contact/SKILL.md`：Stage 4 的「方向真实素材（EP1.2）」caller contract；Input contract 的 `materials` 行；持久化产物 `<教授名>/方向素材.json`。
@@ -145,7 +148,7 @@ PROBE
 
 ## 未完成项与下一负责人
 
-- Gate2：TP1.5 的 T5 定向复核与 recipe 范围审核仍待独立 reviewer；本记录不声称 Gate2 通过。
+- Gate2：TP1.5/TP1.6 的 T5 旧包夹具与 T6 并发/锁义务两处定向复核仍待独立 reviewer；本记录不声称 Gate2 通过。
 - Gate3：T2–T6 已给出当前版本的实际结果；T1 未执行，需独立 reviewer 完成静态阅读后才能形成必测清单的完整结论。本记录不自授 Gate3 或合并许可。
 - 实现符合性审核：首审“部分完成”（F1–F4，修正 `ddd92122`）；定向复核确认 F3/F4 关闭、F1/F2 有残余（F1-R1/F1-R2/F2-R1），已在 `42d40bf0`/`275e9329` 处理；最终定向复核结论“完整（仅实现符合性）”。该结论不是计划/测试关口或合并批准。
 - 合并审核：M1 PASS；M2/M3 因“同方向多条新回答可能被当作更新而覆盖”为 `NEEDS_MODIFICATION`，已在 `7ec1e9fd` 修正；等待测试审核者复验与合并审核复查，本记录不声称 `NOT_READY` 已解除。
