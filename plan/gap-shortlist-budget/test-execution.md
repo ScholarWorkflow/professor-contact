@@ -21,3 +21,8 @@ Attempt2 completed after the independent Gate 3 reviewer authorized only T1 retr
 Command: `python -B -m unittest -v test_contact_state.TestRunnerBasics.test_01_freshness_budget_does_not_cap_final_shortlist` from the same test directory. 2026-10-28 07:25 UTC, exit0, 1 test in1.960s, OK. Full output (not committed): `/tmp/contact-gap-shortlist-tests/attempt-2.log`.
 
 Observed executions now cover all listed targets; independent Gate 3 PASS / COMPLETE (review_shortlist_dual_plans, 2026-10-28 07:26 UTC; see review.md). Other five results reused from attempt1 as directed; no full rerun.
+
+
+## Fixed revision applicability
+
+Product/test revision: `0d818c35ebdfd2a0253c89d72f864a8b8b93989c`. The committed product/test blobs are identical to the executed final candidate; existing file modes retained. Independent Gate 3 reviewer confirmed applicability to this fixed head on 2026-10-28 07:31 UTC. Subsequent SHA/review record-only edits do not change tested behavior or require rerunning these targets.
