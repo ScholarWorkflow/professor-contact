@@ -153,7 +153,7 @@ class Stage2ScopeContractTests(unittest.TestCase):
                 gate = agent.split("4. **成本门", 1)[1].split("\n4.5 ", 1)[0]
                 for token in ("max_relevant_papers=N", "前 N 篇非点名相关论文",
                               "相关证据集共有 N 篇", "全部纳入 gap/叙事后处理",
-                              "仅排序前 10 进入 gap/叙事后处理", "无论选择哪项",
+                              "仅排序前 20 进入 gap/叙事后处理", "无论选择哪项",
                               "candidate union 内缺失/stale 的 full `paper-analysis` 仍照常补齐",
                               "去重后实际需补 M 篇", "约 4M 次代理调用", "OCR 耗时另计",
                               "user_note 点名与 Stage 1 `user_named` 论文仍豁免截断"):
@@ -176,7 +176,7 @@ class Stage2ScopeContractTests(unittest.TestCase):
         for section in (paper, independent):
             for token in ("full `paper-analysis`", "固定覆盖", "selected directions",
                           "`candidate_keys` 去重并集", "gap / future-work 补齐与叙事后处理",
-                          "相关集 >10 篇且未显式限额"):
+                          "相关集 >20 篇且未显式限额"):
                 self.assertIn(token, section)
             for stale in ("只跑相关论文", "只跑**相关论文**", "方向全部成员论文，强制全量"):
                 self.assertNotIn(stale, section)

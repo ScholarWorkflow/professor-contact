@@ -228,14 +228,14 @@ Stage 0 的 handoff 形状固定为上面的教授级事务记录数组：下游
 | 参数 | 阶段 | 取值 | 缺省 | 语义 |
 |---|---|---|---|---|
 | `gap_scope` | 2 | `relevant` / `selected_direction` / `all` | `selected_direction` | 只决定从哪些**已有有效 sidecar** 的论文选 gap；绝不触发额外 gap 提取 |
-| `freshness_scope` | 2 | `shortlist` / `full` | `shortlist` | `shortlist` 只判断稳定排序的 5–10 条 gap；`full` 判断候选池全部。独立于 gap_scope 可单独扩大 |
+| `freshness_scope` | 2 | `shortlist` / `full` | `shortlist` | `shortlist` 只判断稳定排序的最多 10 条 gap（默认时效预算，不限制最终 shortlist 数量）；`full` 判断候选池全部。独立于 gap_scope 可单独扩大 |
 | `refresh_scope` | 3 | `flagged` / `selected` / `all` | `flagged` | 只决定哪些方向（重新）生成候选；`flagged` 在 preview 工作流中=当前 Stage 2 输入包内的被选方向（旧参数名保留为兼容）；不调用阶段 2，不读 Zotero/sidecar/`_index.json`/Markdown |
 | `--email-pack` | 5 | 阶段 4 落盘的 `<教授目录>/邮件输入.json` 绝对路径 | **无缺省**（缺失即 `invalid_params`） | Issue #68：该教授的本地邮件输入包是阶段 5 唯一事实源；不存在程序级回退包，pack 路径在同一次运行的 plan/finalize 必须一致（详见 5.11） |
 | `--email-id` | 5 | `邮件输入.json` 中真实、非空的单个 `email_id` | 未传=该教授包内全部邮件 | **硬执行范围**：本次 plan/finalize 只处理这一封邮件，无关条目的损坏/陈旧状态既不阻断也不被读写；两次调用必须传同一个 id（详见 5.10） |
 
 ### 缓存失效（稳定 reason_code）
 
-所有 `needs_refresh` / `needs_scope_choice` / `degraded` / `needs_decision` 返回稳定 `reason_code`：`profile_changed`、`source_fingerprint_changed`、`missing_input_pack`、`missing_email_pack`、`missing_valid_sidecar`、`gap_status_unknown`、`manual_markdown_changed`、`shortlist_over_limit`、`result_missing`、`invalid_result_json`、`unknown_reference_id`、`blacklisted_gap_anchor`、`invalid_papers_override`、`duplicate_selection`、`duplicate_idea_id`、`duplicate_email_id`、`humanized_map_required`、`invalid_humanized_map`、`missing_user_choice`、`recipient_conflict`、`humanizer_violation`、`verify_stale`、`contact_evidence_snapshot_stale`、`contact_evidence_snapshot_missing` 等。给人读的 Markdown 只显示日常中文解释，不显示内部 hash。
+所有 `needs_refresh` / `needs_scope_choice` / `degraded` / `needs_decision` 返回稳定 `reason_code`：`profile_changed`、`source_fingerprint_changed`、`missing_input_pack`、`missing_email_pack`、`missing_valid_sidecar`、`gap_status_unknown`、`manual_markdown_changed`、`result_missing`、`invalid_result_json`、`unknown_reference_id`、`blacklisted_gap_anchor`、`invalid_papers_override`、`duplicate_selection`、`duplicate_idea_id`、`duplicate_email_id`、`humanized_map_required`、`invalid_humanized_map`、`missing_user_choice`、`recipient_conflict`、`humanizer_violation`、`verify_stale`、`contact_evidence_snapshot_stale`、`contact_evidence_snapshot_missing` 等。给人读的 Markdown 只显示日常中文解释，不显示内部 hash。`shortlist_over_limit` 另为 `status=ok` 下的兼容预算提示：默认时效预算外仍有 gap，不是错误、最终数量上限或重复询问条件。
 
 阶段 2、3 白话校验结果分别用 `stage2-record-validation`、`stage3-record-validation` 写回各自状态文件的独立 `validator` 字段；不能覆盖阶段数据状态。阶段 5 使用 `stage5-record-validation`，其每条 `issues` 必须是列表，并保留原邮件的模型结果、用户选择、文件路径和 render SHA。
 
@@ -641,7 +641,7 @@ Stage 3/4 的业务语义在两个 runtime 完全一致，只有「谁负责委�
 
 ### 需要用户输入的 Stage（公共原则，跨 harness）
 
-- 任何需要用户选择的环节（Stage 0 方向选择、Stage 2 相关集 >10 确认、Stage 4 想法挑选、Stage 5 学習中候选/交互补齐等）都**不得自动替用户做选择**——包括“按推荐顺序选第一项”，也不得把缺省值伪装成用户决定；缺输入时按该 Stage 既有契约停住（`needs_input` / 保留旧产物），绝不写入看似经用户确认的选择状态。
+- 任何需要用户选择的环节（Stage 0 方向选择、Stage 2 相关集 >20 确认、Stage 4 想法挑选、Stage 5 学習中候选/交互补齐等）都**不得自动替用户做选择**——包括“按推荐顺序选第一项”，也不得把缺省值伪装成用户决定；缺输入时按该 Stage 既有契约停住（`needs_input` / 保留旧产物），绝不写入看似经用户确认的选择状态。
 - OpenCode 的后续 Stage 继续使用其官方 `question` 能力交互（OpenCode-only）；Codex 的 Stage 0 用业务级两步输入（缺 `selection` → `needs_input` + `selection_request` 且零写入；真实用户回答后带显式 `selection` 重新委派，见 Codex 分支），Stage 2 在 Codex 非交互运行（`codex exec`）下的用户选择按上节「Stage 2 在 Codex 下的委派链与用户选择」执行——停点 + 新一轮 fresh root 运行凭同一 program root 的磁盘状态在显式用户选择下继续，`question` 不是 `codex exec` 的交互控件；Stage 3/4 的 Codex 交互边界按上一节执行（Stage 3 调用线程 sibling 编排 validator，Stage 4 缺 `selection` 返回 `needs_input + pending_selection`、下一轮重新委派 selection agent）；其余 Stage 的 Codex 交互式适配仍由对应 Stage 的 issue 按当时官方文档决定——本 skill 不定义任何跨 harness 的自定义交互、续传或 resume 协议。
 - non-interactive / 自动化调用（含 smoke fixture）：成功路径必须显式提供确定性输入（如 `selection`、Stage 5 `choices`、`chatgpt_handoff: continue`）；Stage 1 的 PDF fill 成功路径还必须显式提供真实决定 `access_mode: oa_only|allow_non_oa`。缺输入的负向路径必须证明系统停住且没有产生伪选择状态。
 
@@ -655,9 +655,9 @@ Stage 3/4 的业务语义在两个 runtime 完全一致，只有「谁负责委�
 | `target_files` | no | 仅阶段 1：逗号分隔的 `<教授目录>/套磁目标.json` 绝对路径。从 Stage 0 返回的 transactions 中，取本轮继续处理且 status 为 ok 的记录的 target_state，按现有 target_files 格式原样传入。给出时这些就是本轮的逐教授范围，每次 build/verify 只传其中一份；每位教授的 Stage-1 正式状态只写在自己那份 `<教授目录>/套磁阶段1候选.json`，identity 与当前 target 不一致时 product fail closed，绝不回退程序级聚合或借用别人的状态。 |
 | `named_papers_file` | no | 仅阶段 1：JSON 文件绝对路径，`{"directions": {"<direction_id>": ["<item_key 或精确标题>", ...]}}`，把用户显式点名的论文并入对应方向候选集（`user_named` 理由）。 |
 | `access_mode` | no | 仅阶段 1：caller 从真实用户取得的本轮网络访问决定；显式值严格为 `"oa_only" | "allow_non_oa"`，在 `pdf_fill_needed` 时以同名同值原样转发，缺省则完全省略。`noop` / `needs_resolution` 不消费或校验；非法值在 collector spawn 前结构化 fail closed。 |
-| `paper_analysis` | no | 仅阶段 2，历史保留名称的 relevance / post-analysis scope selector：`relevant`（按现有规则生成相关集：user_note / Stage 1 `user_named` 点名 ∪ 术语/语义匹配，缺省）或 `all`（全部候选视作相关），只定义 gap / future-work 补齐与叙事后处理范围。两种模式下 full `paper-analysis` 都固定覆盖当前教授所有 selected directions 的 `candidate_keys` 去重并集（candidate union），不受 `paper_analysis` 或 `max_relevant_papers` / relevant top-N 截断。相关集 >10 篇且未显式限额时 analyzer 会先问后处理范围；user_note 点名与 Stage 1 `user_named` 仍豁免截断。 |
+| `paper_analysis` | no | 仅阶段 2，历史保留名称的 relevance / post-analysis scope selector：`relevant`（按现有规则生成相关集：user_note / Stage 1 `user_named` 点名 ∪ 术语/语义匹配，缺省）或 `all`（全部候选视作相关），只定义 gap / future-work 补齐与叙事后处理范围。两种模式下 full `paper-analysis` 都固定覆盖当前教授所有 selected directions 的 `candidate_keys` 去重并集（candidate union），不受 `paper_analysis` 或 `max_relevant_papers` / relevant top-N 截断。相关集 >20 篇且未显式限额时 analyzer 会先问后处理范围；user_note 点名与 Stage 1 `user_named` 仍豁免截断。 |
 | `gap_scope` | no | 仅阶段 2：gap 候选池范围（`selected_direction` 缺省）。只从已有有效 sidecar 的论文里选，绝不触发额外提取。 |
-| `freshness_scope` | no | 仅阶段 2：`shortlist`（稳定排序 5–10 条，缺省）/ `full`（候选池全部）。 |
+| `freshness_scope` | no | 仅阶段 2：`shortlist`（稳定排序最多 10 条，缺省；仅限制时效预算，不截断最终 shortlist）/ `full`（候选池全部）。 |
 | `chatgpt_handoff` | no | 仅阶段 2：`continue` / `wait`。交互式完整 workflow 由 caller 在 Stage 2 前问一次；非交互省略固定等价 `continue`。两者都生成同一 bundle。 |
 | `chatgpt_result` | no | 仅阶段 2 resume：外部 result ZIP 的绝对路径。必须与本轮按当前输入重新生成的 current bundle 的 handoff/source/job/hash 完全匹配；`wait` 下不完整结果绝不本地补算。 |
 | `refresh_scope` | no | 仅阶段 3：`flagged`（缺省）/ `selected`（该教授 local `套磁选择.json` 已选方向，由 caller 用 `--selection <教授目录>/套磁选择.json` 显式传入）/ `all`。 |
@@ -709,7 +709,7 @@ Stage 3/4 的业务语义在两个 runtime 完全一致，只有「谁负责委�
 
 - **handoff barrier 是 Stage 2 的固定副作用**：每次有待分析 job 都先生成 ZIP；`continue` 随后按旧路径本地执行，`wait` 在任何新 OCR/逐论文模型调用前返回 `needs_external_result`。resume 先重建 current bundle 再验 result，防止旧 PDF/note/scope 结果被误装。
 - **facts sidecar-first（fulltext 论文机器事实主源）**：本地 PDF full 三件套（`.md`/`.future_work.json`/`.facts.json`）在本地与 ChatGPT handoff 两条路径语义一致——handoff 的 PDF job 也必须带 facts 草稿并经本地 `facts.py finalize` 验证落盘。Stage 2 只复用通过校验（schema/generator/`analysis` 名/`evidence_level`/`input_fingerprint`==当前 PDF sha256/`future_work_ids` 精确 join 当前 future-work sidecar）的 facts，并以规范化 `paper_facts` 进入输入包；校验失败按 `facts_state=failed` fail closed。摘要级/OCR-only/legacy 论文 `facts_state=unavailable`，诚实保持证据等级；**任何路径都绝不为补 facts 触发第二次全文模型 pass**，`.future_work.json` 始终是引用证据的唯一权威。
-- **每阶段独立跑、可中断**：PDF 下载（阶段 1，最慢）可单独丢后台；分析（2）/想法（3）可重复跑（改 profile 后重新生成想法不需要重下 PDF，也**不需要重跑阶段 2**——profile 已移出阶段 2；重跑阶段 2 靠输入包指纹 + `_index.json` 幂等——输入包指纹未变的方向直接复用，`_ocr/` 产物复用，freshness 缓存命中不重判）。阶段 2 的 full `paper-analysis` 固定覆盖当前教授所有 selected directions 的 `candidate_keys` 去重并集（candidate union）：复用有效 full analysis，否则恰好补一次 full pass。`paper_analysis`（默认 `relevant`）与 `max_relevant_papers` / relevant top-N 只影响 gap / future-work 补齐与叙事后处理，不减少 full-analysis 范围或 job 数；相关集 >10 篇且未显式限额时会先问后处理范围。扫描版论文会走逐页 OCR（较久）后再做 paper-analysis。旧产物迁移见「确定性 runner」节 `migrate-v3`。
+- **每阶段独立跑、可中断**：PDF 下载（阶段 1，最慢）可单独丢后台；分析（2）/想法（3）可重复跑（改 profile 后重新生成想法不需要重下 PDF，也**不需要重跑阶段 2**——profile 已移出阶段 2；重跑阶段 2 靠输入包指纹 + `_index.json` 幂等——输入包指纹未变的方向直接复用，`_ocr/` 产物复用，freshness 缓存命中不重判）。阶段 2 的 full `paper-analysis` 固定覆盖当前教授所有 selected directions 的 `candidate_keys` 去重并集（candidate union）：复用有效 full analysis，否则恰好补一次 full pass。`paper_analysis`（默认 `relevant`）与 `max_relevant_papers` / relevant top-N 只影响 gap / future-work 补齐与叙事后处理，不减少 full-analysis 范围或 job 数；相关集 >20 篇且未显式限额时会先问后处理范围。扫描版论文会走逐页 OCR（较久）后再做 paper-analysis。旧产物迁移见「确定性 runner」节 `migrate-v3`。
 - **Zotero 在线要求按阶段区分**：Stage 0 与 Stage 1 的候选构建全本地（读 `方向预筛.json`/`套磁目标.json`/`papers.json`，写 `套磁阶段1候选.json`），不需要 Zotero；阶段 1 的定向补下与阶段 2 的读元数据/摘要/附件才需要 Zotero 在线，离线时 agent 会提示打开 Zotero。阶段 2 的 preflight `reuse_all` 教授完全不需要 Zotero 在线——accepted state 完整且本地指纹未变时，即使 Zotero 未打开也可安全复用并继续阶段 3。
 - **排序依赖**：Stage 0 只能在 professor-topic-clustering(`preview:true`) 产出 normalized `方向预筛.json` 之后跑；被选方向成员身份变化（成员 `item_key` 集合变化或方向消失）→ 阶段 1/2 以 `needs_refresh` 停止，须回 Stage 0 修订选择；未选方向、display 元数据或置信度变化不阻断。阶段 2 前置顺序 = 用该教授 `<教授目录>/套磁目标.json` 作为 `--target-file`，Stage 1 快照存在且 `contact_stage1.py verify --target-file` 通过（快照缺失/过期 → `needs_input` 重跑 Stage 1）→ 逐教授 `stage2-preflight --target-file`（`reuse_all` 教授在 Zotero probe 之前 no-op 结束），分析范围取逐方向 `candidate_keys`。阶段 2 依赖阶段 1 候选集的 PDF 尽量全（有 PDF 的论文走全文深度分析；扫描版才触发 OCR；摘要缺失时仍可用 abstractNote 分析，PDF 只是增强）；候选集中暂时 `no_env`/`failed` 的论文按摘要参与分析，换网络后重跑 Stage 1 只补缺失候选。
 - **诚实**：分析/想法严格基于论文实际内容与 profile；想法候选是「贴合论文方向的候选」，是否真实符合你想法由你在阶段 4 挑选决定（平衡原则）；阶段 5 邮件绝不编造 profile 之外的信息。

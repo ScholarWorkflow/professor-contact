@@ -33,7 +33,6 @@ def build(*, fail,
           direction_papers,
           direction_relevant_keys,
           direction_provisional_member_keys,
-          shortlist_size,
           Stage2Context,
           Stage2PackRefineContext):
     def validate_freshness_results(ctx: Stage2Context, results_dir: Path,
@@ -567,24 +566,10 @@ def build(*, fail,
                     "cache_hit": bool(record.get("cache_hit")),
                     "downgraded": bool(record.get("downgraded"))})
             anchorable.append(entry)
-        size = shortlist_size(len(anchorable))
-        shortlist = anchorable[:size]
-        shortlist_ids = {g["gap_id"] for g in shortlist}
-        excluded, number = [], len(shortlist)
-        for gap in anchorable[size:]:
-            number += 1
-            excluded.append({
-                "gap_id": gap["gap_id"], "item_key": gap["item_key"],
-                "paper_title": gap.get("paper_title"), "paper_year": gap.get("paper_year"),
-                "authorship": gap.get("authorship"), "quote": gap.get("quote"),
-                "translation_zh": gap.get("translation_zh"), "source": gap.get("source"),
-                "page": gap.get("page"), "status": gap.get("status"),
-                "evidence": gap.get("evidence"), "confidence": gap.get("confidence"),
-                "completed_part": gap.get("completed_part"),
-                "remaining_gap": gap.get("remaining_gap"),
-                "candidate_paper_ids": gap.get("candidate_paper_ids") or [],
-                "quote_trunc": truncate(gap["quote"], 80),
-                "reason": "low_rank（本轮未选，不代表不重要）"})
+        # Freshness has a bounded default budget; display does not. Unchecked
+        # gaps remain explicitly unknown rather than disappearing by rank.
+        shortlist = anchorable
+        excluded = []  # Retained for consumers of previously accepted packs.
         # R1: authoritative membership starts from the ORIGINAL provisional members
         # only. `relevant_keys` is the analysis reference scope (P citations,
         # future work, gaps) and can never add a member; accepted add/remove

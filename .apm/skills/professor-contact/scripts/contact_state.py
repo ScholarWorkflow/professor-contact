@@ -500,8 +500,7 @@ STAGE1_STATE_SCHEMA_VERSION = 2
 STAGE1_STATE_KIND = "professor-contact-stage1"
 FACTS_TEXT_FIELDS = ("research_problem", "research_object", "approach")
 FACTS_LIST_FIELDS = ("findings", "contributions", "topic_terms", "limitations")
-SHORTLIST_MAX = 10
-SHORTLIST_FLOOR = 5
+DEFAULT_FRESHNESS_BUDGET = 10
 QUOTE_INPUT_CHARS = 300
 TRANSLATION_INPUT_CHARS = 200
 ABSTRACT_INPUT_CHARS = 400
@@ -664,8 +663,7 @@ _stage2_facts = _stage2_facts_module.build(
     FACTS_KIND=FACTS_KIND,
     FACTS_TEXT_FIELDS=FACTS_TEXT_FIELDS,
     FACTS_LIST_FIELDS=FACTS_LIST_FIELDS,
-    SHORTLIST_MAX=SHORTLIST_MAX,
-    SHORTLIST_FLOOR=SHORTLIST_FLOOR,
+    DEFAULT_FRESHNESS_BUDGET=DEFAULT_FRESHNESS_BUDGET,
     EXT_EVIDENCE_RE=EXT_EVIDENCE_RE,
     PLACEHOLDER_RE=PLACEHOLDER_RE,
     SIDECAR_EXTRACTOR_VERSIONS=SIDECAR_EXTRACTOR_VERSIONS,
@@ -695,7 +693,6 @@ load_facts_sidecar = _stage2_facts.load_facts_sidecar
 compute_version_families = _stage2_facts.compute_version_families
 score_gap = _stage2_facts.score_gap
 rank_gaps = _stage2_facts.rank_gaps
-shortlist_size = _stage2_facts.shortlist_size
 is_later_or_same_unknown = _stage2_facts.is_later_or_same_unknown
 gap_related = _stage2_facts.gap_related
 freshness_candidates = _stage2_facts.freshness_candidates
@@ -860,7 +857,7 @@ _stage2_preflight = _stage2_preflight_module.build(
     consumed_sources=consumed_sources,
     canonical_index_path=canonical_index_path,
     INPUT_PACK=INPUT_PACK, GAP_SCOPES=GAP_SCOPES, FRESHNESS_SCOPES=FRESHNESS_SCOPES,
-    ANALYSIS_MD=ANALYSIS_MD, MANAGED_BY=MANAGED_BY, SHORTLIST_MAX=SHORTLIST_MAX,
+    ANALYSIS_MD=ANALYSIS_MD, MANAGED_BY=MANAGED_BY, DEFAULT_FRESHNESS_BUDGET=DEFAULT_FRESHNESS_BUDGET,
     FRESHNESS_CACHE=FRESHNESS_CACHE,
     ABSTRACT_INPUT_CHARS=ABSTRACT_INPUT_CHARS, QUOTE_INPUT_CHARS=QUOTE_INPUT_CHARS,
     TRANSLATION_INPUT_CHARS=TRANSLATION_INPUT_CHARS)
@@ -932,7 +929,6 @@ _stage2_render = _stage2_render_module.build(
     direction_papers=direction_papers,
     direction_relevant_keys=direction_relevant_keys,
     direction_provisional_member_keys=direction_provisional_member_keys,
-    shortlist_size=shortlist_size,
     Stage2Context=Stage2Context,
     Stage2PackRefineContext=Stage2PackRefineContext
 )

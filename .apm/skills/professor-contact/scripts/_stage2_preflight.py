@@ -71,7 +71,9 @@ STAGE2_U1_DISPLAY_VERSION = 4
 # they must be rebuilt (membership re-derived from the current facts) instead
 # of reused; preflight therefore misses them and their old validator record no
 # longer certifies the rebuilt body.
-STAGE2_RESOLUTION_SEMANTICS_VERSION = 3
+# v4 separates the freshness budget from final gap visibility. Old truncated
+# output is rebuilt from current facts while accepted model work is retained.
+STAGE2_RESOLUTION_SEMANTICS_VERSION = 4
 
 STAGE2_TARGET_FILE_NAME = "套磁目标.json"
 
@@ -93,7 +95,7 @@ def build(*, fail, soft_exit, emit, read_json_file, atomic_json, sha256_obj, sha
           observed_level_projection, consumed_sources, canonical_index_path,
           freeze_stage2_sources, observe_stage2_sources,
           INPUT_PACK, FRESHNESS_CACHE, GAP_SCOPES, FRESHNESS_SCOPES, ANALYSIS_MD, MANAGED_BY,
-          SHORTLIST_MAX, ABSTRACT_INPUT_CHARS, QUOTE_INPUT_CHARS,
+          DEFAULT_FRESHNESS_BUDGET, ABSTRACT_INPUT_CHARS, QUOTE_INPUT_CHARS,
           TRANSLATION_INPUT_CHARS):
     def stage2_preflight_versions() -> dict:
         """Semantic identity of the Stage 2 resolution implementation.
@@ -1470,7 +1472,7 @@ def build(*, fail, soft_exit, emit, read_json_file, atomic_json, sha256_obj, sha
                 "direction_id": p["did"], "action": "reuse" if p["reuse"] else "process",
                 "gap_pool": len(p["pool"]),
                 "judge_count": len(ctx.judge_set(p)) if not p["reuse"] else 0,
-                "reason_code": ("shortlist_over_limit" if len(p["ranked"]) > SHORTLIST_MAX and
+                "reason_code": ("shortlist_over_limit" if len(p["ranked"]) > DEFAULT_FRESHNESS_BUDGET and
                                 ctx.freshness_scope == "shortlist" else None),
             } for p in ctx.direction_plans],
             "jobs": jobs,

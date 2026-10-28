@@ -71,7 +71,7 @@ OpenCode 深度预算的精确边界：**「不得继续加深」从 `paper-anal
   若给定：Step 2 对名单内每位教授各解析一次其 `<教授目录>/套磁目标.json`；名单中某教授没有 local target（未被 Stage 0 选入）→ resolver 返回 `professor_not_selected`/`missing_target_state`（needs_input）；名单外教授的文件与 Zotero 分类一律不读。
 - `gap_scope` (optional) — gap 候选池范围：`relevant`（仅当前相关论文集中已有有效 sidecar 的）/ `selected_direction`（当前标记方向成员中已有有效 sidecar 的，缺省）/ `all`（教授全库中已有有效 sidecar 的）。**只决定从哪些已有 sidecar 的论文里选 gap，绝不触发额外 gap 提取**（sidecar 补齐仍只按 6.5 的 sidecar-first 链走）。
 - `paper_analysis` (optional) — 历史保留名称的 relevance / post-analysis scope selector：`relevant`（按 Step 5.2 的现有规则生成相关集，缺省）/ `all`（全部候选视作相关）。只定义 gap / future-work 补齐与叙事后处理范围；两种模式下 full `paper-analysis` 都固定覆盖当前教授所有 selected directions 的 `candidate_keys` 去重并集（candidate union），不得被本参数截断。每个 unique candidate 复用有效 full analysis，否则恰好补一次 full pass。与 `gap_scope` 正交：相关集控制后处理补齐范围，`gap_scope` 控制「从哪些已有 sidecar 的论文选 gap」。
-- `freshness_scope` (optional) — 时效判断范围：`shortlist`（只判断 runner 稳定排序后的 5–10 条，缺省）/ `full`（候选池全部 gap）。两项可单独显式扩大。
+- `freshness_scope` (optional) — 时效判断范围：`shortlist`（只判断 runner 稳定排序后的最多 10 条，缺省；这是时效预算而非最终 shortlist 上限）/ `full`（候选池全部 gap）。两项可单独显式扩大。
 - `max_relevant_papers` (optional) — 对每个被标记方向，只限制进入 gap / future-work 补齐与叙事后处理的非点名相关论文数，不限制 candidate union 的 full-analysis job 数。仅用于显式小批、benchmark 或用户主动限额；缺省保留原成本门行为。user_note 点名与 Stage 1 `user_named` 论文永不因该值被截断。
 - `chatgpt_handoff` (optional) — `continue|wait`。完整交互式 workflow 的 caller 必须在进入本 agent 前问一次并显式传入；本 agent **绝不在 handoff 点二次询问**。字段缺失按非交互/向后兼容语义固定为 `continue`。
 - `chatgpt_result` (optional) — resume 时外部 result ZIP 绝对路径。不要接受外部 `_index.json`/`.future_work.json`/`套磁候选输入.json`。本轮会先按**当前** scope/carrier/source 重新 build current bundle，再把此 result 对 current bundle 做严格 import；旧输入自动 stale。
@@ -269,7 +269,7 @@ For each flagged direction:
 
 3. **幂等检查（范围 = 全教授被选方向 candidate_keys 的去重并集，不是相关集）**：读 `<教授文件夹>/论文分析/_index.json`。`papers[item_key]` 已存在且其分析文件仍在 → 跳过（不重跑）。**例外（重跑全文级）**：index 记录的 `level: abstract`（当时无 PDF）而本次 `pdf_available` → 重跑为全文级。`paper_analysis=all` 只影响新判定阶段，不强制重跑已完成的。
 
-4. **成本门（只截断相关集，绝不截断 candidate union 的 full analysis）**：若显式 `max_relevant_papers=N`，按 5.2 ①″ 的排序仅保留前 N 篇非点名相关论文，并保留全部 user_note 点名与 Stage 1 `user_named` 论文；记录 `scope_limited:true` 与被截断标题，不问用户。否则本方向相关集 >10 篇 → `question` 确认「相关证据集共有 N 篇：全部纳入 gap/叙事后处理 / 仅排序前 10 进入 gap/叙事后处理；无论选择哪项，candidate union 内缺失/stale 的 full `paper-analysis` 仍照常补齐（按去重后实际需补 M 篇估算，约 4M 次代理调用，扫描 PDF 的 OCR 耗时另计）」；user_note 点名与 Stage 1 `user_named` 论文仍豁免截断。被成本门截掉的论文**仍然**进入 Step 5 的 full-analysis scope（issue #7 要求每个 unique candidate 一次 full analysis）；截断只影响 6.5 的 future-work 补齐与 Step 6 的 gap/narrative 范围。**成本门完成后 scope 才能进入 handoff fingerprint。**
+4. **成本门（只截断相关集，绝不截断 candidate union 的 full analysis）**：若显式 `max_relevant_papers=N`，按 5.2 ①″ 的排序仅保留前 N 篇非点名相关论文，并保留全部 user_note 点名与 Stage 1 `user_named` 论文；记录 `scope_limited:true` 与被截断标题，不问用户。否则本方向相关集不超过 20 篇时全部纳入 gap/叙事后处理；相关集 >20 篇 → `question` 确认「相关证据集共有 N 篇：全部纳入 gap/叙事后处理 / 仅排序前 20 进入 gap/叙事后处理；无论选择哪项，candidate union 内缺失/stale 的 full `paper-analysis` 仍照常补齐（按去重后实际需补 M 篇估算，约 4M 次代理调用，扫描 PDF 的 OCR 耗时另计）」；user_note 点名与 Stage 1 `user_named` 论文仍豁免截断。被成本门截掉的论文**仍然**进入 Step 5 的 full-analysis scope（issue #7 要求每个 unique candidate 一次 full analysis）；截断只影响 6.5 的 future-work 补齐与 Step 6 的 gap/narrative 范围。**成本门完成后 scope 才能进入 handoff fingerprint。**
 
 4.5 **Stage-2 ChatGPT handoff barrier（每教授一次；纯确定性）**：完成该教授所有方向的 1–4 后再执行本节。
 
@@ -601,13 +601,15 @@ runner 校验：result schema/kind 正确、**`collection_key`/`provisional_dire
 
 runner 校验全部 result JSON（gap ID ∈ 待判集、candidate_paper_ids ⊆ 候选清单、partial 缺 completed_part/remaining_gap 自动降级 unknown 并标记 `downgraded`、narrative refs 与占位符一致），fail-closed 校验 `_resolved_directions.json`（schema/kind/professor、逐方向 resolve fingerprint、acceptance 全 accepted、preflight proof 绑定），应用方向归属修正（移除/新增/重命名；split 创建真正的第二方向条目、merge 移除源方向并移植引用），**每个方向（含 unchanged）都写入 `resolved_direction` 子字段**（权威 resolved ID），然后原子写：
 
-- `<教授文件夹>/套磁候选输入.json` — 阶段 3 唯一事实源（按方向的支撑论文、shortlist 5–10 条 gap 全量证据、排除清单+原因、done_by_self 黑名单、版本关系、红线、user_note、narrative、输入指纹）。
+- `<教授文件夹>/套磁候选输入.json` — 阶段 3 唯一事实源（按方向的支撑论文、shortlist 全部合格 gap 的全量证据（不按数量截断）、排除清单+原因、done_by_self 黑名单、版本关系、红线、user_note、narrative、输入指纹）。
 - `<教授文件夹>/论文分析/_freshness_cache.json` — 逐 gap 缓存（gap_fingerprint + candidate_fingerprint；后续论文元数据/摘要/PDF/分析、sidecar、gap 原文、版本关系、署名线任一变化只使受影响 gap 失效；无 TTL；force=true 全失效）。
 - `<教授文件夹>/套磁候选分析.md` — runner 确定性渲染：frontmatter（`managed_by: contact_state` + state_fingerprint + render_sha256）、全局须知、方向定位（叙事 + 占位符渲染成 zotero 链接/《缩写》）、论文一览表、**「用户笔记（原文）」**（有 note 逐字投影，无则写「仅打标记，未写用户笔记」）、可延伸方向（每条 gap 折叠 freshness 卡：作者原话/中译/页码/状态/后续依据/置信度/unknown 与 partial 提示）、「已被本人实现（禁锚）」小节、排除清单注「本轮未选，不代表不重要」。
 
 **6.4 needs_decision 处理**：目标 md 被人手改过（body sha ≠ 状态记录）→ runner 返回 `needs_decision / manual_markdown_changed`，**不覆盖**。用 `question` 问用户：`覆盖为状态版本（--decision-file {"decision":"overwrite"}）` / `保留手改不作为流程输入（本轮跳过该方向渲染）` / `把要保留的内容正式写进 selection.note 或 profile 后再渲染`。未决定 → 保持旧产物并返回 `needs_input`。
 
-**失败处理**：runner 返回 `error`（result 缺失/非法、引用包外 ID 等）→ 保留上一份已验收状态与 Markdown，返回 `partial/error` + reason_code（`result_missing` / `invalid_result_json` / `unknown_reference_id` / `blacklisted_gap_anchor` / `manual_markdown_changed` / `shortlist_over_limit` 等），**不手写 Markdown 兜底**。
+`shortlist_over_limit` 是 `status=ok` 的兼容提示：默认时效预算外仍有 gap，不是错误、最终数量上限或必须再次询问用户的条件。未判断项仍以 unknown/unverified 事实边界进入后续。
+
+**失败处理**：runner 返回 `error`（result 缺失/非法、引用包外 ID 等）→ 保留上一份已验收状态与 Markdown，返回 `partial/error` + reason_code（`result_missing` / `invalid_result_json` / `unknown_reference_id` / `blacklisted_gap_anchor` / `manual_markdown_changed` 等），**不手写 Markdown 兜底**。
 **唯一例外——`unknown_reference_id` 修复轮**：首次 finalize 只有以该明确原因拒绝时，runner 才登记一次修复资格。保留 revision=0 的完整结果和失败输出，在本事务目录 `repair-1` 子目录复制原完整结果集合；重新读取同一保存计划的 ID，仅机械修复这次被拒的引用编号及对应 refs/占位符，不改变判断、叙事含义、其他方向或来源。运行 `stage2-consumption-seal-results --run-dir <同一事务目录> --results-dir <repair-1> --repair-revision 1` 追加封存 revision=1，再以该目录重跑一次 finalize。原失败版本不可覆盖；没有修复资格、来源/facts/输入变化、一般非法结果改写或第三版结果均停止，不重新绑定旧结果。修复后仍失败则如实返回原错误路径。
 
 ### Step 6.5 — 白话校验循环（professor-contact-style-validator）
