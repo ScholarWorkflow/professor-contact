@@ -18,7 +18,7 @@
 | T4 更新素材后重冻、重新生成且只刷新相关邮件 | 通过（1 项） | `test_t4_answer_update_requires_a_stage4_refreeze` OK |
 | T5 新旧包兼容与素材被移走 | 通过（2 项） | `test_t5_pack_without_materials_keeps_old_behavior`、`test_t5_removed_material_is_a_slice_change` OK |
 | T6 保存入口防错归属/覆盖 | 通过（1 项） | `test_t6_save_rejects_foreign_binding_and_stale_digest` OK |
-| 全部 8 项 | 通过 | 首轮 `1a60113`：`Ran 8 tests in 31.283s`，`OK`，退出码 0；修正 `1084a40` 后复跑：`Ran 8 tests in 22.456s`，`OK`，退出码 0 |
+| 全部 8 项 | 通过 | 首轮 `1a60113`：`Ran 8 tests in 31.283s`，`OK`，退出码 0；修正 `1084a40` 后复跑：`Ran 8 tests in 22.456s`，`OK`，退出码 0；追加保存修正 `23324f65` 后复跑：`Ran 8 tests in 45.001s`，`OK`，退出码 0 |
 
 ## 执行命令与结果
 
@@ -88,6 +88,17 @@ PROBE
 
 最终定向复核（基线 `112a22d`）结论：**完整（仅实现符合性）**。F1-R1、F1-R2、F2-R1 关闭，F3/F4 的先前关闭不受影响；未发现新的直接行为偏差，只有三条不影响结论的可选措辞清理，未因此改动测试或产品。该结论不是 Gate2/Gate3 或合并批准。
 
+## 合并审核更正：新回答追加保存（2026-10-28）
+
+- 依据：PR 合并审核更正评论（2026-10-28T06:21:03Z）。保留一项 `IMPLEMENTATION_DEFECT`：同一方向的多条新回答被调用方拆成多条新增记录时，第二条可能被引导去覆盖第一条；撤回“更新必须强制提供旧摘要”和“Stage4 素材锁必须持有至邮件包提交”两项并发阻断（用户已确认同一教授无并发场景；锁可保留但不作为合并条件）。M1 PASS；M2/M3 `NEEDS_MODIFICATION`；合并结论 `NOT_READY`。
+- 修正 `23324f65`（`fix: append new direction answers instead of overwriting`）：
+  - selection Step 2.5.5 改为“新增回答默认追加：不传 `material_id`；该方向尚无素材时传 `--expect-missing`，已有素材时省略并直接追加；只有用户明确要求修正某条既有回答时才传 `material_id`”；
+  - `materials_already_exists` 不再引导更新已有条目：重读后按新增路径追加，绝不自动挑已有 `material_id` 覆盖；
+  - selection 的 `materials` 输入、SKILL Stage 4 caller contract 与保存入口错误信息同步；
+  - 不新增并发支持、不强制旧摘要、不把锁持有至提交作为要求；现有文件锁保留为防御性实现，不声称支持同一教授并发。
+- 复验：`23324f65` 上按 TP1.5 §2 复跑 8 项，`Ran 8 tests in 45.001s`、`OK`、退出码 0（`RUN=/tmp/contact-direction-materials.eT25p1`）；selection/Stage5 合同批 `Ran 148 tests in 58.781s`、`OK`。追加/修正定向自检：同一方向第二次新增得到不同 `material_id`，两条原回答都保留；显式修正只改指定条目，另一条不变。
+- 状态：等待测试审核者按受影响必测项判断与合并审核复查；本记录不声称 M2/M3 已关闭。
+
 ## T1 合同位置（供独立 reviewer 静态核对）
 
 本角色不执行 T1 的人工静态阅读，也未把阅读结论写成自动断言。实现后的合同位置如下，供独立 reviewer 按 TP1.5 T1 的观察点逐项核对：
@@ -112,4 +123,5 @@ PROBE
 - Gate2：TP1.5 的 T5 定向复核与 recipe 范围审核仍待独立 reviewer；本记录不声称 Gate2 通过。
 - Gate3：T2–T6 已给出当前版本的实际结果；T1 未执行，需独立 reviewer 完成静态阅读后才能形成必测清单的完整结论。本记录不自授 Gate3 或合并许可。
 - 实现符合性审核：首审“部分完成”（F1–F4，修正 `1084a40`）；定向复核确认 F3/F4 关闭、F1/F2 有残余（F1-R1/F1-R2/F2-R1），已在 `a1ac428`/`181b356` 处理；最终定向复核结论“完整（仅实现符合性）”。该结论不是计划/测试关口或合并批准。
-- 下一负责人：独立 reviewer（T1 静态阅读、Gate2 定向复核、采用本记录给出 Gate3）；随后由 merge reviewer 按 `Merge Reviewer Rule.md` 处理。
+- 合并审核：M1 PASS；M2/M3 因“同方向多条新回答可能被当作更新而覆盖”为 `NEEDS_MODIFICATION`，已在 `23324f65` 修正；等待测试审核者复验与合并审核复查，本记录不声称 `NOT_READY` 已解除。
+- 下一负责人：测试审核者按合并审核的受影响范围复验追加保存修正；随后 merge reviewer 复查该修正和直接影响。
