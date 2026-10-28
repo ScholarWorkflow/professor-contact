@@ -1,8 +1,8 @@
 # 方向真实素材：测试计划
 
-- Test plan revision: TP1.5；2026-10-28；对应 [EP1.2/R1](execution-plan.md)。
+- Test plan revision: TP1.6；2026-10-28；对应 [EP1.2/R1](execution-plan.md)。
 - Target repository baseline: ScholarWorkflow/professor-contact `b67dd3ca4d29dfc78f57988564b219c71b582674`。
-- Proposed review status: pending。测试资产与可执行 recipe 已按本计划准备；产品新能力尚未实现，T1–T6 全部未执行，不声明 PASS。原 TP1.1 的无关必测项结论可复用；T4 已按验收决定人的本轮精简改写；T5 旧包夹具已按第二关意见改为还原旧字段结构与旧版 `source_hash`。第二关仅待定向复核 T5；第三关未执行。
+- Proposed review status: pending。测试资产与可执行 recipe 已按本计划准备；产品能力已实现，T2–T6 的 8 项自动用例的实际结果见 [test-execution-2026-10-28.md](test-execution-2026-10-28.md)，T1 为人工静态阅读、由独立 reviewer 核对。本文件只记录目标与步骤，不自行声明任何关口通过或 PASS。原 TP1.1 的无关必测项结论可复用；T4 已按验收决定人的本轮精简改写；T5 旧包夹具已按第二关意见改为还原旧字段结构与旧版 `source_hash`；TP1.6 按第二关意见删除 T6 的并发/锁审查义务，待定向复核该处。
 - 本文件是唯一完整测试计划与步骤承载位置，不另建问卷评估、采集器、判定器或证据账本。
 
 ## 1. 唯一必测清单（验收上限）
@@ -14,13 +14,13 @@
 | T3 精确来源贯通并拒绝不存在的素材引用 | 正常冻结包与合法三项model JSON，其中①引用方向A的一条素材；再将来源换为未冻结/其他方向素材ID | plan含该原回答；生成/validator使用同一冻结字段；合法引用被接纳并显示准确来源；非法引用拒绝且已有邮件不改；③仍须gap，不能用素材代替 | 扩展现有Stage5 immutable测试路径的定向方法，通过plan→finalize及必要现有validator合同人工核对；用合成模型JSON测输入合同，不冒充真实模型体验 |
 | T4 素材更新后重新生成且仅刷新相关邮件 | 邮件A已冻结；修改A回答后用未更新的旧包尝试plan/finalize；经Stage4重新冻结，再用新包运行Stage5计划、构造本轮合成模型结果与草稿并完成邮件；另改未选方向B | 未刷新的旧包提示needs_refresh且不覆盖已有邮件；Stage4的新包与Stage5的model_input包含更新后的原回答，A的source_hash随之改变；本轮结果和草稿可完成新邮件；无关B不改变A的source_hash；profile/Stage3不写不重跑 | 沿用同一个隔离producer集成测试序列，通过Stage4→stage5-plan→本轮合成结果→草稿→finalize检查新输入与输出。生成器重新取本轮输入的工作约定在T1既有静态阅读中检查，不新增真实模型测试或旧模型结果指纹拒绝用例 |
 | T5 新旧包的直接兼容 | 旧包无素材字段且相应live素材为空；随后给其方向新增素材；新包原有素材文件被移走 | 无素材旧包保持原行为，无全量重生；新增素材后旧包须Stage4冻结；新包失去原素材被识别变化，不继续引用；现有邮件不批量改写 | 同一Stage5定向测试入口，用合成旧包与临时目录直接验证上述条件，不扩历史全版本迁移 |
-| T6 新保存入口防错归属/覆盖 | 保存输入绑定另一方向/教授或旧摘要；已有素材文件不可解析 | 明确拒绝该次写入、原数据不变，不把坏文件当空库覆盖；同名方向不能跨教授自动认同。此项不穷举路径/锁故障；互斥设计按源码审查确认 | 新保存入口的定向unittest负向场景；原文件内容和返回值足够，不另造并发压力/崩溃测试框架 |
+| T6 新保存入口防错归属/覆盖 | 保存输入绑定另一方向/教授或旧摘要；已有素材文件不可解析 | 明确拒绝该次写入、原数据不变，不把坏文件当空库覆盖；同名方向不能跨教授自动认同。此项不穷举路径/锁故障，也不要求并发或锁的审查与测试 | 新保存入口的定向unittest负向场景；原文件内容和返回值足够，不另造并发压力/崩溃测试框架 |
 
 T1规则观察不是模型行为实测；T2–T6合成数据验证正式产品入口的确定性行为，不用手工补写email-pack替代被测冻结。仅兼容输入T5可以准备旧格式夹具。fixture/model JSON是明确测试输入，不替代产品传递原回答。
 
 ## 2. 可执行 recipe（本轮已准备；实现落地后执行）
 
-本节是可执行的唯一 recipe。测试代码已按本表写好；产品入口尚未实现，因此本轮只记录未执行，不代表第二关或第三关通过。
+本节是可执行的唯一 recipe。测试代码已按本表写好；产品入口已实现，按本表运行的实际结果见 [test-execution-2026-10-28.md](test-execution-2026-10-28.md)。本表本身不代表第二关或第三关通过。
 
 | 项目 | 本轮固定值 |
 | --- | --- |
@@ -103,7 +103,7 @@ PROBE
 - 准备时 PR head：`37dc2b92a2145ad8dfcd4edd5aa9ca6692e60934`（仅计划，无产品实现）。
 - 交付资产：
   - `.apm/skills/professor-contact/tests/test_direction_materials.py`：T2–T6 共 8 项，复用 `test_contact_state.py` 的 `BaseEnv`/`run_cli`、`_stage5_issue59_test_support.py` 的证据与核验写入器、`_stage4_handoff_test_support.py` 的行读取器；不新增运行平台。
-  - `plan/test-grouping/shards.json`：模块登记到 shard3，stage 记为 `mixed:stage4+stage5`，`seconds` 记实测 22.7s（同一跳过路径测两次：20.4s／25.0s），`tests` 记 8，`signals` 按文档规则记 stage3 3、stage4 3、stage5 6（CLI 子命令字符串权重 3）；分片与全库合计按清单逐项求和（发布前已并入 main 的 PR145 模块一并计入）后为 86 个模块、1149 项用例、468.7s（三个原先缺 `tests` 字段的模块已按其 `unittest` 收集数补齐 8／8／8）；各分片的 `stages` 也改为按 `stage` 字段逐模块计数，使 README 的“模块数”与“阶段构成”两列一致。`python3 scripts/check_test_shards.py` 返回 `OK: 85 test modules across 4 shards, each with a stage`。
+  - `plan/test-grouping/shards.json`：模块登记到 shard3，stage 记为 `mixed:stage4+stage5`，`seconds` 记实测 22.7s（同一跳过路径测两次：20.4s／25.0s），`tests` 记 8，`signals` 按文档规则记 stage3 3、stage4 3、stage5 6（CLI 子命令字符串权重 3）；分片与全库合计按清单逐项求和（发布前已并入 main 的 PR145 模块一并计入）后为 86 个模块、1149 项用例、468.7s（三个原先缺 `tests` 字段的模块已按其 `unittest` 收集数补齐 8／8／8）；各分片的 `stages` 也改为按 `stage` 字段逐模块计数，使 README 的“模块数”与“阶段构成”两列一致。当时 `python3 scripts/check_test_shards.py` 返回 `OK: 85 test modules across 4 shards, each with a stage`（之后并入 main 的新模块会改变该数，以当前清单为准）。
   - `plan/test-grouping/README.md`：按清单重新生成分片统计与逐模块表（85 行），并注明基线 `6e624e0` 的 1025 项／416.0s 实测未随新模块重算。
 - 有限预检（临时目录 `/tmp/pr149-prep-20261027`，未执行必测用例的断言）：
   - 解释器可用（Python 3.14.7）；模块 `py_compile` 通过，`unittest` 收集到 8 项。
@@ -114,22 +114,26 @@ PROBE
   - 当前 runner 没有 `direction-materials-save` 子命令（符合实现前状态）；以未实现入口运行模块，8 项全部 `skipped`（`OK (skipped=8)`），记为未执行。
   - 按 §2 第 1 步的探测脚本实跑，`save-entry-present.txt` 输出 `False`，与上一条一致。
   - TP1.5 追加预检（`/tmp/pr149-prep-20261027/probe_legacy.py`，只检查夹具形状，不执行 T5 断言）：`legacy_pack()` 产出的行不含 `direction_materials`、不含 `direction_material:` 来源 ID，其 `source_hash` 等于按 `b67dd3c` 旧规则重算的结果，且与“把素材字段计入摘要”的新规则结果不同；把该旧包写回后 `stage5-plan` 返回 `ok`，`model_input` 不含 `direction_materials`。
-- 未完成：第二关（本 recipe 的独立审核）、第三关（正式结果）；产品实现由实现负责人完成。下一负责人：独立 reviewer 确认第二关，再由本地执行工程师按本 recipe 运行。
+- 本节记录的是 2026-10-27 准备时的状态与数字；分片计数以当前 `plan/test-grouping/shards.json` 为准。
+- 后续进展：产品实现已落地，T2–T6 的 8 项已按 §2 运行，结果见 [test-execution-2026-10-28.md](test-execution-2026-10-28.md)；T1 由独立 reviewer 静态核对。
+- 未完成：第二关的定向复核（T5 旧包夹具、T6 并发/锁义务两处修订）。下一负责人：独立 reviewer 定向复核这两处并给第二关结论。
 
 ## 3. 结果复用与范围控制
 
 - 已合并 [PR148 TP1](../contact-email-natural/test-plan.md) 记录旧三部分规则/旧四项拒绝、模板与用户选择保护及既有结果。它不证明本次新素材功能；若相关实现未改，可由reviewer确认适用部分复用，不因为文档SHA变化重跑53项或全仓回归。
 - 新素材冻结、source_map 和邮件输入 `source_hash` 的变化直接影响 T3–T5，必须得到针对新行为的有效证据；旧结果不能代替。相同目标不重复安排单元、集成及真实模型的同义测试。
 - 仓库CI按既有配置自动触发可记录，不手动扩大本计划为全仓测试或修改CI分组设计。不因测试数、文件数新增门槛。
-- 不要求安装重验、真实模型文风评分、完整套磁业务、来源过程/执行身份认证、跨教授自动匹配或并发压力矩阵。发现清单外问题报告事实与影响，不擅自扩大。
+- 不要求安装重验、真实模型文风评分、完整套磁业务、来源过程/执行身份认证、跨教授自动匹配或并发压力矩阵；也不把锁/互斥设计列为审查或测试对象（同一教授并发修改已由范围澄清排除）。发现清单外问题报告事实与影响，不擅自扩大。
 
 ## 4. 失败、重试与关口
 
 正式测试失败保留该次输出：明确产品偏离交实现负责人；recipe/环境错误记无法判断并停受影响项；未实现/没运行记未执行。按修订影响只重做受影响项，未受影响结果可复用。
 本范围无外部服务采样，不安排自动重试。命令/环境失效时停止，确认原因并补齐步骤后再一次执行受影响项；业务失败不得通过换输入、放宽断言或重复采样求通过，原失败不得覆盖。
-Gate1/设计由独立审核记录给结论；Gate2待独立 reviewer 审核本 recipe 的可执行性与范围；Gate3待有效结果。产品实施与正式执行均非本 PR 交付，本轮不声明可合并或已完成产品。
+Gate1/设计由独立审核记录给结论；Gate2 由独立 reviewer 审核本 recipe 的可执行性与范围；Gate3 的实际结果记录在 [test-execution-2026-10-28.md](test-execution-2026-10-28.md)，其结论同样由独立 reviewer 给出。本文件不自行声明任何关口通过或可合并。
 
 ## 修订记录
+
+TP1.6（2026-10-28，按第二关审核意见）：从 T6 预期结果删除“互斥设计按源码审查确认”，并把该行末尾改为“不要求并发或锁的审查与测试”，与已确认的范围澄清一致；§3 同步注明锁/互斥不列为审查或测试对象。T6 的归属校验、陈旧摘要拒绝、损坏文件保护与既有 8 项测试方法全部保留，未新增或删除用例，不重跑既有结果；TP1.6 未改 §2 的 recipe、8 个测试方法或输入，已在 TP1.5 上得到的 8/8 结果继续适用。第二关仅待定向复核 T6 这一处。测试模块 docstring 仍标 TP1.5，因为 TP1.6 未改测试代码，模块内容与 TP1.5 交付时逐字相同。
 
 TP1.5（2026-10-28，按第二关审核意见）：T5 的旧包夹具改为同时还原旧字段结构和旧版 `source_hash`——按 `b67dd3c` 的 `EMAIL_SOURCE_HASH_FIELDS` 重算，并删除 `direction_material:` 来源 ID；recipe 第 5 项同步写明规则与断言。只改 T5 测试数据与 recipe，未改必测目标、其它用例或产品需求；第二关仅需定向复核 T5。
 
