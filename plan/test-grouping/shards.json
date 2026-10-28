@@ -9,9 +9,9 @@
   "non-stage": "文档/工具/夹具类测试，不驱动某个阶段的运行时入口"
  },
  "totals": {
-  "modules": 83,
-  "seconds": 430.0,
-  "tests": 1110
+  "modules": 88,
+  "seconds": 468.7,
+  "tests": 1162
  },
  "shards": [
   {
@@ -21,6 +21,7 @@
     "mixed:stage2+stage3": 1,
     "non-stage": 18,
     "stage1": 5,
+    "stage2": 1,
     "stage3": 4
    },
    "modules": [
@@ -259,7 +260,8 @@
     },
     {
      "name": "test_stage2_chatgpt_handoff_text",
-     "stage": "stage2"
+     "stage": "stage2",
+     "tests": 8
     }
    ]
   },
@@ -267,7 +269,7 @@
    "name": "shard2",
    "seconds": 104.1,
    "stages": {
-    "stage3": 7,
+    "stage3": 8,
     "stage4": 7
    },
    "modules": [
@@ -424,10 +426,12 @@
   },
   {
    "name": "shard3",
-   "seconds": 103.8,
+   "seconds": 144.5,
    "stages": {
+    "mixed:stage4+stage5": 1,
+    "stage2": 1,
     "stage3": 8,
-    "stage5": 4
+    "stage5": 5
    },
    "modules": [
     {
@@ -564,8 +568,20 @@
      }
     },
     {
+     "name": "test_direction_materials",
+     "stage": "mixed:stage4+stage5",
+     "seconds": 22.7,
+     "tests": 8,
+     "signals": {
+      "stage3": 3,
+      "stage4": 3,
+      "stage5": 6
+     }
+    },
+    {
      "name": "test_stage5_interest_title_length",
-     "stage": "stage5"
+     "stage": "stage5",
+     "tests": 5
     }
    ]
   },
@@ -573,7 +589,8 @@
    "name": "shard4",
    "seconds": 116.0,
    "stages": {
-    "stage2": 23,
+    "mixed:stage2+stage3": 1,
+    "stage2": 26,
     "stage3": 2
    },
    "modules": [
@@ -670,7 +687,8 @@
     },
     {
      "name": "test_stage2_chatgpt_handoff_source",
-     "stage": "stage2"
+     "stage": "stage2",
+     "tests": 8
     },
     {
      "name": "test_stage2_preflight_malformed",
@@ -831,15 +849,24 @@
     },
     {
      "name": "test_human_validation_continuation",
-     "stage": "mixed:stage2+stage3"
+     "stage": "mixed:stage2+stage3",
+     "tests": 8
     },
     {
      "name": "test_stage2_source_evidence_repair",
-     "stage": "stage2"
+     "stage": "stage2",
+     "tests": 9,
+     "signals": {
+      "stage2": 6
+     }
     },
     {
      "name": "test_stage2_style_repair_scope",
-     "stage": "stage2"
+     "stage": "stage2",
+     "tests": 8,
+     "signals": {
+      "stage2": 3
+     }
     }
    ]
   }

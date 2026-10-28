@@ -45,7 +45,10 @@ def build(*, atomic_json_many,
           validate_papers_override,
           _selection_direction_ids,
           canonical_professor_dir,
-          STAGE4_MIGRATION_COMMITTED):
+          STAGE4_MIGRATION_COMMITTED,
+          load_direction_materials,
+          lock_direction_materials,
+          unlock_direction_materials):
     def _stage4_cross_group(pack: dict, group_entry: dict) -> list[dict] | None:
         """Resolve a cross-direction group's participants against the CURRENT pack.
 
@@ -282,6 +285,16 @@ def build(*, atomic_json_many,
             skipped.append(entry)
 
         validate_stage4_selections(all_selects, states, packs)
+        # EP1.2: freeze the CURRENT user-material slice under the same file
+        # mutex the save entry uses, so a save cannot interleave with this read.
+        # A corrupt/foreign material file fails this professor with zero writes;
+        # a missing file is simply an empty slice.
+        material_handle = lock_direction_materials(professor_dir)
+        try:
+            material_data = load_direction_materials(professor_dir)
+        finally:
+            unlock_direction_materials(material_handle)
+        material_directions = material_data.get("directions") or {}
         written_selections = []
         email_entries = []
         evidence_artifact, evidence_error = evidence
@@ -373,7 +386,8 @@ def build(*, atomic_json_many,
                     idea_input.get("note") or "", program_root, current_profile_fp,
                     papers_override, evidence_snapshot,
                     group_entry=group_entry if len(direction_ids) >= 2 else None,
-                    participant_directions=participants)
+                    participant_directions=participants,
+                    direction_materials=material_directions)
                 email_entries.append(entry)
                 selected_ideas.append(idea_input)
             if not selected_ideas:

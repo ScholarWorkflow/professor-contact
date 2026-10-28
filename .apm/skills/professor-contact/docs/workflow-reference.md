@@ -273,8 +273,11 @@ flowchart TD
 - 方向 display provenance；
 - 按 `item_key` 去重的论文短证据；
 - 每条 gap 的精确 `direction_id` / `item_key` / `gap_id`；
-- red lines / allowed sources / source hash；
+- red lines / allowed sources（含 `direction_material:<direction_id>:<material_id>`）/ source hash；
+- 本次所选方向的用户素材切片 `direction_materials[]`（`direction_id`/`material_id`/`question`/`answer`）；
 - 上游 `_联系方式证据.json` 中该教授的 contact evidence snapshot 与 record fingerprint。
+
+方向素材独立于 profile 和 Stage 3 状态，保存在 `<教授目录>/方向素材.json`（schema 1），只由 `contact_state.py direction-materials-save --program-root ... --professor-dir ... --direction-id ... --answer ... [--question ...] [--material-id ...] [--expected-sha256 ... | --expect-missing]` 保存。缺文件等同空素材；文件损坏、归属不符、方向不在该教授正式范围或旧摘要已变时拒绝写入且保留原字节。用户回答逐字保留，不总结、不升级；同方向可复用，取消选择不删除，换方向不自动套用。缺素材时 selection owner 只问少量普通接触问题（不要求研究判断，不固定题数）；Codex 返回 `needs_input` + `pending_materials`，用户回答后 fresh 委派并携带 `materials`；`pending_materials` 只是展示，不写素材事实。素材保存与选择冻结相互独立：保存成功后即使 finalize 失败，真实回答仍保留。
 
 从这一刻起，Stage 5 不再重构论文事实。
 
@@ -315,7 +318,8 @@ flowchart TD
 - 邮件真正采用的收件地址来自 `邮件输入.json` 内冻结的 `contact_evidence`；
 - live `_联系方式证据.json` / rebuild 只用于确认 source-state freshness 与 fingerprint；
 - live/rebuild record 发生变化时，Stage 5 **不能直接采用新地址**，必须 `needs_refresh` 回 Stage 4 重编译邮件包；
-- `_contact_verify.json` 才是送信核验 cache，但不能替代邮件包的冻结事实边界。
+- `_contact_verify.json` 才是送信核验 cache，但不能替代邮件包的冻结事实边界；
+- 用户素材切片 freshness：`stage5-plan` 与 `stage5-finalize` 在读取 result/choices 或写盘前，把当前所选方向的 live 素材切片与该 email 冻结的 `direction_materials` 比较；不一致返回 `needs_refresh` / `direction_materials_changed`，回 Stage 4 重冻该教授邮件包。更新素材后必须重新 plan、按本轮 `model_input.direction_materials` 重新生成模型结果与 source_map、重建草稿再 finalize，不得复用刷新前的结果或草稿；旧包没有素材字段时按空切片继续，直到该方向出现 live 素材。
 
 humanizer 的当前边界：只润色模型动态字段，且发生在模板拼装前。Subject、模板固定文字、用户选择短语、整封首封/跟进成品都不能交给 humanizer 重写。
 

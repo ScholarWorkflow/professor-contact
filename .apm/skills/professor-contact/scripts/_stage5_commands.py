@@ -69,11 +69,41 @@ def build(*, atomic_write,
           render_checklist_table,
           render_source_table,
           render_followup_source_table,
-          render_fact_check_card):
-    def cmd_stage5_plan(args) -> None:
+          render_fact_check_card,
+          load_direction_materials,
+          frozen_material_rows,
+          lock_direction_materials,
+          unlock_direction_materials):
+
+    def stage5_require_fresh_materials(emails: list, materials: dict) -> None:
+        """Stop before reading results/choices when a frozen slice is stale.
+
+        The email pack's ``direction_materials`` is the only fact source Stage 5
+        may consume; the live materials file is compared to it so an answer
+        update demands a Stage-4 refreeze instead of silently keeping the old
+        text or letting a new answer replace it under the same source_hash.
+        Legacy packs without the field compare against an empty slice, so they
+        keep working until their direction gains a live answer.
+        """
+        for email in emails:
+            frozen = email.get("direction_materials")
+            if frozen is None:
+                frozen = []
+            live = frozen_material_rows(materials, email.get("direction_ids") or [])
+            if not isinstance(frozen, list) or frozen != live:
+                soft_exit("needs_refresh", "direction_materials_changed",
+                          email_id=email.get("email_id"),
+                          direction_ids=email.get("direction_ids") or [],
+                          message="该邮件所选方向的用户素材已变化：先重跑阶段 4 重新冻结"
+                                  "该教授的 邮件输入.json，再重跑阶段 5。未写盘。")
+
+    def _stage5_plan_locked(args) -> None:
         program_root = Path(args.program_root)
         mode = stage5_mode(args)
         pack_path, pack, all_emails, emails = stage5_local_pack(args, program_root)
+        stage5_require_fresh_materials(
+            emails, load_direction_materials(
+                stage5_pack_owner(pack, pack_path)["professor_dir"]))
         sources = load_header_sources(program_root)
         resolved_evidence = resolve_contact_evidence(
             program_root, list(dict.fromkeys(
@@ -137,6 +167,7 @@ def build(*, atomic_write,
                         "direction_ids": email.get("direction_ids") or [],
                         "directions": email.get("directions") or [],
                         "user_note": truncate(email.get("user_note"), 800),
+                        "direction_materials": email.get("direction_materials") or [],
                         "papers": email.get("papers"),
                         "gaps": [gap_job_block(g) for g in email.get("gaps", [])],
                         "red_lines": email.get("red_lines"),
@@ -145,12 +176,12 @@ def build(*, atomic_write,
                         "user_supplement": email.get("user_supplement") or "",
                         "allowed_sources": email.get("allowed_sources"),
                         "rules": {
-                            "interest": "3 句、只写软层；长度按净正文计：当前邮件包 papers[].title 中实际完整逐字引用的论文标题文本不计入字数，标题以外的书名号、引号、标点和其他正文照常计入；净正文软上限 ≤180 日文字（runner：>180 警告、>200 拒绝）；①真实关注（普通发信人的接触、有限认识与自然好奇，禁恭维）②点名+桥接（真实标题、共同主题逐篇成立）③宽泛例子（仅可用 gaps 里 status∈{open,partial,unknown} 的精确 gap；done_by_self 禁锚；partial 只谈 remaining_gap；引用教授原话式，不找碴）",
-                            "opening": "从普通发信人对这件事的真实接触和认识写起，允许有限认识（如听说过、觉得有用但还不熟悉），再顺承自然的好奇；不替用户提出研究问题，不把论文问题翻译成白话冒充个人兴趣。根据已有 profile、用户笔记和补充表达，不编具体经历、应用名称、长期兴趣或研究能力；没有依据时不声称听过、用过或读懂。日语简洁礼貌，不固定身份、自定位或「私は」开头，也不固定成「听过但没用过」句型。",
+                            "interest": "3 句、只写软层；长度按净正文计：当前邮件包 papers[].title 中实际完整逐字引用的论文标题文本不计入字数，标题以外的书名号、引号、标点和其他正文照常计入；净正文软上限 ≤180 日文字（runner：>180 警告、>200 拒绝）；①真实关注（普通发信人的接触、有限认识与自然好奇，禁恭维；有 model_input.direction_materials 中用户原回答时，可按其原意写真实接触，来源标 direction_material:<direction_id>:<material_id>，不得把问题当回答、不得升级经历）②点名+桥接（真实标题、共同主题逐篇成立）③宽泛例子（仅可用 gaps 里 status∈{open,partial,unknown} 的精确 gap；done_by_self 禁锚；partial 只谈 remaining_gap；引用教授原话式，不找碴）",
+                            "opening": "从普通发信人对这件事的真实接触和认识写起，允许有限认识（如听说过、觉得有用但还不熟悉），再顺承自然的好奇；不替用户提出研究问题，不把论文问题翻译成白话冒充个人兴趣。根据已有 profile、用户笔记、补充表达和 model_input.direction_materials 中用户自己的原回答写作，不编具体经历、应用名称、长期兴趣或研究能力；没有依据时不声称听过、用过或读懂。日语简洁礼貌，不固定身份、自定位或「私は」开头，也不固定成「听过但没用过」句型。",
                             "exclusions": "禁方法名/模型名/算法名（标题内除外）、指标数字、数据集名、组件名、公式、限定语链、年份叙事",
                             "future_aspiration": "宽泛方向表述+背景技能，禁具体技术栈，不用其他方向原句",
                             "learning": "2-3 个名词短语候选，贴近 profile 真实知识储备，交用户挑选",
-                            "source_map": "每句必须给来源；③只能用 gap:<id>；所有 source_ids ⊆ allowed_sources"}}})
+                            "source_map": "每句必须给来源；③只能用 gap:<id>；①若引用用户素材，只能用 model_input.direction_materials 中列出的 direction_material:<direction_id>:<material_id>；所有 source_ids ⊆ allowed_sources；没有采用素材时不必强行引用"}}})
             payload = {
                 "status": "ok", "email_pack": str(pack_path),
                 "emails": [e.get("email_id") for e in emails],
@@ -261,11 +292,14 @@ def build(*, atomic_write,
                                "result_file": str(result_path)})
         emit({"status": "ok", "drafts": drafts, "output_mode": mode})
 
-    def cmd_stage5_finalize(args) -> None:
+    def _stage5_finalize_locked(args) -> None:
         audit_suffix = STAGE5_AUDIT_PROVENANCE[args.audit_provenance]
         program_root = Path(args.program_root)
         mode = stage5_mode(args)
         pack_path, pack, all_emails, emails = stage5_local_pack(args, program_root)
+        stage5_require_fresh_materials(
+            emails, load_direction_materials(
+                stage5_pack_owner(pack, pack_path)["professor_dir"]))
         sources = load_header_sources(program_root)
         resolved_evidence = resolve_contact_evidence(
             program_root, list(dict.fromkeys(
@@ -706,6 +740,28 @@ def build(*, atomic_write,
             updated.append(output_id)
         atomic_json(state_path, state)
         emit({"status": "ok", "state_path": str(state_path), "updated": updated})
+
+    def _with_materials_lock(args, command):
+        """Run one Stage-5 command while holding its owner's material mutex.
+
+        Resolving the pack before the lock is read-only; the lock then covers the
+        freshness comparison AND every final write, so a save cannot land between
+        "the slice still matches" and the committed email/state bytes.
+        """
+        program_root = Path(args.program_root)
+        pack_path, pack, _all_emails, _emails = stage5_local_pack(args, program_root)
+        owner = stage5_pack_owner(pack, pack_path)
+        handle = lock_direction_materials(owner["professor_dir"])
+        try:
+            return command(args)
+        finally:
+            unlock_direction_materials(handle)
+
+    def cmd_stage5_plan(args) -> None:
+        return _with_materials_lock(args, _stage5_plan_locked)
+
+    def cmd_stage5_finalize(args) -> None:
+        return _with_materials_lock(args, _stage5_finalize_locked)
 
     return types.SimpleNamespace(
                 cmd_stage5_plan=cmd_stage5_plan,

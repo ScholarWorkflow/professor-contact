@@ -198,7 +198,9 @@ class Stage3DirectionGroupBase(ResolvedPipelineMixin, unittest.TestCase):
     def source_hash(entry):
         payload = {key: entry[key] for key in (
             "email_id", "direction_ids", "directions", "idea", "papers", "gaps",
-            "red_lines", "allowed_sources", "contact_evidence", "cross_direction")}
+            "red_lines", "allowed_sources", "contact_evidence", "cross_direction",
+            # EP1.2 direction materials join the Stage-4 fact hash.
+            "direction_materials")}
         return hashlib.sha256(json.dumps(
             payload, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()
 

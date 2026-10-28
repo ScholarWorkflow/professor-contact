@@ -1,6 +1,6 @@
 ---
 name: professor-contact-selection
-description: 'Stage 4 user-selection agent. Use it after Stage 3 with an explicit user selection, or without one to return needs_input and pending_selection; reads each professor''s 套磁候选状态.json and, only after a real choice, commits that professor''s own 套磁选择.json + 邮件输入.json pair (schema 3, professor-local authority) via the deterministic runner.'
+description: 'Stage 4 user-selection agent. Use it after Stage 3 with an explicit user selection, or without one to return needs_input and pending_selection; reads each professor''s 套磁候选状态.json, asks a few ordinary questions only when the selected direction has no saved experience material, and, only after a real choice, commits that professor''s own 套磁选择.json + 邮件输入.json pair (schema 3, professor-local authority) via the deterministic runner.'
 mode: subagent
 hidden: true
 temperature: 0.2
@@ -39,6 +39,14 @@ You are **professor-contact-selection**, the stage-4 subagent that records the u
     "ideas": [{"id": "跨方向想法 id", "note": "可选补充"}]}]
   ```
   每条**可选**带该条目的 canonical `professor_dir`（可靠目录来源，用来精确区分每一位教授的目录；不带时由本 agent 按 Step 1 逐请求确定性解析后补入，`professor_dir` 绝不因此变成用户新增必填项）。也可给自然语言（如 "选 Professor Example 的候选1，论文只用指定的近年论文"），本 agent 解析成上面的结构。selection-input 的 `professor_dir` 由本 agent 解析后填进（runner 必需）。`papers_override` 固定为可选的 item key 字符串列表；标题、年份和署名不能由用户传入。
+
+- `materials` (optional) — the user's real answers to this agent's `pending_materials` questions. Shape (one record per answer):
+  ```json
+  [{"professor": "Professor Example", "professor_dir": "<教授目录 abs>",
+    "direction_id": "<DIR...>", "question": "<原问题，可省略>",
+    "answer": "<用户原回答>", "material_id": "<仅用户明确要求修正某条既有回答时给出；省略=追加一条新素材>"}]
+  ```
+  缺省时本 agent 不代答、不生成默认回答；给出的 `answer` 原样保存，绝不改写、总结或升级经历。
 
 If `folder_path` missing → return the error JSON.
 
@@ -100,6 +108,34 @@ If `folder_path` missing → return the error JSON.
 - **支持「选想法但调整支撑论文」**：用户注明（如"候选2，论文只留 2024 那篇"）→ 记入该 idea 的 `note`（阶段 5 的 ②点名以输入包 papers 为准自行取舍）；runner 不因 note 改动 gap_ids。
 - `papers_override` 若存在，必须是当前候选状态 `papers[]` 中不重复的 item key 列表；包外 key、重复 key 或其他形状由 runner 返回 `invalid_papers_override`，选择文件和邮件包均不写入。空列表等同未指定，保留候选原顺序；非空列表按用户顺序编译。
 
+### Step 2.5 — 方向真实素材：缺才问，回答先保存再冻结
+
+用户已给出选择但该方向还没有可用的真实接触素材时，本 Step 负责补问；它是**用户输入环节**，不是生成环节：任何素材事实只能来自用户真实回答。
+
+1. 逐教授读取 `<教授目录>/方向素材.json`（只读；文件不存在=该教授尚无素材）。只检查本次选择涉及的 `direction_id`；其他方向的存量素材不读入模型、不改写、不删除。
+2. 对每个所选方向：若已有非空 `answer`，或现有 profile/用户补充已足以写出有事实依据的接触描述，不再重复问。若仍缺可用事实，围绕该方向问**少量普通问题**（1–3 个即可，不固定题数），问用户实际接触过什么（课程、作业、读过的材料、玩过/用过的东西、听说过什么），不要求用户给出研究判断、研究难点或算法改进意见；问题示例只作展示，不得写成素材事实。
+3. 用户回答"没有相关经历 / 暂不补充"同样是真实回答：原样保存，不无限追问，也不阻止按已有 profile/note 写保守首句；不得替用户编造经历。
+4. **取得回答的方式按 runtime 分支**：
+   - OpenCode：用原生 `question` 工具提问；用户回答后进入第 5 步。
+   - Codex：不得自答或模拟回答，也不假设存在可用的 `question` API。该教授在本次 `results[]` 中的行记为 `status: "needs_input"`、`reason_code: "pending_materials"`、`selection_file`/`email_pack` 为 `null`，并在 `pending_materials` 给出展示条目（见 Return）。该教授**不进入 Step 3/4、零 Stage-4 写入**；同批其他可继续的教授照常执行。聚合规则：有任一教授成功 → `partial`；无成功且存在失败/错误行 → `error`（`needs_input` 行仍保留在 `results[]`，caller 先展示待答并修复失败）；无成功且所有行都是真实用户输入停点（缺 `selection` 或待素材）→ `needs_input`。caller 把问题展示给用户；用户回答后**重新委派本 agent**，把答案放在 `materials` 传入——这是 fresh delegation，绝不恢复旧 child、不把旧 payload 当素材事实。
+5. 收到真实回答后，逐条调用窄保存入口（**只由 runner 写素材文件**，不得用 write/编辑工具直接改 `方向素材.json`）：
+
+```bash
+.agents/skills/professor-contact/scripts/contact_state direction-materials-save \
+  --program-root <program_root abs> --professor-dir <教授目录 abs> \
+  --direction-id <canonical direction_id> --answer <用户原回答> \
+  [--question <原问题>] [--material-id <更新已有素材>] \
+  [--expected-sha256 <当前素材文件摘要> | --expect-missing]
+```
+
+   - **新增回答（默认）**：每条用户回答单独一次调用；同一方向的多条新回答各自追加为独立素材，**不传 `--material-id`**。该方向尚无素材时传 `--expect-missing`；该方向已有素材时省略 `--expect-missing` 直接追加。一次用户回复包含多个问题时，每个回答各追加一条，绝不互相覆盖。
+   - **明确修正**：只有用户明确要求"修正/改一下之前那条回答"时，才传该条的 `--material-id`；能取得当前素材文件摘要时同时传 `--expected-sha256` 作防覆盖校验（同一教授并发修改不是本流程的支持范围）。
+   - 成功返回 `status=ok`、`material_id`、`materials_file`。
+   - `materials_digest_changed`（旧摘要已变）→ 重读当前素材文件：文件仍在则用新摘要重新提交同一回答；**文件已不存在 → 停止该教授保存并报告**（不按同一 `material_id` 重新追加、不把删除当新增），等用户明确是否重新提供回答。`materials_already_exists` 表示本次是**新回答**但该方向已有素材：重读后按上面的新增路径**省略 `--expect-missing` 追加一条新素材**，绝不自动挑一个已有 `material_id` 去覆盖；只有用户明确要求修正时才改走 `--material-id`。这两类按上述分流重读后可重试；其余输入错误终止。
+   - `invalid_direction_materials`（文件损坏/归属不符）、`unknown_direction`、`invalid_professor_dir`、`invalid_params` 是**不能靠重读/重试修复的输入错误**：保留原文件，停止该教授保存并零 Stage-4 写入，不重试、不覆盖、不继续 Step 3/4；把结构化原因交回 caller，按 Errors 只形成该教授的 input-error 行，等人工修复素材/目录后 fresh 重来。
+   - 保存只更新/追加本次明确回答的条目，不删除未列出的其他条目；它是独立用户输入提交：保存成功后即使随后迁移/冻结失败，真实回答仍保留，不假装整步回滚；失败也不能删除或清空已有素材。
+6. 保存后继续 Step 3/4。`stage4-finalize` 会把本次所选方向的当前素材冻结进该教授邮件包：每条 email 的 `direction_materials[]`（`direction_id`/`material_id`/`question`/`answer`）、`allowed_sources` 中的 `direction_material:<direction_id>:<material_id>`，并参与该 email 的 `source_hash`。同方向换 idea、取消选择后再选都不删除素材；不自动跨方向或跨教授套用。
+
 ### Step 3 — 每教授迁移判定：先于 finalize 决定是否 stage4-migrate-local
 
 对每位已绑定目录、拿到真实选择的教授，在进入 Step 4 的 `stage4-finalize` 之前先完成迁移判定（判定只看该教授自己）。仅当该教授目录内 `套磁选择.json` 与 `邮件输入.json` **均不存在**、且历史程序级 `教授研究/套磁选择.json` 可读并存在规范 `professor_dir` 精确等于该目录的行时才需要迁移——用确定性迁移命令按**一位教授一次**建立 local 权威：
@@ -148,22 +184,32 @@ Return ONLY this JSON, no surrounding prose:
   "program_root": "<abs>",
   "results": [
     {"professor": "<教授名>", "professor_dir": "<该教授目录 abs>",
-     "status": "ok|needs_refresh|error", "reason_code": null,
+     "status": "ok|needs_refresh|needs_input|error", "reason_code": null,
      "selection_file": "<该教授/套磁选择.json abs>",
      "email_pack": "<该教授/邮件输入.json abs>",
      "selected_directions": ["<教授 · DIR...>"], "emails_compiled": 0, "skipped": []}
   ],
   "pending_selection": [],
+  "pending_materials": [],
   "notes": ""
 }
 ```
-- `results[]` 是**按原请求教授首次出现顺序合并**的唯一逐教授行列表：Step 1/3.5 的身份、读取、映射、迁移前置失败行与 runner 聚合 `results[]` 行合并，每位教授只占一行（执行程序原有成功、待刷新、错误行语义不变）。行可以表达待补输入（`status: "needs_input"` + 原因，`selection_file`/`email_pack` 为 `null`）；失败行不得取消成功行，也绝不静默遗漏。
+- `results[]` 是**按原请求教授首次出现顺序合并**的唯一逐教授行列表：Step 1/3.5 的身份、读取、映射、迁移前置失败行与 runner 聚合 `results[]` 行合并，每位教授只占一行（执行程序原有成功、待刷新、错误行语义不变）。行可以表达待补输入（`status: "needs_input"` + 原因，`selection_file`/`email_pack` 为 `null`）：缺 `selection` 时为 `pending_selection`，已有选择但缺方向素材时为 `reason_code: "pending_materials"` 并在 `pending_materials` 给出问题。失败行不得取消成功行，也绝不静默遗漏。
+- `pending_materials[]` 只是展示条目，不是素材事实、不是持久状态，绝不写盘。每条的固定形状：
+  ```json
+  {"professor": "<教授名>", "professor_dir": "<abs>", "direction_id": "<DIR...>",
+   "direction_label": "<人类展示名>", "questions": ["<1-3 个普通问题>"],
+   "selection": {"direction_ids": ["<DIR...>"], "ideas": [{"id": "<真实 idea id>"}]}}
+  ```
+  `selection` 原样回显本次已绑定的选择，便于用户回答后 fresh 委派继续；问题只能来自本轮读取的机器事实与方向名，不得预填答案、经历或研究判断。
 - 成功行的 `selection_file`/`email_pack` 是该教授目录内的 local pair，caller 后续只能拿**这一位教授自己的** `email_pack` 交给阶段 5——需要进入第 5 阶段时**逐成功教授分别委派**现有邮件生成代理，并贯穿传递该行的确切 `email_pack`（不在本阶段拆分多封邮件，不汇总成第二份事实文件，不把 `partial` 当作整体回滚，也绝不拿另一行的路径替代）。
-- 聚合 `result`：`ok` — 全部教授成功；`partial` — 有成功、也有失败/待刷新/待补输入（**已提交的教授不回滚**，caller 继续逐成功行消费）；`error` — 没有任何教授成功（各自失败或待补输入）。`needs_input` 只属于缺 `selection` 的 Codex 路径 C：固定 `needs_input` 并携带 `pending_selection`（`results` 为空数组、所有路径字段 `null`，本轮**零写入**）。
+- 聚合 `result`：`ok` — 全部教授成功；`partial` — 有成功、也有失败/待刷新/待补输入（**已提交的教授不回滚**，caller 继续逐成功行消费）；`error` — 没有任何教授成功且存在失败/错误行（各自失败或待刷新；`needs_input` 行仍保留在 `results[]`，caller 先展示待答并修复失败）。`needs_input` 属于两种真实用户输入停点：缺 `selection` 的 Codex 路径 C 携带 `pending_selection`（`results` 为空数组、所有路径字段 `null`，本轮**零写入**）；已有选择但缺方向素材且本次无法交互时，`results[]` 对应教授行为 `needs_input + pending_materials`，其他教授行照常，本轮对该教授**零 Stage-4 写入**（素材保存若已由用户回答驱动，则只写素材文件本身）。同批还有成功教授时聚合为 `partial`；无成功且没有失败行、所有请求教授都停在真实用户输入时为 `needs_input`。
 - runner 因编程异常而中断时**没有**聚合 JSON：本 agent 不把它解释成「此前零写入」——只回滚当前未完成的文件对（由 runner 保证），已提交教授保留、不清理，如实返回调用级错误并让 fresh 重试从各教授现有 local 权威与当前阶段 3 事实重新进入；没有最终成功汇总就不启动后续第 5 阶段交接，也绝不回退到程序级权威。
 
 ## Errors
-Return:
+某位教授的素材输入错误（`invalid_direction_materials` / `unknown_direction` / `invalid_professor_dir` / `invalid_params`）不进入调用级 `error`：只在 `results[]` 形成该教授自己的 `status: "error"` 行（`reason_code` 原样、`selection_file`/`email_pack` 为 `null`），该教授零 Stage-4 写入，其他教授照常；修复素材/目录后用 fresh 委派重试，不循环重试坏文件。
+
+调用级错误 Return:
 ```json
 { "result": "error", "program_root": "<or null>", "selection_file": "", "notes": "<reason_code + concise reason>" }
 ```
@@ -175,6 +221,9 @@ when: no `folder_path`; program root unresolvable; `selection` 整体不可解�
 - **每轮重新读盘**：每一轮调用（含用户给出选择后的新一轮）都必须重新读取当前 `套磁候选状态.json` 并重新经 runner 指纹校验；`pending_selection` 只在本轮读取的机器状态上构造，绝不复用上一轮 payload 或上一轮子代理记忆，也不把任何 CLI 会话恢复/续传能力当作 Stage 4 状态协议。
 - **先分流后读盘（显式 `selection`）**：路径 A 已有可靠 `professor_dir` 时，先验证该目录属于当前 `<program_root>/教授研究/` 再读该教授正式文件，且只读请求涉及的教授；绝不先执行全项目扫描候选状态，绝不把无关教授的读取失败当作本教授的前置条件；无法唯一绑定目录的请求只报该请求的待补输入，绝不按显示名猜目录。
 - **缺 selection 不 finalize**：Codex 缺 `selection` 时不得调用 `stage4-finalize`，任何教授的 local `套磁选择.json`/`邮件输入.json` 与历史程序级 Stage-4 文件零写入；`pending_selection` 只是展示 payload，不是新的机器事实源，绝不写盘。
+- **素材只来自用户真实回答**：缺素材才问，已有回答不重复问；不得代答、不得把问题示例或模型猜测写成 `answer`，不得把"听说/看到"升级成"用过/研究过"；用户说没有经历也按原话保存。
+- **素材只由 runner 保存**：`direction-materials-save` 是唯一保存入口；绝不直接写 `方向素材.json`、不删除素材、不把素材塞进 profile/note/候选状态。**新回答默认追加**：同一方向可以有多条素材，新增时绝不自动映射到已有 `material_id`；只有用户明确要求修正某条既有回答时才更新该条目。保存失败按原因分流：旧摘要/首次保存冲突可重读后按新增或修正的正确模式重试；文件损坏、归属不符、方向越界、目录越界是不可重试的输入错误，必须停止该教授、零 Stage-4 写入并交回 caller。
+- **待素材不冻结**：`pending_materials` 只是展示；未取得真实回答时不写素材、不把 pending 写进邮件包，也不伪造 Stage-4 成功行。
 - **只读状态不读 Markdown**：候选事实（id/标题/一句话/gap_ids）一律来自 `套磁候选状态.json`；总览 md 只作展示索引。
 - **精确 gap 交接**：选中候选的 `gap_ids` 由 runner 从状态原样搬进 选择/邮件包，绝不按标题、编号或「同论文第一条 gap」重建；`done_by_self` 在邮件包只能是 `extension_context_only`。
 - **过期不落盘**：指纹校验不过 → 该教授 `needs_refresh`，该教授不写任何文件（含其 local 选择/邮件包）。

@@ -400,6 +400,18 @@ if _EMAIL_CORE_SPEC is None or _EMAIL_CORE_SPEC.loader is None:
 _email_core_module = importlib.util.module_from_spec(_EMAIL_CORE_SPEC)
 _EMAIL_CORE_SPEC.loader.exec_module(_email_core_module)
 
+# Direction-scoped experience materials (EP1.2). Loaded by path next to this
+# runner for the same reason as the helpers above; the factory is called after
+# the pack/profile helpers exist (see the binding point further down).
+_DIRECTION_MATERIALS_PATH = Path(__file__).with_name("_direction_materials.py")
+_DIRECTION_MATERIALS_SPEC = importlib.util.spec_from_file_location(
+    "_direction_materials", _DIRECTION_MATERIALS_PATH)
+if _DIRECTION_MATERIALS_SPEC is None or _DIRECTION_MATERIALS_SPEC.loader is None:
+    raise RuntimeError(f"cannot load _direction_materials: {_DIRECTION_MATERIALS_PATH}")
+_direction_materials_module = importlib.util.module_from_spec(
+    _DIRECTION_MATERIALS_SPEC)
+_DIRECTION_MATERIALS_SPEC.loader.exec_module(_direction_materials_module)
+
 SCHEMA = 1
 
 # Stage-2 preflight, identity and plan-command helpers live in a sibling module
@@ -604,6 +616,32 @@ normalize_candidate_state = _contact_pack.normalize_candidate_state
 load_candidate_state = _contact_pack.load_candidate_state
 _strict_candidate_shape = _contact_pack._strict_candidate_shape
 strict_candidate_state = _contact_pack.strict_candidate_state
+
+
+# Binding point for the direction-material helper: pack/state/IO helpers exist
+# by now. One professor-local file plus the save entry, the Stage-4 freeze and
+# the Stage-5 freshness check share this module's file mutex.
+_direction_materials = _direction_materials_module.build(
+    fail=fail,
+    emit=emit,
+    read_json_file=read_json_file,
+    atomic_json=atomic_json,
+    sha256_bytes=sha256_bytes,
+    sha256_text=sha256_text,
+    professor_dir_containment_error=professor_dir_containment_error,
+    load_input_pack=load_input_pack,
+    load_candidate_state=load_candidate_state,
+    direction_machine_id=direction_machine_id,
+    now_utc=now_utc,
+)
+MATERIALS = _direction_materials.MATERIALS
+direction_materials_path = _direction_materials.materials_path
+load_direction_materials = _direction_materials.load_materials
+frozen_material_rows = _direction_materials.frozen_rows
+direction_material_source = _direction_materials.material_source
+lock_direction_materials = _direction_materials.lock_materials
+unlock_direction_materials = _direction_materials.unlock_materials
+cmd_direction_materials_save = _direction_materials.cmd_direction_materials_save
 
 
 # Binding point: every helper the module needs is defined by now; the factory
@@ -1182,6 +1220,9 @@ _stage3_scope_marker = _stage3_render._stage3_scope_marker
 EMAIL_SOURCE_HASH_FIELDS = (
     "email_id", "direction_ids", "directions", "idea", "papers", "gaps",
     "red_lines", "allowed_sources", "contact_evidence", "cross_direction",
+    # EP1.2: the frozen direction-material slice is a fact source of this email,
+    # so an answer change re-hashes only the emails that scope actually froze.
+    "direction_materials",
 )
 
 
@@ -1192,7 +1233,8 @@ _email_core = _email_core_module.build(
     direction_machine_id=direction_machine_id,
     direction_papers=direction_papers,
     EMAIL_SOURCE_HASH_FIELDS=EMAIL_SOURCE_HASH_FIELDS,
-    sha256_obj=sha256_obj
+    sha256_obj=sha256_obj,
+    direction_material_source=direction_material_source,
 )
 
 compile_email_entry = _email_core.compile_email_entry
@@ -1311,7 +1353,10 @@ _stage4_commands = _stage4_commands_module.build(
     validate_papers_override=validate_papers_override,
     _selection_direction_ids=_selection_direction_ids,
     canonical_professor_dir=canonical_professor_dir,
-    STAGE4_MIGRATION_COMMITTED=STAGE4_MIGRATION_COMMITTED
+    STAGE4_MIGRATION_COMMITTED=STAGE4_MIGRATION_COMMITTED,
+    load_direction_materials=load_direction_materials,
+    lock_direction_materials=lock_direction_materials,
+    unlock_direction_materials=unlock_direction_materials
 )
 
 _stage4_cross_group = _stage4_commands._stage4_cross_group
@@ -1542,7 +1587,11 @@ _stage5_commands = _stage5_commands_module.build(
     render_checklist_table=render_checklist_table,
     render_source_table=render_source_table,
     render_followup_source_table=render_followup_source_table,
-    render_fact_check_card=render_fact_check_card
+    render_fact_check_card=render_fact_check_card,
+    load_direction_materials=load_direction_materials,
+    frozen_material_rows=frozen_material_rows,
+    lock_direction_materials=lock_direction_materials,
+    unlock_direction_materials=unlock_direction_materials
 )
 
 cmd_stage5_plan = _stage5_commands.cmd_stage5_plan
@@ -2111,6 +2160,28 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--professor-dir", required=True)
     p.add_argument("--profile")
     p.set_defaults(func=cmd_stage4_migrate_local)
+
+    p = sub.add_parser("direction-materials-save",
+                       help="save one direction-scoped user answer (question/answer) "
+                            "into that professor's 方向素材.json; never touches the "
+                            "input pack, candidate state or email pack")
+    p.add_argument("--program-root", required=True)
+    p.add_argument("--professor-dir", required=True)
+    p.add_argument("--direction-id", required=True,
+                   help="canonical direction_id from this professor's formal range")
+    p.add_argument("--answer", required=True,
+                   help="the user's own answer, stored verbatim")
+    p.add_argument("--question",
+                   help="the question the answer responds to; optional when the user volunteered it")
+    p.add_argument("--material-id",
+                   help="update this existing material instead of adding a new one")
+    p.add_argument("--expected-sha256",
+                   help="the exact current 方向素材.json SHA-256 the caller read; a "
+                        "mismatch is refused instead of last-write-wins")
+    p.add_argument("--expect-missing", action="store_true",
+                   help="require that this direction has no saved material yet "
+                        "(another direction of the same professor may already exist)")
+    p.set_defaults(func=cmd_direction_materials_save)
 
     p = sub.add_parser("stage5-plan")
     p.add_argument("--program-root", required=True)

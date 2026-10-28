@@ -1,0 +1,155 @@
+# 方向真实素材：测试执行记录（2026-10-28）
+
+- 执行计划：[execution-plan.md](execution-plan.md) EP1.2（Proposed review status: pending；[review.md](review.md) 的 P1–P4 PASS / APPROVED 对应 EP1.1，EP1.2 的语义修订仍待定向复核，本记录不把旧版批准复制给新版）。
+- 测试计划：[test-plan.md](test-plan.md) TP1.5（当前文件已更新为 TP1.6；TP1.6 只删除 T6 的并发/锁审查义务，8 项测试方法、recipe 与输入未变）。必测清单 T1–T6 与 8 项测试方法未改；本轮按 §2 的精确 recipe 运行。Gate2 定向复核与 Gate3 结论属于独立 reviewer，本记录只提供实际命令、版本和逐项结果。
+- 被测版本：首轮 `adac83f2f673d4034850101c6c49903a4f6c31cb`（`feat(stage4, stage5): add direction-scoped experience materials`），8/8 通过；实现符合性审核修正 `ddd921223e5acbd1facea4a93d26ab30e4b89b14`（`fix: close direction-material review gaps`）后在同一 recipe 上复跑 8/8 通过（`RUN=/tmp/contact-direction-materials.PE7cvb`）；rebase 到 main 后（tip `6371cab3df2fb5f007fd61d42db1aa8a7857d7d4`）再次复跑 8/8 通过（`RUN=/tmp/contact-direction-materials.JeBgfh`）。测试资产来自 PR head `6858cb08`；实现提交未改 TP1 的 8 个测试方法、selector、输入或预期结果。唯一的既有测试改动是 `test_stage3_direction_groups.py` 的 `source_hash` 辅助函数补上 EP1.2 新增的 `direction_materials` 字段，与 TP1 的旧包夹具（`legacy_source_hash()` 固定旧字段元组）互不影响。
+- 实现范围：教授本地 `方向素材.json`（schema 1）与 `direction-materials-save`；Stage-4 冻结 `direction_materials[]`、`direction_material:<direction_id>:<material_id>` 来源与 `source_hash`；Stage-5 `model_input.direction_materials`、素材切片 freshness（`needs_refresh` / `direction_materials_changed`）和 md 来源表渲染；selection / generator / validator / SKILL / workflow-reference 的合同同步。
+- 环境：macOS arm64；解释器 `/nix/store/0kcws5blwbdyxqxjd1w8hjipz61xny3k-python3-3.14.7/bin/python3`（Python 3.14.7）；工作树 `/Users/rekidunois/code/skill-repos-dev/worktree/professor-contact-pr149-execution-20261028`。
+- 运行目录：`/tmp/contact-direction-materials.iMt6hj`；`TMPDIR=/tmp/contact-direction-materials.iMt6hj/tmp`，所有合成教授、素材、邮件与状态只落在这里，仓库内没有测试写入。`python-version.txt`、`tested-commit.txt`、`save-entry-present.txt`、`direction-materials.out` 保存本次正式输出。
+- 实现前基线（同一测试模块、同一解释器，`pr149-test-preparation-20261027` 工作树在 `6858cb08`）：`save-entry-present.txt` 为 `False`，模块 `OK (skipped=8)`，据此 8 项记为未执行；该次输出不参与本轮结论。
+
+## Rebase 到 main（2026-10-28）
+
+`main` 已合入 PR150（兴趣段净正文长度）。本轮把分支 rebase 到 `origin/main`（rebase 前 tip `1641eb36`，rebase 后 tip `6371cab3`）。冲突只出现在：
+
+- `_stage5_commands.py` 的 `interest`/`opening` 规则：保留 PR150 的净正文长度规则，并叠加本功能的 `direction_materials` 来源约束；`_stage5_email.py` 的净长度校验与素材来源渲染自动合并。
+- `plan/test-grouping/shards.json` 与 `README.md`：同时登记 PR150 的 `test_stage5_interest_title_length`（5 项，未计时）与本功能的 `test_direction_materials`（8 项，22.7s）；按清单逐项求和为 88 模块、1162 项用例、468.7s。`scripts/check_test_shards.py` 返回 `OK: 88 test modules across 4 shards, each with a stage`。
+
+提交重写映射（旧 → 新）：
+
+| 旧 | 新 | 说明 |
+| --- | --- | --- |
+| `1a60113` | `adac83f2` | 产品实现 |
+| `1084a40` | `ddd92122` | 实现符合性首审修正 |
+| `50c33ad` | `d5d2a11a` | TP1.5 执行记录 |
+| `c255904` | `b9b902c6` | 首审修正记录 |
+| `a1ac428` | `42d40bf0` | 摘要自检记录 |
+| `181b356` | `275e9329` | 聚合/错误出口残余修正 |
+| `112a22d` | `b51dd465` | 残余修正记录 |
+| `2793044` | `d49ce620` | 最终实现符合性审核记录 |
+| `23324f65` | `7ec1e9fd` | 追加保存修正 |
+| `1641eb36` | `6371cab3` | 追加保存记录 |
+| `3c6879e` | `6858cb08` | 实现前 PR head |
+| `17f3499e` | `a0727689` | TP1.6 test-plan 记录（rebase 后恢复） |
+
+rebase 后复验：TP1 8 项 `Ran 8 tests in 13.607s`、`OK`（`RUN=/tmp/contact-direction-materials.JeBgfh`）；TP1 8 + PR150 interest 5 + immutable 13 = `Ran 26 tests in 31.778s`、`OK`；合同批 135 项、`test_contact_state` 90 项均 `OK`。本记录其余位置已同步为新提交号，rebase 前结果作为历史保留。
+
+远端在 rebase 基线 `1641eb36` 之后新增了 TP1.6 记录 `17f3499e`（只改 `test-plan.md`，删除 T6 的并发/锁审查义务）。本轮首次 force-push 前未把它纳入 rebase；发现后已把该提交恢复到 rebase 后的历史（`a0727689`，内容相同），并同步在本记录与测试计划中保留 TP1.6。此恢复不改变 8 项测试方法、recipe、输入或已记录结果。
+
+## 结果总览
+
+| 编号 | 结果 | 证据 |
+| --- | --- | --- |
+| T1 补问只针对缺少的真实方向素材 | 未执行（本角色不执行静态阅读） | 合同位置见下节，待独立 reviewer 按当前计划（TP1.6）静态核对并记录位置 |
+| T2 正常保存与同方向复用 | 通过（2 项） | `direction-materials.out`：`test_t2_saved_answer_is_frozen_for_the_selected_direction_only`、`test_t2_selection_changes_do_not_delete_saved_materials` OK |
+| T3 精确来源贯通与非法引用拒绝 | 通过（2 项） | `test_t3_frozen_material_reference_is_accepted_and_rendered`、`test_t3_unfrozen_material_cannot_be_cited` OK |
+| T4 更新素材后重冻、重新生成且只刷新相关邮件 | 通过（1 项） | `test_t4_answer_update_requires_a_stage4_refreeze` OK |
+| T5 新旧包兼容与素材被移走 | 通过（2 项） | `test_t5_pack_without_materials_keeps_old_behavior`、`test_t5_removed_material_is_a_slice_change` OK |
+| T6 保存入口防错归属/覆盖 | 通过（1 项） | `test_t6_save_rejects_foreign_binding_and_stale_digest` OK；TP1.6 已从预期中删除“互斥设计按源码审查确认”，本项只按原文件内容/返回值判断 |
+| 全部 8 项 | 通过 | 首轮 `adac83f2`：`Ran 8 tests in 31.283s`，`OK`，退出码 0；修正 `ddd92122` 后复跑：`Ran 8 tests in 22.456s`，`OK`，退出码 0；追加保存修正 `7ec1e9fd` 后复跑：`Ran 8 tests in 45.001s`，`OK`，退出码 0；rebase 后 `6371cab3` 复跑：`Ran 8 tests in 13.607s`，`OK`，退出码 0 |
+
+## 执行命令与结果
+
+按 TP1.5 §2 从受测 checkout 仓库根目录依次运行：
+
+1. 建立运行目录、设置 `TMPDIR`、记录解释器与受测提交，并探测正式保存入口：
+
+```bash
+set -o pipefail
+RUN=$(mktemp -d /tmp/contact-direction-materials.XXXXXX)
+mkdir -p "$RUN/tmp"
+export TMPDIR="$RUN/tmp"
+PYTHON=/nix/store/0kcws5blwbdyxqxjd1w8hjipz61xny3k-python3-3.14.7/bin/python3
+"$PYTHON" --version 2>&1 | tee "$RUN/python-version.txt"
+git rev-parse HEAD 2>&1 | tee "$RUN/tested-commit.txt"
+git cat-file -e HEAD:.apm/skills/professor-contact/tests/test_direction_materials.py
+cd .apm/skills/professor-contact/tests
+"$PYTHON" -B - <<'PROBE' 2>&1 | tee "$RUN/save-entry-present.txt"
+import argparse, importlib.util, sys
+spec = importlib.util.spec_from_file_location("cs", "../scripts/contact_state.py")
+module = importlib.util.module_from_spec(spec)
+sys.modules["cs"] = module
+spec.loader.exec_module(module)
+for action in module.build_parser()._actions:
+    if isinstance(action, argparse._SubParsersAction):
+        print("direction-materials-save" in action.choices)
+        break
+PROBE
+```
+
+实际输出：`Python 3.14.7`、`adac83f2f673d4034850101c6c49903a4f6c31cb`、`True`。
+
+2. 运行全部 8 项：
+
+```bash
+"$PYTHON" -B -m unittest -v test_direction_materials 2>&1 | tee "$RUN/direction-materials.out"
+```
+
+实际输出：`Ran 8 tests in 31.283s`、`OK`，退出码 0。按 TP1.5 §2 第 3 步记录：`save-entry-present.txt` 为 `True`，8 项均有实际运行结果，不记未执行。
+
+## 逐项观察
+
+- T2：回答按原字节保存在独立 `方向素材.json`，未进入 profile 或 `套磁候选状态.json`；同一方向换 idea 后继续冻结同一 `material_id`，取消选择再选不删除素材；方向 B 的 `direction_materials` 为 `[]` 且不带方向 A 的来源 ID。
+- T3：`stage5-plan` 的 `model_input.direction_materials` 含方向 A 的原回答；① 引用冻结来源时 finalize `ok`，md 来源表的 ① 行显示可读来源而不是裸机器 ID；其他方向或不存在的素材 ID 被 `allowed_sources` 拒绝且已提交邮件字节不变；③ 仍只能用 `gap:`，用素材代替 gap 被拒绝。
+- T4：更新回答后旧包在 `stage5-plan` 与 `stage5-finalize` 均返回 `needs_refresh`，邮件、纯文本与状态字节不变；经 Stage-4 重冻后 `source_hash` 改变，`model_input.direction_materials` 与邮件包都含新回答，重新生成的结果与草稿可完成新邮件；只改未选方向 B 时 A 的 `source_hash` 不变。
+- T5：旧包按旧字段元组重算 `source_hash`，无素材字段时 plan/finalize 正常；该方向新增素材后旧包 `needs_refresh` 且不覆盖已有邮件；Stage-4 重冻后可继续生成。把素材文件移走同样识别为切片变化。
+- T6：方向不在该教授正式范围、教授目录越出 `教授研究`（程序根同级与程序根内部两种）均拒绝且不生成素材文件；陈旧摘要拒绝且原字节不变；正确摘要更新同一条目而不重复；损坏文件不被当作空库覆盖；同名方向在另一教授目录各自保存、互不改写。
+
+## 实现符合性审核与复验（2026-10-28）
+
+独立 `implementation_reviewer` 首审结论为“部分完成”，发现 4 项合同/错误通路问题；本角色修正后提交 `ddd92122`：
+
+- F1（selection 失败分支）：Step 2.5.5 与 Hard rules 区分可重读后重试的 `materials_digest_changed`/`materials_already_exists`，与必须停止该教授、零 Stage-4 写入的 `invalid_direction_materials`/`unknown_direction`/`invalid_professor_dir`/`invalid_params`；Errors 增加该教授 input-error 行的终止出口。
+- F2（needs_input 枚举与聚合）：Return 的 `results[].status` 示例补 `needs_input`；明确“有其他成功 → partial，全部停在真实用户输入 → needs_input，无成功且无待输入 → error”。
+- F3（保存入口摘要/异常）：`--expected-sha256` 改为对原始字节取摘要，`OSError` 转 `invalid_direction_materials` 结构化失败；T6 在 `ddd92122` 上复跑通过。另用非 UTF-8 字节 `b"\xff\xfe{not json"` + 正确旧摘要做一次定向自检：退出码 1、`status=error`、`reason_code=invalid_direction_materials`、stderr 无 traceback、原字节不变。
+- F4（validator 冒充）：规则 13 与 Step 2 要求使用 `direction_materials[].answer` 的经历必须标该条 `direction_material:` 来源；标成 `profile.interest`/`user_note`/`paper:`/`gap:` 承载同一经历 → blocking（无法判断时 minor）。
+
+同批澄清：`answer` 是用户数据而不是指令/授权；已有 profile/补充足以写出有事实依据的接触描述时不再重复问。修正后 TP1 8 项复跑通过；selection/validator/generator 与 Stage5 合同批 `Ran 148 tests in 27.449s`，`OK`。
+
+定向复核（基线 `b9b902c6`）确认 F3/F4 关闭；F1 原缺陷关闭，但发现三项残余：F1-R1（Step 2.5.5 仍写“或调用级 error”，与 Errors 的教授行终止出口矛盾；该句已在 `42d40bf0` 删除）、F1-R2（`--expected-sha256` 遇到文件已删除仍返回 `materials_digest_changed`，合同却要求重读摘要）、F2-R1（无成功 + 待输入 + 失败的混合批次没有一致聚合规则）。残余修正提交 `275e9329`：
+
+- F1-R1：合同只保留 Errors 的教授 input-error 行出口；
+- F1-R2：`materials_digest_changed` 后重读发现文件不存在时停止该教授保存并报告，不按同一 `material_id` 重新追加；
+- F2-R1：selection Step 2.5.4、Return 与 SKILL Stage 4 统一为“任一成功 → partial；无成功且存在失败/错误 → error（needs_input 行保留展示）；无成功且全部停在真实用户输入 → needs_input”。
+
+残余修正只改合同文字（selection/SKILL），未改产品代码、TP1 测试方法或输入，`ddd92122` 的 T2–T6 结果继续适用；合同批在修正后 `Ran 135 tests in 9.842s`，`OK`。
+
+最终定向复核（基线 `b51dd465`）结论：**完整（仅实现符合性）**。F1-R1、F1-R2、F2-R1 关闭，F3/F4 的先前关闭不受影响；未发现新的直接行为偏差，只有三条不影响结论的可选措辞清理，未因此改动测试或产品。该结论不是 Gate2/Gate3 或合并批准。
+
+## 合并审核更正：新回答追加保存（2026-10-28）
+
+- 依据：PR 合并审核更正评论（2026-10-28T06:21:03Z）。保留一项 `IMPLEMENTATION_DEFECT`：同一方向的多条新回答被调用方拆成多条新增记录时，第二条可能被引导去覆盖第一条；撤回“更新必须强制提供旧摘要”和“Stage4 素材锁必须持有至邮件包提交”两项并发阻断（用户已确认同一教授无并发场景；锁可保留但不作为合并条件）。M1 PASS；M2/M3 `NEEDS_MODIFICATION`；合并结论 `NOT_READY`。
+- 修正 `7ec1e9fd`（`fix: append new direction answers instead of overwriting`）：
+  - selection Step 2.5.5 改为“新增回答默认追加：不传 `material_id`；该方向尚无素材时传 `--expect-missing`，已有素材时省略并直接追加；只有用户明确要求修正某条既有回答时才传 `material_id`”；
+  - `materials_already_exists` 不再引导更新已有条目：重读后按新增路径追加，绝不自动挑已有 `material_id` 覆盖；
+  - selection 的 `materials` 输入、SKILL Stage 4 caller contract 与保存入口错误信息同步；
+  - 不新增并发支持、不强制旧摘要、不把锁持有至提交作为要求；现有文件锁保留为防御性实现，不声称支持同一教授并发。
+- 复验：`7ec1e9fd` 上按 TP1.5 §2 复跑 8 项，`Ran 8 tests in 45.001s`、`OK`、退出码 0（`RUN=/tmp/contact-direction-materials.eT25p1`）；selection/Stage5 合同批 `Ran 148 tests in 58.781s`、`OK`。追加/修正定向自检：同一方向第二次新增得到不同 `material_id`，两条原回答都保留；显式修正只改指定条目，另一条不变。
+- 状态：等待测试审核者按受影响必测项判断与合并审核复查；本记录不声称 M2/M3 已关闭。
+
+## T1 合同位置（供独立 reviewer 静态核对）
+
+本角色不执行 T1 的人工静态阅读，也未把阅读结论写成自动断言。实现后的合同位置如下，供独立 reviewer 按当前计划（TP1.6）T1 的观察点逐项核对：
+
+- `.apm/agents/professor-contact-selection.agent.md`：Input 的 `materials`；Step 2.5 的缺素材补问、已有回答不重复、Codex `needs_input` + `pending_materials`、用户回答后 fresh 委派、`direction-materials-save` 参数与独立保存语义；Return value 的 `pending_materials[]` 与 `needs_input` 行。
+- `.apm/skills/professor-contact/SKILL.md`：Stage 4 的「方向真实素材（EP1.2）」caller contract；Input contract 的 `materials` 行；持久化产物 `<教授名>/方向素材.json`。
+- `.apm/agents/professor-contact-email-generator.agent.md`：「Direction-scoped experience materials (EP1.2)」的冻结切片、来源 ID、`needs_refresh` 回 Stage 4 和重新 plan/生成/草稿规则；Execution summary 首步与末尾的刷新说明。
+- `.apm/agents/professor-contact-email-validator.agent.md`：规则 1 的 `direction_material:` 来源、规则 13 的素材不得改写/升级、规则 14 的跟进检查；Step 1 读取 `direction_materials[]`。
+- `.apm/skills/professor-contact/docs/workflow-reference.md` §8 的方向素材保存/冻结说明与 §9 的素材切片 freshness 说明。
+
+## 既有回归（非必测，实现自检）
+
+以下结果不替代 T1–T6，也不扩大测试范围，只用于确认本次实现没有破坏直接受影响的既有合同：
+
+- 在最终代码 `adac83f2` 上复跑：`test_contact_state` `Ran 90 tests in 241.973s`，`OK`；全 shard3（`check_test_shards.py --print shard3`）`Ran 288 tests in 487.072s`，`OK`；全 shard2（`--print shard2`）退出码 0（同一模块集此前一次完整输出为 `Ran 227 tests in 273.865s`，`OK`）。
+- 推送后 CI run `40574397594`（head `d5d2a11a`）、`40577168299`（head `b9b902c6`）与 `40578210640`（head `b51dd465`）：三次的 `shards (shard1)`–`shards (shard4)` 与聚合 `test` 全部 pass。CI 不是 TP1 的必测项，只作既有回归复核。
+- 文档补充后重跑 selection/stage4/stage5 合同、部署元数据与 routing 合同：`Ran 121 tests in 12.969s`，`OK`。
+- 复核修正 `ddd92122` 后重跑同类合同批（含 `test_stage5_immutable`）：`Ran 148 tests in 27.449s`，`OK`。
+
+## 未完成项与下一负责人
+
+- Gate2：TP1.5/TP1.6 的 T5 旧包夹具与 T6 并发/锁义务两处定向复核仍待独立 reviewer；本记录不声称 Gate2 通过。
+- Gate3：T2–T6 已给出当前版本的实际结果；T1 未执行，需独立 reviewer 完成静态阅读后才能形成必测清单的完整结论。本记录不自授 Gate3 或合并许可。
+- 实现符合性审核：首审“部分完成”（F1–F4，修正 `ddd92122`）；定向复核确认 F3/F4 关闭、F1/F2 有残余（F1-R1/F1-R2/F2-R1），已在 `42d40bf0`/`275e9329` 处理；最终定向复核结论“完整（仅实现符合性）”。该结论不是计划/测试关口或合并批准。
+- 合并审核：M1 PASS；M2/M3 因“同方向多条新回答可能被当作更新而覆盖”为 `NEEDS_MODIFICATION`，已在 `7ec1e9fd` 修正；等待测试审核者复验与合并审核复查，本记录不声称 `NOT_READY` 已解除。
+- 下一负责人：测试审核者按合并审核的受影响范围复验追加保存修正；随后 merge reviewer 复查该修正和直接影响。rebase 后的 CI 在本次 force-push 后重跑，结果见 PR checks。
