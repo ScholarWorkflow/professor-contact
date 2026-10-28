@@ -1,12 +1,11 @@
 """Prepared test assets for requirement R1: a cited paper title does not count
 toward the Stage-5 interest length.
 
-These selectors belong to ``plan/interest-title-length/test-plan.md`` (T1-T4)
-and are prepared, not executed. The shared validator still counts every
-character of ``interest_sentences_ja``, so T1, T2 and T4 are expected to fail
-as product-missing until it exempts a verbatim cited title. T3 guards the
-preserved behaviour: it holds on the prepared baseline and on the intended
-behaviour, and passing there is not evidence for R1.
+These selectors belong to ``plan/interest-title-length/test-plan.md`` (T1-T4).
+The shared validator now exempts a verbatim cited pack title, so T1, T2 and T4
+read the implemented behaviour instead of the former product-missing failure.
+T3 guards the preserved behaviour: it held on the baseline before the change
+and still holds after it, so passing there is not evidence for R1.
 
 The T1 rule check is not a selector. Test plan revision TP2 replaced the old
 keyword-and-window matcher with a single manual reading of the generated
@@ -129,9 +128,10 @@ class TestStage5InterestTitleLength(BaseEnv):
 
         The sentence itself is the implementer's choice, so the check reads the
         numbers it carries instead of matching its wording. Requiring the net
-        number keeps the baseline visible: there the message still reports the
-        total including the title (``interest total 260 ...``), so a net length
-        of 181 never appears. Extra numbers, such as the cap itself, are fine.
+        number is what separates the implemented rule from the old one: before
+        the change the message reported the total including the title
+        (``interest total 260 ...``), so a net length of 181 never appeared.
+        Extra numbers, such as the cap itself, are fine.
         """
         self.assertEqual(len(problems), 1, problems)
         numbers = {int(value) for value in re.findall(r"\d+", problems[0])}
