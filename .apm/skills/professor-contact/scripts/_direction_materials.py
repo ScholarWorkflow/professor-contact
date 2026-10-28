@@ -300,9 +300,10 @@ def build(*, fail,
                 # The marker guards THIS direction, not the whole professor file:
                 # a second direction legitimately lives in the same 方向素材.json.
                 fail("materials_already_exists",
-                     f"方向 {direction_id} 已有素材，不能按“首次保存”覆盖：{path}；"
-                     "本次零写入。", materials_file=str(path),
-                     direction_id=direction_id)
+                     f"方向 {direction_id} 已有素材，不能按“首次保存”写入：{path}。"
+                     "新增回答请省略 --expect-missing 后追加；只有明确修正既有"
+                     "条目时才传 --material-id。本次零写入。",
+                     materials_file=str(path), direction_id=direction_id)
             if requested_id:
                 row = next((entry for entry in entries
                             if entry["material_id"] == requested_id), None)

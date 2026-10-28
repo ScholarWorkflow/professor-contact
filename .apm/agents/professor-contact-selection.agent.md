@@ -44,7 +44,7 @@ You are **professor-contact-selection**, the stage-4 subagent that records the u
   ```json
   [{"professor": "Professor Example", "professor_dir": "<教授目录 abs>",
     "direction_id": "<DIR...>", "question": "<原问题，可省略>",
-    "answer": "<用户原回答>", "material_id": "<更新已有素材时给出>"}]
+    "answer": "<用户原回答>", "material_id": "<仅用户明确要求修正某条既有回答时给出；省略=追加一条新素材>"}]
   ```
   缺省时本 agent 不代答、不生成默认回答；给出的 `answer` 原样保存，绝不改写、总结或升级经历。
 
@@ -128,9 +128,10 @@ If `folder_path` missing → return the error JSON.
   [--expected-sha256 <当前素材文件摘要> | --expect-missing]
 ```
 
-   - 新增素材用 `--expect-missing`（语义是"该方向还没有素材"；同教授其他方向可以已有文件）；修正已有回答传 `--material-id` 与调用前读取的 `--expected-sha256`。
+   - **新增回答（默认）**：每条用户回答单独一次调用；同一方向的多条新回答各自追加为独立素材，**不传 `--material-id`**。该方向尚无素材时传 `--expect-missing`；该方向已有素材时省略 `--expect-missing` 直接追加。一次用户回复包含多个问题时，每个回答各追加一条，绝不互相覆盖。
+   - **明确修正**：只有用户明确要求"修正/改一下之前那条回答"时，才传该条的 `--material-id`；能取得当前素材文件摘要时同时传 `--expected-sha256` 作防覆盖校验（同一教授并发修改不是本流程的支持范围）。
    - 成功返回 `status=ok`、`material_id`、`materials_file`。
-   - `materials_digest_changed`（旧摘要已变）→ 重读当前素材文件：文件仍在则用新摘要重新提交同一回答；**文件已不存在 → 停止该教授保存并报告**（不按同一 `material_id` 重新追加、不把删除当新增），等用户明确是否重新提供回答。`materials_already_exists` → 重读该方向现有条目，按已有 `material_id` 更新，不重复追加。这两类才允许按原因重读后重试。
+   - `materials_digest_changed`（旧摘要已变）→ 重读当前素材文件：文件仍在则用新摘要重新提交同一回答；**文件已不存在 → 停止该教授保存并报告**（不按同一 `material_id` 重新追加、不把删除当新增），等用户明确是否重新提供回答。`materials_already_exists` 表示本次是**新回答**但该方向已有素材：重读后按上面的新增路径**省略 `--expect-missing` 追加一条新素材**，绝不自动挑一个已有 `material_id` 去覆盖；只有用户明确要求修正时才改走 `--material-id`。这两类按上述分流重读后可重试；其余输入错误终止。
    - `invalid_direction_materials`（文件损坏/归属不符）、`unknown_direction`、`invalid_professor_dir`、`invalid_params` 是**不能靠重读/重试修复的输入错误**：保留原文件，停止该教授保存并零 Stage-4 写入，不重试、不覆盖、不继续 Step 3/4；把结构化原因交回 caller，按 Errors 只形成该教授的 input-error 行，等人工修复素材/目录后 fresh 重来。
    - 保存只更新/追加本次明确回答的条目，不删除未列出的其他条目；它是独立用户输入提交：保存成功后即使随后迁移/冻结失败，真实回答仍保留，不假装整步回滚；失败也不能删除或清空已有素材。
 6. 保存后继续 Step 3/4。`stage4-finalize` 会把本次所选方向的当前素材冻结进该教授邮件包：每条 email 的 `direction_materials[]`（`direction_id`/`material_id`/`question`/`answer`）、`allowed_sources` 中的 `direction_material:<direction_id>:<material_id>`，并参与该 email 的 `source_hash`。同方向换 idea、取消选择后再选都不删除素材；不自动跨方向或跨教授套用。
@@ -221,7 +222,7 @@ when: no `folder_path`; program root unresolvable; `selection` 整体不可解�
 - **先分流后读盘（显式 `selection`）**：路径 A 已有可靠 `professor_dir` 时，先验证该目录属于当前 `<program_root>/教授研究/` 再读该教授正式文件，且只读请求涉及的教授；绝不先执行全项目扫描候选状态，绝不把无关教授的读取失败当作本教授的前置条件；无法唯一绑定目录的请求只报该请求的待补输入，绝不按显示名猜目录。
 - **缺 selection 不 finalize**：Codex 缺 `selection` 时不得调用 `stage4-finalize`，任何教授的 local `套磁选择.json`/`邮件输入.json` 与历史程序级 Stage-4 文件零写入；`pending_selection` 只是展示 payload，不是新的机器事实源，绝不写盘。
 - **素材只来自用户真实回答**：缺素材才问，已有回答不重复问；不得代答、不得把问题示例或模型猜测写成 `answer`，不得把"听说/看到"升级成"用过/研究过"；用户说没有经历也按原话保存。
-- **素材只由 runner 保存**：`direction-materials-save` 是唯一保存入口；绝不直接写 `方向素材.json`、不删除素材、不把素材塞进 profile/note/候选状态。保存失败按原因分流：旧摘要/首次保存冲突可重读后重试；文件损坏、归属不符、方向越界、目录越界是不可重试的输入错误，必须停止该教授、零 Stage-4 写入并交回 caller。
+- **素材只由 runner 保存**：`direction-materials-save` 是唯一保存入口；绝不直接写 `方向素材.json`、不删除素材、不把素材塞进 profile/note/候选状态。**新回答默认追加**：同一方向可以有多条素材，新增时绝不自动映射到已有 `material_id`；只有用户明确要求修正某条既有回答时才更新该条目。保存失败按原因分流：旧摘要/首次保存冲突可重读后按新增或修正的正确模式重试；文件损坏、归属不符、方向越界、目录越界是不可重试的输入错误，必须停止该教授、零 Stage-4 写入并交回 caller。
 - **待素材不冻结**：`pending_materials` 只是展示；未取得真实回答时不写素材、不把 pending 写进邮件包，也不伪造 Stage-4 成功行。
 - **只读状态不读 Markdown**：候选事实（id/标题/一句话/gap_ids）一律来自 `套磁候选状态.json`；总览 md 只作展示索引。
 - **精确 gap 交接**：选中候选的 `gap_ids` 由 runner 从状态原样搬进 选择/邮件包，绝不按标题、编号或「同论文第一条 gap」重建；`done_by_self` 在邮件包只能是 `extension_context_only`。
