@@ -2,8 +2,8 @@
 
 - Requirement revision: R1；关联执行计划：同目录 `execution-plan.md` EP1。
 - Plan revision: TP2（2026-10-28）。只修订 T1 的生成规则检查方式和执行步骤；第 1 节必测清单、T1–T4 的业务预期及 EP1 已批准的产品要求保持不变。
-- Baseline: `b67dd3ca4d29dfc78f57988564b219c71b582674`（产品基线）；测试资产准备基线：`b36ed0613cbe5eeae950acdc4e8195ec0218537d`。目标产品实现版本：待实现。
-- Review status: 第二关待复核；第三关未执行。本轮修订不自行授予 PASS，准备期试跑和自动 CI 均不作为第三关结果。
+- 产品基线：`b67dd3ca4d29dfc78f57988564b219c71b582674`；正式执行的测试资产基线：`fe9ee442b0656a4b5fa549821fbb2c81d0cbc24f`；受测产品版本：`ef0727b54d5b449dcb5ed601bf3ee7ccb684ac1c`，见 [执行记录](test-execution-2026-10-28.md)。
+- 审核状态：第一关沿用通过；第二关、第三关于 2026-10-28 审核通过，见 [审核记录](review.md)。本轮仅同步版本、状态与交接；准备期试跑和自动 CI 均不作为第三关结果。
 
 ## 1. 唯一必测清单
 
@@ -16,7 +16,7 @@
 
 本清单来自 R1 直接改变的接受、警告、拒绝和输出保留行为。标题完整逐字匹配、不重复扣同一跨度按 EP1 静态核对，不另加组合穷举。已有适用通过结果直接引用；普通自动 CI 不扩大本清单。
 
-## 2. 执行步骤（TP2 修订；正式测试未执行）
+## 2. 执行步骤（TP2；正式结果见执行记录）
 
 沿用仓库 `.apm/skills/professor-contact/tests/test_stage5_immutable.py` 的 `unittest`、`BaseEnv` 临时目录、`prepare`/`raw_result`、`run_wrapper`，不新增设施、安装路径、网络或模型调用。生产文件、用户目录和实际邮件不得用于测试。复用可用 Python 环境，不为此重装 Nix/APM 或建立干净消费者。
 
@@ -25,7 +25,7 @@
 - 新模块：`.apm/skills/professor-contact/tests/test_stage5_interest_title_length.py`，单类 `TestStage5InterestTitleLength`，5 个 selector（T1 接受一个、T2 一个含 4 个 `subTest`、T3 两个、T4 一个）；T1 生成规则由 §2.4 的一次人工观察完成，不重复写成自动判定。原 `test_t1_generated_rule_states_the_title_exemption` 及其词表、正则、相邻字符窗口检查已按 TP2 从测试模块移除；`COUNT_WORDS`、`CLAUSE_SPLIT`、`TITLE_EXEMPTION`、`EXEMPTION_TITLE`、`INSIDE_TITLE`、`SCOPED_SYMBOL`、`SYMBOL_EXEMPTION`、`EXEMPTION_SYMBOL`、`SYMBOL_PAREN_EXEMPTION`、`_PAREN_SYMBOL` 与 `_clauses`/`title_exemptions`/`symbol_exemptions` 一并删除，模块不再含自然语言判定器。
 - 分片登记：`plan/test-grouping/shards.json` 的 shard3 已加入 `{"name": "test_stage5_interest_title_length", "stage": "stage5"}`；测试代码对齐后该模块只收集上述 5 个确定性 selector，自动 CI 不再运行已废止的规则检查，其结果与 TP2 的 T1-规则判定无关。
 - 夹具复用：通过 `test_stage5_immutable` 的模块对象取 `helpers`/`BaseEnv`/`parse`/`run_wrapper`，再由 `helpers.TestStage5` 取 `prepare`/`raw_result`/`choices`，因此不重新收集 immutable 模块的既有用例（该模块当前实际收集 13 个；`shards.json` 的旧记录写 10 个，属既有漂移，本 PR 不改），也不新增夹具文件。`setUp` 只把 `AAAA1111` 的标题换成 80 字符的 `Synthetic comparison of input patterns across heterogeneous processing pipelines`，其余论文、gap、sidecar、verify 缓存、模板均由既有夹具生成。
-- 准备基线：`b36ed0613cbe5eeae950acdc4e8195ec0218537d`（本 PR 当前 head，产品尚未改动）；解释器 `/run/current-system/sw/bin/python3`（3.14.7）。
+- 最初准备基线：`b36ed0613cbe5eeae950acdc4e8195ec0218537d`（当时产品尚未改动）；正式执行的测试资产与产品版本见文件头。解释器 `/run/current-system/sw/bin/python3`（3.14.7）。
 
 ### 2.2 计数语料
 
@@ -130,7 +130,7 @@ printf '%s\n' "$?" > "$run_dir/t1-rule.exit"
 
 ### 2.5 T4 的人工静态核对
 
-长度断言之外，T4 只静态核对未放宽的产品约束与相关文档同步。产品实现落地后读取相应 diff 并记录结论；生成规则原文已由 §2.4 T1-生成规则检查，本节不再重复。准备阶段这些文件仍是旧口径，不得据此声称已核对：
+长度断言之外，T4 只静态核对未放宽的产品约束与相关文档同步。读取产品实现的相应 diff 并记录结论；生成规则原文已由 §2.4 T1-生成规则检查，本节不再重复。本轮已完成的核对结果见 [执行记录第 2.6 节](test-execution-2026-10-28.md)：
 
 | 核对点 | 路径 | 观察要求 |
 | --- | --- | --- |
@@ -169,9 +169,9 @@ printf '%s\n' "$?" > "$run_dir/t1-rule.exit"
 不增加真实模型 eval、全教授流程、全仓回归、重复安装、来源认证、自建判定器或完整运行轨迹。生成规则是否使用新口径以 model_input/契约核对，确定性计数以现有框架断言；不是文风质量测试。
 
 - 第一关（必测清单）：通过，见同目录 `review.md`。该记录里的 TP1 SHA-256 `6348e4da…` 对应 recipe 补齐前的版本；本文件 §1 逐字未改（该节内容 SHA-256 `473f1323…`），因此第一关结论继续适用，补齐 recipe 不重开第一关。
-- 第二关（具体步骤）：TP2 已改为 5 个确定性 selector 加一次规则原文人工观察；测试模块已按 TP2 对齐，旧规则 selector 及其词表／正则／窗口判定已删除，模块现只收集 5 个 selector。第二关待独立审核，本计划不自行声明通过；TP1 的准备审核记录见 §4，不能代替 TP2 结论。
-- 第三关（正式结果）：未执行；产品实现尚未交付，T1/T2/T4 当前按产品缺失失败。
-- 下一负责人：测试计划审核者复核受影响的第二关步骤；产品实现工程师落实 R1，执行工程师按 TP2 正式执行，结果审核者核对结果。
+- 第二关（具体步骤）：通过。TP2 的 5 个确定性测试入口、一次规则原文人工观察及 T4 静态核对均已落实；命令、输入、观察点、隔离与失败处理齐备，无清单外新增要求。旧词表／正则／窗口判定已移除；本结论来自 2026-10-28 的 [审核记录](review.md)，不复用 §4 的 TP1 准备审核结论。
+- 第三关（正式结果）：通过。T1–T4 均取得受测版本 `ef0727b54d5b449dcb5ed601bf3ee7ccb684ac1c` 的有效通过结果，含 T1 生成规则人工观察和 T4 静态核对，见 [执行记录](test-execution-2026-10-28.md)。至审核版本 `d61b3ffa32d1ed534e9d0aa52363b632c40bf9d7` 仅有测试注释与执行记录变化，结果继续适用；本轮文档同步不触发重跑。
+- 未完成的测试项：无。下一负责人：合并审核者按 `Merge Reviewer Rule.md` 判断合并条件。
 
 依据：[Test Engineer Rule](https://app.notion.com/p/3d80101a85f380d8a8f5ce528141e253) 与 [PROJECT_CONSENSUS](https://app.notion.com/p/3d60101a85f3815a8c43f271f2b4d91d)。仅复核受影响项；文档 SHA 改变本身不触发重跑。
 
@@ -198,4 +198,4 @@ printf '%s\n' "$?" > "$run_dir/t1-rule.exit"
 - **本轮修正**：T1-生成规则只从正式 `stage5-plan` 输出读取 `model_input.rules.interest` 一次，按已批准的“标题免计、外围符号计数”要求直接人工判断。废止基于关键词、固定字符间隔和括号规则的自动近似判定，也不在 T4 静态核对中重复检验同一生成规则。
 - **实际文件状态**：TP2 修订本身只改测试计划；测试代码对齐随后由本地测试工程师完成——已删除 `test_t1_generated_rule_states_the_title_exemption` 及其词表、正则、相邻字符窗口判定（含 `COUNT_WORDS`、`CLAUSE_SPLIT`、`TITLE_EXEMPTION`、`EXEMPTION_TITLE`、`INSIDE_TITLE`、`SCOPED_SYMBOL`、`SYMBOL_EXEMPTION`、`EXEMPTION_SYMBOL`、`SYMBOL_PAREN_EXEMPTION`、`_PAREN_SYMBOL` 与 `_clauses`/`title_exemptions`/`symbol_exemptions`），模块现只收集 5 个确定性 selector，自动 CI 不再运行该规则检查。
 - **范围与风险**：T1–T4 的输入、接受／警告／拒绝、正文原样保留以及失败不覆盖现有邮件的目标不变；不增加真实模型运行、全流程回归或新的证明材料。此前“外侧符号计数”只有反向词表检查、可能误放行未说明符号的规则；现通过人工直接核对原文解决。TP1 的历史预检与旧版审核记录不被重写。
-- **未完成项**：第二关等待按 TP2 复核；产品标题免计实现未提交；第三关未执行。测试代码已对齐 TP2。仅修改计划与测试代码不代表测试已通过或 PR 可以合并。
+- **修订时的待办及当前状态**：TP2 方法修订时，第二关待复核、产品实现未提交、第三关未执行；截至 2026-10-28，产品与正式执行已完成，第二关、第三关已由审核者确认通过。原修订未完成项已关闭，依据见 §3 及同目录 [审核记录](review.md)；合并仍须另行审核。
