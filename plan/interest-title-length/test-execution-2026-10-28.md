@@ -4,7 +4,7 @@
 - 测试计划：TP2；第 1 节必测清单未改，第一关沿用 `review.md` 的通过记录；第二关仍待独立审核，本记录不自授通过。
 - 产品基线：`b67dd3ca4d29dfc78f57988564b219c71b582674`（main）。
 - 测试资产基线：`fe9ee442b0656a4b5fa549821fbb2c81d0cbc24f`（本轮执行前的 PR head，测试模块与 recipe 已按 TP2 对齐）。
-- 受测产品版本：`ef0727b`（`fix(stage5): exclude verbatim cited paper titles from interest length`，本轮唯一的实现提交）。T1–T4 与 shard3 执行时，工作树的产品文件相对 `fe9ee44` 已有未提交改动；该改动与 `ef0727b` 逐字节相同（提交后 `git diff ef0727b -- .apm` 为空），因此本记录把 `ef0727b` 记为受测版本。
+- 受测产品版本：`ef0727b`（`fix(stage5): exclude verbatim cited paper titles from interest length`，本轮唯一的实现提交）。T1–T4 与 shard3 执行时，工作树的产品文件相对 `fe9ee44` 已有未提交改动；该改动与 `ef0727b` 逐字节相同（提交后产品面与 `ef0727b` 零差异），因此本记录把 `ef0727b` 记为受测版本。之后只改过测试模块注释，见 §6。
 - 环境：macOS arm64；解释器 `/run/current-system/sw/bin/python3`（Python 3.14.7）；从 PR 工作树根目录执行，产物写在仓库外运行目录。
 - 运行目录：`/tmp/interest-title-length-run.20261028`，其中 `target-version.txt`、`python-version.txt` 记录版本，`t1.log`/`t1.exit`、`t1-rule.txt`/`t1-rule.err`/`t1-rule.exit`、`t2.log`/`t2.exit`、`t3.log`/`t3.exit`、`t4.log`/`t4.exit`、`shard3.log`/`shard3.exit` 保存本次原始输出。`TMPDIR` 指向该目录，`BaseEnv` 的临时邮件文件全部落在其中并在 teardown 删除。仓库外原始产物不入库，本记录只保存脱敏结果。
 - 运行目录偏离说明：TP2 §2.3 的模板是 `run_dir=$(mktemp -d /tmp/interest-title-length.XXXXXX)`，本轮改用固定目录 `/tmp/interest-title-length-run.20261028`，便于把六项输出放在同一处并逐项写退出码。该目录创建于 13:25:00，早于本轮首次执行，且与准备期目录 `/tmp/interest-title-length-prep.20261028`（创建于 00:05:08）分离，只含本轮输出；隔离与输出完整性不受影响，命令、输入和预期均未变，因此不重跑。
@@ -41,7 +41,7 @@ cd "$checkout/.apm/skills/professor-contact/tests"
 # T1-生成规则、T2、T3、T4 同 TP2 §2.4 的命令块，输出分别写 t1-rule.*、t2.*、t3.*、t4.*
 ```
 
-`git rev-parse HEAD` 在正式执行前记录为 `fe9ee442b0656a4b5fa549821fbb2c81d0cbc24f`（`target-version.txt`）；执行时产品文件已按 §1 改好但尚未提交，随后提交为 `ef0727b`。命令与输入在两者之间未变，且 `git diff ef0727b -- .apm` 为空，所以 §2 的结果对应 `ef0727b`。
+`git rev-parse HEAD` 在正式执行前记录为 `fe9ee442b0656a4b5fa549821fbb2c81d0cbc24f`（`target-version.txt`）；执行时产品文件已按 §1 改好但尚未提交，随后提交为 `ef0727b`。命令与输入在两者之间未变，产品面（`scripts/`、`SKILL.md`、`docs/`、`.apm/agents/`）相对 `ef0727b` 零差异，所以 §2 的结果对应 `ef0727b`。后续只更新了测试模块的注释，测试行为未变（见 §6）。
 
 ### 2.1 T1-接受
 
@@ -119,5 +119,5 @@ EP1 §1 写的是「本 PR 只提交计划和必要审核记录；不修改产�
 - 第三关的正式结论由结果审核者按本记录与 `shard3.log` 核对；本记录不声称合并条件满足。
 - 自动 CI 的 shard3 结果作为补充事实记录，不替代本功能的必测结论。
 - 未新增真实模型 eval、全教授流程、全仓回归或重复安装；T3 两项在基线上也通过，属保持行为项，不构成 R1 证据。
-- 测试模块顶部注释原写「prepared, not executed / 预期产品缺失失败」，实现落地后已更新为当前状态；只改注释，5 个 selector 的输入、断言与预期未变。改后重跑整个模块得 `Ran 5 tests`、`OK`，§2 的逐项结果继续有效。
+- 测试模块注释在实现落地后做过两次更新：模块 docstring、`assert_reported_net` docstring 与 T4 的断言行内注释，从「prepared, not executed / 预期产品缺失失败」改为当前状态。只改注释，5 个 selector 的输入、断言与预期未变（`git diff` 只落在注释行）。改后重跑整个模块得 `Ran 5 tests`、`OK`，§2 的逐项结果继续有效。该次重跑是注释更新的自检，不新增必测项，其日志未单独归档。
 - 下一负责人：计划负责人统一 EP1 §1 的范围表述；测试计划工程师更新 TP2 §3／§5 的状态文字并复核第二关；合并审核按 `Merge Reviewer Rule.md` 另走。

@@ -235,8 +235,8 @@ class TestStage5InterestTitleLength(BaseEnv):
         payload = json.loads(rejected.stdout)
         self.assertEqual(payload["status"], "error", payload)
         self.assertEqual(payload["reason_code"], "invalid_result_json", payload)
-        # The message must carry the net length: the baseline reports only the
-        # total of 281, which is what makes this a product-missing failure.
+        # The message must carry the net length. Before the change it reported
+        # only the total of 281, which made this a product-missing failure.
         self.assertIn("201", payload["message"])
         self.assertEqual(before, {path: path.read_bytes() for path in surfaces})
 
