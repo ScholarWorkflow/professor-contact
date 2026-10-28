@@ -109,6 +109,26 @@ def build(*, read_json_file,
             fingerprints[field] = f"{source_path}:{mtime}"
         return {"source_fingerprints": fingerprints, "failed_field": None}
 
+    def cited_title_chars(sentences: list, titles: list) -> int:
+        """Characters that are verbatim quotes of a pack paper title.
+
+        A character is exempt only when the sentence carries the title exactly
+        as the pack states it. Each position is counted once even when one pack
+        title contains another, and a title split across two sentences never
+        matches, because every sentence is scanned on its own.
+        """
+        covered = set()
+        for index, sentence in enumerate(sentences):
+            for title in titles:
+                if not title:
+                    continue
+                start = sentence.find(title)
+                while start >= 0:
+                    covered.update((index, offset)
+                                   for offset in range(start, start + len(title)))
+                    start = sentence.find(title, start + 1)
+        return len(covered)
+
     def validate_email_raw(email: dict, raw: Any) -> list:
         problems = []
         if not isinstance(raw, dict) or raw.get("schema") != 1 or raw.get("kind") != "email":
@@ -120,7 +140,9 @@ def build(*, read_json_file,
                 not all(isinstance(s, str) and s.strip() for s in sentences):
             problems.append("interest_sentences_ja must be 3 non-empty sentences")
             return problems
-        total = sum(len(s) for s in sentences)
+        titles = [p["title"] for p in email.get("papers") or []
+                  if isinstance(p, dict) and isinstance(p.get("title"), str)]
+        total = sum(len(s) for s in sentences) - cited_title_chars(sentences, titles)
         if total > INTEREST_HARD_CAP:
             problems.append(f"interest total {total} exceeds hard cap {INTEREST_HARD_CAP}")
         elif total > INTEREST_SOFT_CAP:

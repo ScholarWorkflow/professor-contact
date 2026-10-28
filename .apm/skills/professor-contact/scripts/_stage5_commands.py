@@ -145,7 +145,7 @@ def build(*, atomic_write,
                         "user_supplement": email.get("user_supplement") or "",
                         "allowed_sources": email.get("allowed_sources"),
                         "rules": {
-                            "interest": "3 句、只写软层、总长 ≤180 日文字；①真实关注（普通发信人的接触、有限认识与自然好奇，禁恭维）②点名+桥接（真实标题、共同主题逐篇成立）③宽泛例子（仅可用 gaps 里 status∈{open,partial,unknown} 的精确 gap；done_by_self 禁锚；partial 只谈 remaining_gap；引用教授原话式，不找碴）",
+                            "interest": "3 句、只写软层；长度按净正文计：当前邮件包 papers[].title 中实际完整逐字引用的论文标题文本不计入字数，标题以外的书名号、引号、标点和其他正文照常计入；净正文软上限 ≤180 日文字（runner：>180 警告、>200 拒绝）；①真实关注（普通发信人的接触、有限认识与自然好奇，禁恭维）②点名+桥接（真实标题、共同主题逐篇成立）③宽泛例子（仅可用 gaps 里 status∈{open,partial,unknown} 的精确 gap；done_by_self 禁锚；partial 只谈 remaining_gap；引用教授原话式，不找碴）",
                             "opening": "从普通发信人对这件事的真实接触和认识写起，允许有限认识（如听说过、觉得有用但还不熟悉），再顺承自然的好奇；不替用户提出研究问题，不把论文问题翻译成白话冒充个人兴趣。根据已有 profile、用户笔记和补充表达，不编具体经历、应用名称、长期兴趣或研究能力；没有依据时不声称听过、用过或读懂。日语简洁礼貌，不固定身份、自定位或「私は」开头，也不固定成「听过但没用过」句型。",
                             "exclusions": "禁方法名/模型名/算法名（标题内除外）、指标数字、数据集名、组件名、公式、限定语链、年份叙事",
                             "future_aspiration": "宽泛方向表述+背景技能，禁具体技术栈，不用其他方向原句",
