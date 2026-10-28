@@ -37,8 +37,7 @@ def build(*, atomic_json,
           FACTS_KIND,
           FACTS_TEXT_FIELDS,
           FACTS_LIST_FIELDS,
-          SHORTLIST_MAX,
-          SHORTLIST_FLOOR,
+          DEFAULT_FRESHNESS_BUDGET,
           EXT_EVIDENCE_RE,
           PLACEHOLDER_RE,
           SIDECAR_EXTRACTOR_VERSIONS,
@@ -525,11 +524,6 @@ def build(*, atomic_json,
             gap["_score"] = score_gap(gap, current_year)
         return sorted(gaps, key=lambda g: (-g["_score"], -(g.get("paper_year") or 0),
                                            g.get("item_key") or "", g.get("gap_id") or ""))
-
-    def shortlist_size(pool_size: int) -> int:
-        if pool_size >= SHORTLIST_FLOOR:
-            return min(SHORTLIST_MAX, pool_size)
-        return pool_size
 
     def is_later_or_same_unknown(paper: dict, source: dict) -> bool:
         py, pm = paper.get("year"), paper.get("month")
@@ -1197,7 +1191,7 @@ def build(*, atomic_json,
         def judge_set(self, plan: dict) -> list:
             ranked = plan["ranked"]
             if self.freshness_scope == "shortlist":
-                return ranked[:shortlist_size(len(ranked))]
+                return ranked[:DEFAULT_FRESHNESS_BUDGET]
             return list(ranked)
 
         def freshness_job_items(self, plan: dict) -> tuple[list, list, int]:
@@ -1315,7 +1309,6 @@ def build(*, atomic_json,
                 compute_version_families=compute_version_families,
                 score_gap=score_gap,
                 rank_gaps=rank_gaps,
-                shortlist_size=shortlist_size,
                 is_later_or_same_unknown=is_later_or_same_unknown,
                 gap_related=gap_related,
                 freshness_candidates=freshness_candidates,

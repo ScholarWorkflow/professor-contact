@@ -239,6 +239,11 @@ def build(*, Stage2Context,
                 return True
             if not isinstance(direction.get("relevant_keys"), list):
                 return True
+            if any(isinstance(gap, dict)
+                   and str(gap.get("reason") or "").startswith("low_rank")
+                   for gap in direction.get("gaps_excluded") or []):
+                # Refine can clear preflight metadata on a legacy truncated pack.
+                return True
         return False
 
     def stage2_old_pack_gap_statuses(entry: dict) -> dict:
@@ -249,7 +254,17 @@ def build(*, Stage2Context,
         pack already recorded instead of resetting them to "unknown".
         """
         statuses = {}
-        for gap in list(entry.get("gap_shortlist") or []) + list(entry.get("gaps_excluded") or []):
+        rows = list(entry.get("gap_shortlist") or []) + list(entry.get("gaps_excluded") or [])
+        for gap in entry.get("completed_gap_blacklist") or []:
+            if not isinstance(gap, dict):
+                continue
+            candidates = list(gap.get("candidate_paper_ids") or [])
+            completed_by = gap.get("completed_by_item_key")
+            if not candidates and isinstance(completed_by, str) and completed_by:
+                # Older blacklists persisted only this structured identity.
+                candidates = [completed_by]
+            rows.append(dict(gap, status="done_by_self", candidate_paper_ids=candidates))
+        for gap in rows:
             gap_id = gap.get("gap_id") if isinstance(gap, dict) else None
             if not isinstance(gap_id, str):
                 continue
@@ -962,6 +977,17 @@ def build(*, Stage2Context,
                     # the current facts, then apply the accepted decisions below.
                     old_narrative = (old_entry or {}).get("narrative")
                     statuses = stage2_old_pack_gap_statuses(old_entry or {})
+                    # Accepted split children own rows removed from the source.
+                    # Recover only that source's children before re-materializing
+                    # the split; never overwrite an accepted parent record.
+                    for child in (old_pack or {}).get("directions", []):
+                        rd = child.get("resolved_direction") or {}
+                        if (rd.get("resolution_type") == "split_from"
+                                and rd.get("provisional_direction_id") == plan["did"]
+                                and direction_machine_id(child) == rd.get("split_target")
+                                and direction_machine_id(child) != plan["did"]):
+                            for gap_id, status in stage2_old_pack_gap_statuses(child).items():
+                                statuses.setdefault(gap_id, status)
                     narrative = old_narrative if isinstance(old_narrative, dict) else None
                 else:
                     statuses = statuses_by_direction.get(plan["did"], {})

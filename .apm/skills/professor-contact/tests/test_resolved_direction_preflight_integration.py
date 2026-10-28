@@ -23,7 +23,7 @@ import json
 import sys
 import unittest
 from pathlib import Path
-from stage2_upstream_fixture import run_bound_stage2_finalize
+from stage2_upstream_fixture import run_bound_stage2_finalize, run_bound_stage2_plan
 
 ROOT = Path(__file__).parents[1]
 SCRIPT = ROOT / "scripts" / "contact_state.py"
@@ -197,6 +197,16 @@ class TestSemanticsVersionBump(ResolvedPreflightBase):
     def test_old_semantics_pack_cannot_reuse_all_and_re_arms_after_one_run(self):
         self.build_accepted_state()
         pack = self._read_pack()
+        direction = pack["directions"][0]
+        original_narrative = dict(direction["narrative"])
+        kept, completed = direction["gap_shortlist"]
+        # Model the legacy low_rank projection and an already accepted blacklist.
+        direction["gap_shortlist"] = []
+        direction["gaps_excluded"] = [dict(kept, reason="low_rank（本轮未选，不代表不重要）")]
+        blacklist = dict(completed, completed_by_item_key="CCCC3333",
+                         candidate_paper_ids=["CCCC3333"], evidence="已有人工确认的完成证据",
+                         confidence="high", evaluated_at="2026-01-01T00:00:00Z")
+        direction["completed_gap_blacklist"] = [blacklist]
         pack["cache"]["preflight"]["resolution_semantics_version"] = \
             contact_state.STAGE2_RESOLUTION_SEMANTICS_VERSION - 1
         self._write_pack(pack)
@@ -210,10 +220,31 @@ class TestSemanticsVersionBump(ResolvedPreflightBase):
         out = parse(run_bound_stage2_finalize(
             run_cli, self.facts_path, "--results", self.write_stage2_results()))
         self.assertEqual(out["status"], "ok", out)
+        rebuilt = self._read_pack()["directions"][0]
+        self.assertEqual([gap["gap_id"] for gap in rebuilt["gap_shortlist"]], [kept["gap_id"]])
+        self.assertEqual(rebuilt["gaps_excluded"], [])
+        self.assertEqual(rebuilt["gap_shortlist"][0]["status"], kept["status"])
+        self.assertEqual(rebuilt["gap_shortlist"][0]["evidence"], kept["evidence"])
+        self.assertEqual(rebuilt["narrative"], original_narrative)
+        self.assertEqual(len(rebuilt["completed_gap_blacklist"]), 1)
+        for field in ("gap_id", "candidate_paper_ids", "evidence", "confidence", "evaluated_at"):
+            self.assertEqual(rebuilt["completed_gap_blacklist"][0][field], blacklist[field])
         self.assertEqual(self._read_meta()["resolution_semantics_version"],
                          contact_state.STAGE2_RESOLUTION_SEMANTICS_VERSION)
         self.seed_validator_results("pass", rounds=1)
         self.assertEqual(self.preflight()["action"], "reuse_all", self.preflight())
+
+    def test_missing_meta_rebuilds_only_legacy_low_rank_projection(self):
+        self.build_accepted_state()
+        pack = self._read_pack()
+        pack["cache"].pop("preflight", None)
+        pack["validator"]["pack_sha256"] = contact_state.stage2_pack_content_fingerprint(pack)
+        self.assertFalse(contact_state.stage2_pack_requires_membership_rebuild(pack))
+        direction = pack["directions"][0]
+        gap = direction["gap_shortlist"].pop()
+        direction["gaps_excluded"] = [dict(gap, reason="low_rank（本轮未选，不代表不重要）")]
+        pack["validator"]["pack_sha256"] = contact_state.stage2_pack_content_fingerprint(pack)
+        self.assertTrue(contact_state.stage2_pack_requires_membership_rebuild(pack))
 
 
 class TestResolvedSetReuse(ResolvedPreflightBase):
@@ -250,6 +281,42 @@ class TestResolvedSetReuse(ResolvedPreflightBase):
         payload = self.preflight()
         self.assertEqual(payload["action"], "reuse_all", payload)
         self.assertEqual(self.stage3_direction_keys(), stage3_first)
+
+    def test_old_semantics_rebuild_preserves_split_child_blacklist(self):
+        self._accept_split()
+        pack = self._read_pack()
+        parent = next(d for d in pack["directions"] if d["direction_id"] == "DIR00001")
+        child = next(d for d in pack["directions"] if d["direction_id"] == "DIR00001__sub")
+        parent_gap = parent["gap_shortlist"].pop()
+        parent["gaps_excluded"] = [dict(parent_gap, reason="low_rank（本轮未选，不代表不重要）")]
+        child_gap = child["gap_shortlist"].pop()
+        blacklist = dict(child_gap, completed_by_item_key="CCCC3333",
+                         candidate_paper_ids=["CCCC3333"], evidence="子方向已有完成证据",
+                         confidence="high", evaluated_at="2026-01-01T00:00:00Z")
+        blacklist.pop("candidate_paper_ids")  # legacy blacklist stores only completed_by_item_key
+        child["completed_gap_blacklist"] = [blacklist]
+        pack["cache"]["preflight"]["resolution_semantics_version"] = \
+            contact_state.STAGE2_RESOLUTION_SEMANTICS_VERSION - 1
+        self._write_pack(pack)
+        plan_path = self.start_round()
+        planned = parse(run_bound_stage2_plan(run_cli, self.facts_path))
+        self.assertEqual(planned["status"], "ok", planned)
+        self.assertEqual(planned["jobs"], [], planned)
+        # Rebind the accepted resolution to this generation; cached work is reused.
+        self.assertEqual(self.resolve_plan()["jobs"], [])
+        self.resolve_finalize()
+        self.finalize(plan_path)
+        rebuilt = self._read_pack()
+        parent = next(d for d in rebuilt["directions"] if d["direction_id"] == "DIR00001")
+        child = next(d for d in rebuilt["directions"] if d["direction_id"] == "DIR00001__sub")
+        self.assertEqual([gap["gap_id"] for gap in parent["gap_shortlist"]], [parent_gap["gap_id"]])
+        self.assertEqual(parent["gap_shortlist"][0]["evidence"], parent_gap["evidence"])
+        self.assertEqual(child["gap_shortlist"], [])
+        self.assertEqual(child["gaps_excluded"], [])
+        self.assertEqual(len(child["completed_gap_blacklist"]), 1)
+        self.assertEqual(child["completed_gap_blacklist"][0]["candidate_paper_ids"], ["CCCC3333"])
+        for field in ("gap_id", "evidence", "confidence", "evaluated_at"):
+            self.assertEqual(child["completed_gap_blacklist"][0][field], blacklist[field])
 
     def test_dropping_the_split_child_from_the_pack_blocks_reuse(self):
         self._accept_split()

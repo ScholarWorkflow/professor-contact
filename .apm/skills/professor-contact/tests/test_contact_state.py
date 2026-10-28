@@ -411,13 +411,14 @@ class TestRunnerBasics(BaseEnv):
         self.assertIn("future work #1", md)
         self.assertIn("managed_by: contact_state", md)
 
-    def test_01_shortlist_selects_at_most_ten_stable(self):
+    def test_01_freshness_budget_does_not_cap_final_shortlist(self):
         def extra(facts):
             facts["directions"][0]["named_keys"] = []
             papers = []
             for index in range(15):
                 key = f"PPPP{index:04d}"
                 quote = f"Future work number {index}: extend evaluation to new modalities."
+                self.gap_quotes[key] = quote
                 analysis = self.prof_dir / "论文分析" / f"{key}.md"
                 analysis.write_text("# a\n", encoding="utf-8")
                 sidecar = make_sidecar(analysis, [quote])
@@ -429,16 +430,62 @@ class TestRunnerBasics(BaseEnv):
                     "sidecar_file": str(sidecar)})
             facts["papers"] = self.papers + papers
             facts["directions"][0]["member_keys"] = [p["item_key"] for p in facts["papers"]]
-            facts["directions"][0]["relevant_keys"] = []
+            facts["directions"][0]["relevant_keys"] = [p["item_key"] for p in facts["papers"]]
         facts = self.write_facts(extra)
-        results = self.root / "results"
+        original_facts = json.loads(facts.read_text(encoding="utf-8"))
         plan = parse(self.run_bound_stage2_plan(facts))
-        direction = plan["directions"][0]
-        self.assertLessEqual(direction["judge_count"], 10)
-        self.assertGreaterEqual(direction["judge_count"], 5)
-        plan2 = parse(self.run_bound_stage2_plan(facts))
-        self.assertEqual(plan["directions"][0]["judge_count"],
-                         plan2["directions"][0]["judge_count"])
+        self.assertEqual(plan["status"], "ok", plan)
+        self.assertEqual(plan["directions"][0]["judge_count"], 10)
+        self.assertEqual(plan["directions"][0]["gap_pool"], 17)
+        default_ids = [gap["gap_id"] for job in plan["jobs"]
+                       if job["kind"] == "freshness" for gap in job["model_input"]["gaps"]]
+        self.assertEqual(len(default_ids), 10)
+        completed_id = quote_id(self.gap_quotes["BBBB2222"])
+        self.assertIn(completed_id, default_ids)
+        results = self.root / "results"
+        self.write_stage2_results(results, {"BBBB2222": {
+            "status": "done_by_self", "candidate_paper_ids": ["CCCC3333"],
+            "evidence": "CCCC3333 无关；用户判定已被接住"}})
+        freshness_path = results / "freshness-DIR00001.json"
+        freshness = json.loads(freshness_path.read_text(encoding="utf-8"))
+        all_rows = freshness["results"]
+        freshness["results"] = [row for row in all_rows if row["gap_id"] in default_ids]
+        freshness_path.write_text(json.dumps(freshness, ensure_ascii=False), encoding="utf-8")
+        out = parse(run_bound_stage2_finalize(run_cli, facts, "--results", results))
+        self.assertEqual(out["status"], "ok", out)
+        pack_path = self.prof_dir / "套磁候选输入.json"
+        direction = json.loads(pack_path.read_text(encoding="utf-8"))["directions"][0]
+        final_ids = [gap["gap_id"] for gap in direction["gap_shortlist"]]
+        self.assertEqual(len(final_ids), 16)
+        self.assertNotIn(completed_id, final_ids)
+        self.assertEqual(direction["gaps_excluded"], [])
+        self.assertEqual([row["gap_id"] for row in direction["completed_gap_blacklist"]],
+                         [completed_id])
+        unjudged = [gap for gap in direction["gap_shortlist"]
+                    if gap["gap_id"] not in default_ids]
+        self.assertEqual(len(unjudged), 7)
+        self.assertTrue(all(gap["status"] == "unknown" and gap["not_judged"]
+                            and gap["evidence"] is None for gap in unjudged))
+
+        # Full is an explicit freshness choice, not a larger output shortlist.
+        original_facts["params"]["freshness_scope"] = "full"
+        full_facts = self.root / "full-facts.json"
+        full_facts.write_text(json.dumps(original_facts, ensure_ascii=False), encoding="utf-8")
+        full_plan = parse(self.run_bound_stage2_plan(full_facts))
+        self.assertEqual(full_plan["status"], "ok", full_plan)
+        self.assertEqual(full_plan["directions"][0]["judge_count"], 17)
+        self.assertIsNone(full_plan["directions"][0]["reason_code"])
+        full_job_ids = {gap["gap_id"] for job in full_plan["jobs"]
+                        if job["kind"] == "freshness" for gap in job["model_input"]["gaps"]}
+        freshness["results"] = [row for row in all_rows if row["gap_id"] in full_job_ids]
+        freshness_path.write_text(json.dumps(freshness, ensure_ascii=False), encoding="utf-8")
+        out = parse(run_bound_stage2_finalize(run_cli, full_facts, "--results", results))
+        self.assertEqual(out["status"], "ok", out)
+        full_direction = json.loads(pack_path.read_text(encoding="utf-8"))["directions"][0]
+        self.assertEqual([gap["gap_id"] for gap in full_direction["gap_shortlist"]], final_ids)
+        self.assertTrue(all(gap["status"] == "open" for gap in full_direction["gap_shortlist"]))
+        self.assertEqual([row["gap_id"] for row in full_direction["completed_gap_blacklist"]],
+                         [completed_id])
 
     def test_01b_same_year_month_order_is_conservative(self):
         for source_month, paper_month in ((12, 1), (None, 1), (12, None)):
