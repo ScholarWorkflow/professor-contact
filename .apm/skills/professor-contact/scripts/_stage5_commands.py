@@ -642,7 +642,7 @@ def build(*, atomic_write,
             verify_label = "✅ 全 confirmed" if not bad else "⚠ " + "；".join(bad)
 
             def link(path: str | None, label: str) -> str:
-                return f"[{label}]({rel_path(Path(path), research_root)})" if path else "—"
+                return f"[{label}](<{rel_path(Path(path), research_root)}>)" if path else "—"
 
             professors += 1
             for email in pack.get("emails") or []:

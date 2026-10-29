@@ -1734,6 +1734,38 @@ class TestStage5(BaseEnv):
         state = json.loads((self.prof_dir / "套磁邮件状态.json").read_text(encoding="utf-8"))
         self.assertEqual(state["emails"][choices["email_id"]]["followup"]["validation"]["result"], "pass")
 
+    def test_stage5_overview_wraps_spaced_md_and_txt_destinations(self):
+        fixture = write_issue59_stage5_fixture(self.root, case=self)
+        professor_dir = fixture["dirs"][ISSUE59_PROFESSOR]
+        research_root = self.root / "教授研究"
+        files = {
+            "initial": {ext: professor_dir / f"首封 邮件.{ext}" for ext in ("md", "txt")},
+            "followup": {ext: professor_dir / f"跟进 邮件.{ext}" for ext in ("md", "txt")},
+        }
+        for outputs in files.values():
+            for path in outputs.values():
+                path.write_text("unchanged email output\n", encoding="utf-8")
+        state_path = professor_dir / contact_state.EMAIL_STATE
+        state_path.write_text(json.dumps({"emails": {fixture["email_ids"][0]: {
+            "files": {ext: str(path) for ext, path in files["initial"].items()},
+            "followup": {"files": {
+                ext: str(path) for ext, path in files["followup"].items()}}
+        }}}, ensure_ascii=False), encoding="utf-8")
+        unchanged = {path: path.read_bytes() for path in
+                     [state_path, *files["initial"].values(), *files["followup"].values()]}
+
+        rebuilt = parse(run_cli("stage5-rebuild-overview", "--program-root", self.root))
+        self.assertEqual(rebuilt["status"], "ok", rebuilt)
+        overview = Path(rebuilt["overview_md"]).read_text(encoding="utf-8")
+        for kind, ext, label in (("initial", "md", ".md"),
+                                 ("followup", "md", "跟进 .md"),
+                                 ("initial", "txt", "首封 .txt"),
+                                 ("followup", "txt", "跟进 .txt")):
+            relative = files[kind][ext].relative_to(research_root).as_posix()
+            self.assertIn(" ", relative)
+            self.assertIn(f"[{label}](<{relative}>)", overview)
+        self.assertEqual({path: path.read_bytes() for path in unchanged}, unchanged)
+
     def test_stage5_multiple_emails_use_distinct_files(self):
         fixture = write_issue59_stage5_fixture(self.root, [
             {"professor": ISSUE59_PROFESSOR},
