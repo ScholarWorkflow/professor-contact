@@ -227,7 +227,7 @@ Stage 4 freezes the selected direction's current user-answer slice into every em
 2. Stage 5 must never run `humanizer-ja` over an assembled email, template text, Subject, header, signature, fixed request/closing text, or a follow-up body.
 3. Model-created dynamic fields are still limited to the reference contract: `interest_sentences_ja`, `future_aspiration_ja`, and `learning_candidates`. If optional polishing is configured, call `humanizer-ja` only on those dynamic strings **before** template assembly, then write the polished strings back into the result JSON. Do not change schema/kind/email_id/source_map or the required three-part structure.
 4. User-selected choices such as `learning`, `signature_name`, first-choice wording, dates and explicit subjects are not humanized.
-5. After result JSON and choices are final, use the deterministic Stage 5 wrapper, passing the same `--email-pack` this run's `stage5-plan` used. Pass `--polish-mode dynamic-fields-only` only when the model-generated dynamic fields were actually polished; otherwise use the default `none`:
+5. After result JSON and choices are final, run the final `stage5-plan --result --choices`, translate every `drafts[].translation_source` as described in the 中文核对译文 section below into one `--translations` JSON, then use the deterministic Stage 5 wrapper, passing the same `--email-pack` this run's `stage5-plan` used. Pass `--polish-mode dynamic-fields-only` only when the model-generated dynamic fields were actually polished; otherwise use the default `none`. `--translations` is required on this normal generation path:
 
 ```bash
 <professor-contact-skill-dir>/scripts/stage5_immutable stage5-finalize \
@@ -235,6 +235,7 @@ Stage 4 freezes the selected direction's current user-answer slice into every em
   --mode both --result <result.json> --choices <choices.json> \
   --template <abs template> --followup-template <abs followup template> \
   --email-pack <abs path from the Stage-4 success row> \
+  --translations <abs translations.json> \
   [--polish-mode dynamic-fields-only] [--email-id ...]
 ```
 

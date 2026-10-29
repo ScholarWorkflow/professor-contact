@@ -5,19 +5,21 @@
 - T1/T2：`python -m unittest discover -s .apm/skills/professor-contact/tests -p 'test_stage5_email_translation.py' -v`，最终精确收集 2 项、exit 0、OK。观察双 md 正确位置/独立译文、txt 精确等于 translation_source、模板字节保留；stale/missing中译及手改md拒绝后产物/状态不变。
 - T3：`cd .apm/skills/professor-contact/tests && python -m unittest test_stage5_immutable.TestStage5ImmutableTemplates.test_finalize_without_full_body_humanizer_preserves_fixed_segments -v`，1 项、exit 0、OK；包括新增无中文译文节断言。
 - `git diff --check`：exit 0，无输出。
-- 原始日志：`/tmp/stage5-email-translation-validation/T1-T2-targeted.log`、`T3.log`。
+- 原始日志：当时的定向日志 `/tmp/stage5-email-translation-validation/T1-T2-targeted.log`、`T3.log`、`T2-structured.log` 已不在该目录（该目录后续被 2026-10-30 的全量回归日志占用）。等价的当前证据是同目录 `shard3-final.log` 中三条同名用例的 ok 行：第 323 行 `test_both_translations_are_markdown_only`、第 324 行 `test_stale_missing_and_manual_changes_preserve_outputs`、第 84 行 `test_finalize_without_full_body_humanizer_preserves_fixed_segments`。未重跑这两轮定向命令。
 - 执行偏离保留：第一次新测试模块直接导入既有 TestCase，unittest 除 T1/T2 外额外收集 8 个既有 case，共 10 项 OK。原日志 `T1-T2.log` 保留。随后改为模块导入阻止无关收集，按原批准范围精确执行 2+1；额外执行不是新增验收义务，不要求重复。
 - T4：未执行；当前无已确认正式 consumer/eval/fixture路径，真实模型翻译语义/agent接线不能以离线合成中文代替。整体测试与合并结论不作 PASS。
 - 以上为执行者事实记录，待独立 Gate 3/代码复核。
 
 ## T2 定向修订复验
-独立 reviewer 要求使用已有 parse(result) 检查真实 JSON status/reason_code，而非 stdout 子串匹配。已在原三个失败场景作此最小修订：stale/missing 为 error，手改为 needs_decision，并分别精确核对原因码。仅执行 `cd .apm/skills/professor-contact/tests && python -m unittest test_stage5_email_translation.TestEmailTranslation.test_stale_missing_and_manual_changes_preserve_outputs -v`；1 项、exit 0、OK，日志 `/tmp/stage5-email-translation-validation/T2-structured.log`。T1/T3 产品行为未改，沿用既有结果；T4仍未执行。
+独立 reviewer 要求使用已有 parse(result) 检查真实 JSON status/reason_code，而非 stdout 子串匹配。已在原三个失败场景作此最小修订：stale/missing 为 error，手改为 needs_decision，并分别精确核对原因码。仅执行 `cd .apm/skills/professor-contact/tests && python -m unittest test_stage5_email_translation.TestEmailTranslation.test_stale_missing_and_manual_changes_preserve_outputs -v`；1 项、exit 0、OK，当次日志 `/tmp/stage5-email-translation-validation/T2-structured.log`（现已不在该目录，当前证据见 `shard3-final.log` 第 324 行同名用例 ok）。T1/T3 产品行为未改，沿用既有结果；T4仍未执行。
 
 ## 2026-10-30 全量回归与 T4 正式尝试
 
 - 执行环境：Darwin（aarch64）；产品版本 `70e9f0cd6c35771a75ec73ab7617da5c27ac21c3`（本 PR head，未改动产品代码）。解释器 `Python 3.12.13`（`uv run --python 3.12 --no-project python`），与 `.github/workflows/ci.yml` 的 `python-version: '3.12'` 一致。工作树 `git diff --check` exit 0、无输出；执行前后 `git status` 干净。
 
-### 全量回归（本地复现 CI 四个 shard）
+### 全量回归（范围外诊断，非计划执行结果）
+
+**性质说明**：TP1.2 第 22 行写明本计划“不跑全仓回归”。下面这轮四 shard 全量运行是用户在执行本轮指示“把测试跑通”时要求的**范围外诊断**，未获计划批准、不在必测清单内，**不作为 Gate 证据或合并依据**；T1–T3 的正式判定仍以原定向用例为准。保留它是为了让“全仓是否可跑通”这一用户关注点有如实记录；如果验收决定人不追认，删除本节不影响任何必测项结果。
 
 命令：先以 `uv run --python 3.12 --no-project python scripts/check_test_shards.py` 确认 `OK: 89 test modules across 4 shards, each with a stage`；再对每个 shard 在 `.apm/skills/professor-contact/tests` 下执行 `python -m unittest $(python ../../../../scripts/check_test_shards.py --print <shard>) -v`。
 
@@ -30,9 +32,9 @@
 
 合计 1202 项，全部 exit 0。原始日志 `/tmp/stage5-email-translation-validation/shard{1,2,3,4}-final.log`。
 
-本 PR 的目标用例在同一命令下仍为：T1/T2 `test_stage5_email_translation.py` 2 项 OK；T3 `test_stage5_immutable...test_finalize_without_full_body_humanizer_preserves_fixed_segments` 1 项 OK。
+本 PR 的目标用例即在同一全量命令内收集到：T1/T2 `test_stage5_email_translation.py` 2 项 OK；T3 `test_stage5_immutable...test_finalize_without_full_body_humanizer_preserves_fixed_segments` 1 项 OK。这一句只说明目标用例在上述运行中同样通过，不把全量回归改称为必测项。
 
-### 本地环境失败与处理（非产品缺陷）
+### 本地环境失败与处理（非产品缺陷，同属范围外诊断）
 
 首轮用默认 `python3`（`/usr/bin/python3` 3.9.6）与未规整的 `TMPDIR` 运行时出现 5 个失败，全部在 `main`（`ad096fe3`，无本 PR 改动）上以同样方式复现，因此不是本 PR 引入的缺陷：
 
