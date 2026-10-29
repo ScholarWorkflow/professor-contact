@@ -29,3 +29,9 @@ exit_code=0
 T1 覆盖不同 paper/gap canonical 路径、拒绝模型路径覆盖、缺字段及 hash 改变；T2 覆盖来源表、无 gap 支撑论文、gap-only later 来源、事实卡、含空格中日文相对链接及旧包无分析字段；T3 通过既有真实 CLI fixture 检查最终 md 内审和原 draft/txt 相等边界。
 
 未运行全仓测试、安装、模型服务或真实教授任务。Mac 阅读器点击及用户真实路径可达性未实测。额外执行 `git diff --check` 无输出、退出 0，仅作补丁格式检查。
+
+## 发布后 CI 接入修正
+
+首次 PR CI run 40867568727 在既有 `check_test_shards.py` 失败：新模块 `test_email_analysis_links` 未登记，业务 shard 尚未执行。这是本次测试接入遗漏，不归因环境或上游。最小将该模块登记到现有 shard3（mixed:stage4+stage5；2 个既有用例），不新增 shard、不改产品/业务测试、不重跑 G3。随后仅运行既有清单检查并记录其输出；历史测时聚合为原有快照，未伪造本模块独立测时。
+
+清单检查实际输出：`OK: 89 test modules across 4 shards, each with a stage`，退出码 0。
