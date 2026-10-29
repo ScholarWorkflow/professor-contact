@@ -24,3 +24,9 @@
 
 ## 独立代码与离线结果定向复核
 协调者 `/root` 回传独立 reviewer 结论：T2 结构化断言修订后 Gate 3 PASS，T1/T3 结果复用；M1/M2 通过，M3 唯一未完成项为 T4 真实模型验证，因此合并结论 NOT_READY。允许如实标记待测的 Draft PR 发布，不是批准合并。文档状态更新不触发重测。
+
+## TP1.2：仅补 T4 可执行步骤
+
+用户指出“155: T4 缺少可执行步骤”（Sentinel_ea8f78706aec8191b4a0adf1bfa7d46e）。本次仅修订唯一 test-plan.md 的 T4 recipe：固定产品 bbd62bba、隔离consumer复用/必要APM安装、现有fixture helper准备合成单教授与真实checker、真实named generator的一次eval请求、产物位置及人工翻译核对/失败分类。没有执行准备器、测试、模型或安装，也未改产品/测试实现。
+
+独立 reviewer 首轮指出合成跟进模板需含protected入学年月和联系邮箱；已仅补该模板两项，未改产品门禁或扩场景。协调者 `/root` 回传定向复核 **TP1.2 T4 Gate 2 PASS**；R1与T1–T3原批准/执行结果复用。T4 Gate 3仍未执行，环境真实目录待执行者绑定，整体合并NOT_READY不变。
