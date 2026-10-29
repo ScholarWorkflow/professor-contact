@@ -951,11 +951,14 @@ class TestRunnerBasics(BaseEnv):
                                        "--selection-input", sel_input)))
         self.assertEqual(out["status"], "ok")
         raw = (self.prof_dir / "邮件输入.json").read_text(encoding="utf-8")
-        self.assertNotIn("论文分析", raw)
         self.assertNotIn("future_work.json", raw)
         self.assertNotIn("_index.json", raw)
         pack = json.loads(raw)
         email = pack["emails"][0]
+        # Optional analysis links are frozen provenance, not a second fact source.
+        canonical = json.loads((self.prof_dir / "套磁候选输入.json").read_text(encoding="utf-8"))["papers"]
+        for record in email["papers"] + email["gaps"]:
+            self.assertEqual(record["analysis_file"], canonical[record["item_key"]]["analysis_file"])
         self.assertIn("allowed_sources", email)
         self.assertIn("gap:" + quote_id(self.gap_quotes["AAAA1111"]),
                       email["allowed_sources"])
