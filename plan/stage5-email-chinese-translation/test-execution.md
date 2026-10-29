@@ -5,17 +5,19 @@
 - T1/T2：`python -m unittest discover -s .apm/skills/professor-contact/tests -p 'test_stage5_email_translation.py' -v`，最终精确收集 2 项、exit 0、OK。观察双 md 正确位置/独立译文、txt 精确等于 translation_source、模板字节保留；stale/missing中译及手改md拒绝后产物/状态不变。
 - T3：`cd .apm/skills/professor-contact/tests && python -m unittest test_stage5_immutable.TestStage5ImmutableTemplates.test_finalize_without_full_body_humanizer_preserves_fixed_segments -v`，1 项、exit 0、OK；包括新增无中文译文节断言。
 - `git diff --check`：exit 0，无输出。
-- 原始日志：当时的定向日志 `/tmp/stage5-email-translation-validation/T1-T2-targeted.log`、`T3.log`、`T2-structured.log` 已不在该目录（该目录后续被 2026-10-30 的全量回归日志占用）。等价的当前证据是同目录 `shard3-final.log` 中三条同名用例的 ok 行：第 323 行 `test_both_translations_are_markdown_only`、第 324 行 `test_stale_missing_and_manual_changes_preserve_outputs`、第 84 行 `test_finalize_without_full_body_humanizer_preserves_fixed_segments`。未重跑这两轮定向命令。
-- 执行偏离保留：第一次新测试模块直接导入既有 TestCase，unittest 除 T1/T2 外额外收集 8 个既有 case，共 10 项 OK。原日志 `T1-T2.log` 保留。随后改为模块导入阻止无关收集，按原批准范围精确执行 2+1；额外执行不是新增验收义务，不要求重复。
+- 原始日志：当时的定向日志 `/tmp/stage5-email-translation-validation/T1-T2-targeted.log`、`T3.log`、`T2-structured.log` 已不在该目录（该目录后续被 2026-10-30 的全量回归日志占用），**无法再打开**。
+  - 这不改变 T1–T3 的判定依据：本记录本身即按 Test Engineer Rule §5/§7 交付的执行记录，记的是当次实际命令与逐项结果，第三关可据此采用。
+  - 2026-10-30 的全量回归日志 `shard3-final.log` 另含同名用例在同断言下通过（第 323 行 `test_both_translations_are_markdown_only`、第 324 行 `test_stale_missing_and_manual_changes_preserve_outputs`、第 84 行 `test_finalize_without_full_body_humanizer_preserves_fixed_segments`）。按本文件“范围外诊断”的定性，这些行只是**旁证**，不替代、也不升格为 T1–T3 的 Gate 证据。未重跑这两轮定向命令。
+- 执行偏离保留：第一次新测试模块直接导入既有 TestCase，unittest 除 T1/T2 外额外收集 8 个既有 case，共 10 项 OK。原日志 `T1-T2.log` 同样已不在 `/tmp/stage5-email-translation-validation/`（与本条上一行的定向日志一起被后续运行覆盖，未另行归档）。随后改为模块导入阻止无关收集，按原批准范围精确执行 2+1；额外执行不是新增验收义务，不要求重复。
 - T4：未执行；当前无已确认正式 consumer/eval/fixture路径，真实模型翻译语义/agent接线不能以离线合成中文代替。整体测试与合并结论不作 PASS。
 - 以上为执行者事实记录，待独立 Gate 3/代码复核。
 
 ## T2 定向修订复验
-独立 reviewer 要求使用已有 parse(result) 检查真实 JSON status/reason_code，而非 stdout 子串匹配。已在原三个失败场景作此最小修订：stale/missing 为 error，手改为 needs_decision，并分别精确核对原因码。仅执行 `cd .apm/skills/professor-contact/tests && python -m unittest test_stage5_email_translation.TestEmailTranslation.test_stale_missing_and_manual_changes_preserve_outputs -v`；1 项、exit 0、OK，当次日志 `/tmp/stage5-email-translation-validation/T2-structured.log`（现已不在该目录，当前证据见 `shard3-final.log` 第 324 行同名用例 ok）。T1/T3 产品行为未改，沿用既有结果；T4仍未执行。
+独立 reviewer 要求使用已有 parse(result) 检查真实 JSON status/reason_code，而非 stdout 子串匹配。已在原三个失败场景作此最小修订：stale/missing 为 error，手改为 needs_decision，并分别精确核对原因码。仅执行 `cd .apm/skills/professor-contact/tests && python -m unittest test_stage5_email_translation.TestEmailTranslation.test_stale_missing_and_manual_changes_preserve_outputs -v`；1 项、exit 0、OK，当次日志 `/tmp/stage5-email-translation-validation/T2-structured.log`（现已不在该目录）。该次结论以本节记录为准；`shard3-final.log` 第 324 行同名用例 ok 仅为旁证，按范围外诊断对待。T1/T3 产品行为未改，沿用既有结果；T4仍未执行。
 
 ## 2026-10-30 全量回归与 T4 正式尝试
 
-- 执行环境：Darwin（aarch64）；产品版本 `70e9f0cd6c35771a75ec73ab7617da5c27ac21c3`（本 PR head，未改动产品代码）。解释器 `Python 3.12.13`（`uv run --python 3.12 --no-project python`），与 `.github/workflows/ci.yml` 的 `python-version: '3.12'` 一致。工作树 `git diff --check` exit 0、无输出；执行前后 `git status` 干净。
+- 执行环境：Darwin（aarch64）；产品版本 `70e9f0cd6c35771a75ec73ab7617da5c27ac21c3`（执行时的 PR head，未改动产品代码）。当前 head 为 `35ef5a76`；`70e9f0cd..35ef5a76` 只改文档与计划记录，`scripts/` 与 `tests/` 零差异，因此下面这轮结果对当前 head 同样成立。解释器 `Python 3.12.13`（`uv run --python 3.12 --no-project python`），与 `.github/workflows/ci.yml` 的 `python-version: '3.12'` 一致。工作树 `git diff --check` exit 0、无输出；执行前后 `git status` 干净。
 
 ### 全量回归（范围外诊断，非计划执行结果）
 
