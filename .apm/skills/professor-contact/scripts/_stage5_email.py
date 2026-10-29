@@ -438,10 +438,22 @@ def build(*, read_json_file,
             answer = answer[:36] + "…"
         return f"[用户素材] 方向素材 {material_id}：「{answer}」"
 
-    def render_source_table(email: dict, raw: dict) -> list:
+    def analysis_link(record: dict, document_dir: Path) -> str:
+        path = record.get("analysis_file")
+        if not isinstance(path, str) or not path.strip() or not Path(path).is_absolute():
+            return ""
+        return f"｜[分析](<{rel_path(Path(path), document_dir)}>)"
+
+    def paper_links(record: dict, item_key: str, document_dir: Path) -> str:
+        return (f"（[zotero](zotero://select/library/items/{item_key})）"
+                + analysis_link(record, document_dir))
+
+    def render_source_table(email: dict, raw: dict, document_dir: Path) -> list:
         label = {"user_note": "用户 note（原文）", "template": "[模板] 固定文本",
                  "profile.interest": "[生成] 用户意图层（profile）"}
-        paper_titles = {p["item_key"]: p.get("title") for p in email.get("papers", [])}
+        paper_index = {p["item_key"]: p for p in email.get("papers", [])}
+        for gap in email.get("gaps", []):
+            paper_index.setdefault(gap["item_key"], gap)
         gap_index = {g["gap_id"]: g for g in email.get("gaps", [])}
         rows = ["| 句 | 来源 |", "|---|---|"]
         output_names = {"①": "兴趣段①真实关注", "②": "兴趣段②点名+桥接",
@@ -454,12 +466,17 @@ def build(*, read_json_file,
                 if sid in label:
                     names.append(label[sid])
                 elif sid.startswith("paper:"):
-                    names.append(f"[生成] 论文《{paper_titles.get(sid[6:], sid[6:])}》")
+                    paper = paper_index.get(sid[6:]) or {}
+                    names.append(f"[生成] 论文《{paper.get('title') or paper.get('paper_title') or sid[6:]}》"
+                                 + paper_links(paper, sid[6:], document_dir))
                 elif sid.startswith("gap:"):
                     gap = gap_index.get(sid[4:]) or {}
-                    names.append(f"[生成] future work（{gap.get('status')}，p.{gap.get('page')}，{gap.get('paper_title')}）")
+                    names.append(f"[生成] future work（{gap.get('status')}，p.{gap.get('page')}，{gap.get('paper_title')}）"
+                                 + paper_links(gap, gap.get("item_key") or gap.get("zotero_key"), document_dir))
                 elif sid.startswith("later:"):
-                    names.append(f"[生成] 后续论文《{paper_titles.get(sid[6:], sid[6:])}》")
+                    paper = paper_index.get(sid[6:]) or {}
+                    names.append(f"[生成] 后续论文《{paper.get('title') or paper.get('paper_title') or sid[6:]}》"
+                                 + paper_links(paper, sid[6:], document_dir))
                 elif sid.startswith("idea:"):
                     names.append("[生成] 选中想法（idea_zh）")
                 elif sid.startswith("direction_material:"):
@@ -497,7 +514,8 @@ def build(*, read_json_file,
             status = gap.get("status")
             lines.append(f"<details><summary>《{gap.get('paper_title')}》 future work（{status}）</summary>")
             lines.append("")
-            lines.append(f"- 论文 Zotero 链接：[zotero](zotero://select/library/items/{gap.get('zotero_key')})")
+            lines.append(f"- 论文 Zotero 链接：[zotero](zotero://select/library/items/{gap.get('zotero_key')})"
+                         + analysis_link(gap, professor_dir))
             lines.append(f"- 作者原话：「{gap.get('quote')}」")
             lines.append(f"- 中译：{gap.get('translation_zh')}")
             lines.append(f"- 页码：p.{gap.get('page')}（{gap.get('source')}）")

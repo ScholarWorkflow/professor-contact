@@ -467,6 +467,11 @@
      }
     },
     {
+     "name": "test_email_analysis_links",
+     "stage": "mixed:stage4+stage5",
+     "tests": 2
+    },
+    {
      "name": "test_stage5_immutable",
      "stage": "stage5",
      "seconds": 11.7,

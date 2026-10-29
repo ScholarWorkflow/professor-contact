@@ -114,6 +114,12 @@ def build(*, fail,
                      "zotero_key": done["item_key"]})
                 continue
             fail("unknown_reference_id", f"candidate gap outside input pack: {key}")
+        # Freeze only canonical input-pack paths, never model-supplied metadata.
+        for row in papers_out + gaps_out:
+            canonical = (pack.get("papers") or {}).get(row["item_key"]) or {}
+            analysis_file = canonical.get("analysis_file")
+            if isinstance(analysis_file, str) and analysis_file.strip():
+                row["analysis_file"] = analysis_file
         if group_entry:
             red_lines = []
             seen_red = set()
