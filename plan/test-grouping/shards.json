@@ -582,6 +582,11 @@
      "name": "test_stage5_interest_title_length",
      "stage": "stage5",
      "tests": 5
+    },
+    {
+     "name": "test_stage5_email_translation",
+     "stage": "stage5",
+     "tests": 2
     }
    ]
   },
