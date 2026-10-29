@@ -64,6 +64,7 @@ class TestStage5ImmutableTemplates(BaseEnv):
             self.assertIn(marker, txt)
         self.assertNotIn("{{", txt)
         md = (self.prof_dir / "套磁邮件.md").read_text(encoding="utf-8")
+        self.assertNotIn("## 中文译文", md)
         self.assertIn("过稿: none", md)
         self.assertNotIn("过稿: humanizer-ja(business)", md)
 

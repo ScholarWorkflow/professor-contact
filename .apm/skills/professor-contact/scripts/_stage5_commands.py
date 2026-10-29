@@ -75,6 +75,16 @@ def build(*, atomic_write,
           lock_direction_materials,
           unlock_direction_materials):
 
+    def final_email_text(text, kind, choices, values):
+        """One normalization for the translation source and sendable output."""
+        subject_match = re.match(r"Subject: (.*)", text)
+        subject = choices.get("followup_subject") if kind == "followup" else None
+        subject = subject or (subject_match.group(1).strip() if subject_match else
+                              (subject_line(values) if kind == "initial" else
+                               f"Re: {subject_line(values)}"))
+        body = re.sub(r"^Subject: .*\n+", "", text, count=1).strip()
+        return subject, body, f"Subject: {subject}\n\n{body}\n"
+
     def stage5_require_fresh_materials(emails: list, materials: dict) -> None:
         """Stop before reading results/choices when a frozen slice is stale.
 
@@ -290,6 +300,11 @@ def build(*, atomic_write,
                                "draft": followup_draft, "protected": followup_protected,
                                "banned": followup_banned, "warnings": warnings,
                                "result_file": str(result_path)})
+        email_by_id = {email.get("email_id"): email for email in emails}
+        for row in drafts:
+            _, _, row["translation_source"] = final_email_text(
+                row["draft"], row["kind"], choices_by_id[row["email_id"]],
+                header_values(sources, email_by_id[row["email_id"]]))
         emit({"status": "ok", "drafts": drafts, "output_mode": mode})
 
     def _stage5_finalize_locked(args) -> None:
@@ -356,6 +371,11 @@ def build(*, atomic_write,
         choices_by_id = stage5_choices_by_id(
             args, stage5_pack_owner(pack, pack_path), emails)
         humanized_by_id = humanized_paths(args, emails, exact=not bool(args.email_id))
+        translations = None
+        if getattr(args, "translations", None):
+            translations, error = read_json_file(Path(args.translations))
+            if error or not isinstance(translations, dict):
+                fail("translation_invalid", "translations must be a JSON object keyed by output_id")
         decision = None
         if getattr(args, "decision_file", None):
             decision_data, decision_error = read_json_file(Path(args.decision_file))
@@ -460,12 +480,18 @@ def build(*, atomic_write,
                     fail("humanizer_violation", f"{output_id}: banned phrases appeared: {violated}")
                 if "{{" in humanized:
                     fail("humanizer_violation", f"{output_id}: residual {{}} placeholders")
-                subject_match = re.match(r"Subject: (.*)", humanized)
-                subject = choices.get("followup_subject") if kind == "followup" else None
-                subject = subject or (subject_match.group(1).strip() if subject_match else
-                                      (subject_line(values) if kind == "initial" else
-                                       f"Re: {subject_line(values)}"))
-                body_text = re.sub(r"^Subject: .*\n+", "", humanized, count=1)
+                subject, body_text, txt_body = final_email_text(humanized, kind, choices, values)
+                translation = None
+                if translations is not None:
+                    translation = translations.get(output_id)
+                    if translation is None:
+                        fail("translation_missing", f"missing Chinese translation for {output_id}")
+                    if not isinstance(translation, dict) or any(
+                            not isinstance(translation.get(key), str) or not translation[key].strip()
+                            for key in ("source_text", "subject_zh", "body_zh")):
+                        fail("translation_invalid", f"invalid Chinese translation for {output_id}")
+                    if translation["source_text"] != txt_body:
+                        fail("translation_stale", f"translation source differs from final email: {output_id}")
                 lines = [
                     f"# {heading} — {email.get('professor')}（{email.get('name_ja')}）",
                     "",
@@ -492,6 +518,10 @@ def build(*, atomic_write,
                 lines.append("")
                 lines.append(body_text.strip())
                 lines.append("")
+                if translation is not None:
+                    lines.extend(["## 中文译文（仅供核对，不发送）", "",
+                                  f"主题：{translation['subject_zh'].strip()}", "",
+                                  translation["body_zh"].strip(), ""])
                 lines.append("## 来源标注（仅 md 内审用，不进 txt）")
                 lines.append("")
                 lines.extend(source_rows)
@@ -505,7 +535,6 @@ def build(*, atomic_write,
                     lines.append("")
                 lines.extend(render_fact_check_card(email, pack_path, professor_dir))
                 md_body = "\n".join(lines).rstrip() + "\n"
-                txt_body = f"Subject: {subject}\n\n{body_text.strip()}\n"
                 state_fingerprint = sha256_obj({"output_id": output_id, "input": input_fp})
                 md_path, txt_path = stage5_output_paths(
                     email,

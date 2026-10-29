@@ -390,7 +390,7 @@ runner 继续负责必填字段/类型、缺失、重复/未知/id 集合、收�
 - **显式给定上下文**：调用前显式给定 `business` 目标和完整动态字段上下文，不让 `humanizer-ja` 自己的澄清问题充当 Stage 5 的用户输入协议；润色所需事实或选择缺失时，先按 Stage 5 用户输入规则阻塞（`needs_input`），不让 humanizer 猜。
 - **硬边界**：不改事实/红线——论文标题、年份、TOEIC/N1、工作经历、初次发送日期、学校、研究科、入学信息、署名一律原样；不补 profile 之外的新信息。
 - **用户选定项不动**：choices 回填的学習中、志望表述、署名等用户选择短语不是模型动态字段，本就不参与润色。
-- **次序**：模型 result →（可选）动态字段润色 → 用户 choices → `stage5-finalize` 确定性拼装+渲染 → validator 校验最终文本（validator 是最终关卡）。
+- **次序**：模型 result →（可选）动态字段润色 → 用户 choices → `stage5-plan --result --choices` 确定性拼装 → 依 translation_source 生成中文核对译文 → `stage5_immutable.py stage5-finalize --translations <file>` 渲染 → validator 校验最终文本（validator 是最终关卡）。
 - **跨 harness 调用**：OpenCode 用原生 `skill` 能力加载 `humanizer-ja`；Codex 使用安装后可发现的 `humanizer-ja` Skill（不写 OpenCode 函数签名）。详见 generator agent 的双目标调用说明；缺失决定时两端都停在既有 `needs_input` 边界，不代选。
 
 ### 5.7 校验循环
@@ -751,3 +751,8 @@ flowchart TD
 ```
 
 Canonical professor-contact 路径在 normalized preview 后直接进入 Stage 0；Stage 1 的下载范围由方向候选 `item_keys` 决定。Professor-level keep-list PDF fill 与 formal Zotero clustering 可以独立运行，但都不能替代 `套磁目标.json`、Stage 1 candidate snapshot 或 Stage 2 accepted full-text resolution。
+
+
+### Stage 5 中文译文（核对用，不发送）
+
+首封/跟进在动态字段可选润色和 choices 确定后，generator 先消费 `stage5-plan --result --choices` 的每份 `drafts[].translation_source`（最终 Subject+正文），按 output_id 分别生成完整中文件名/正文，通过 `stage5_immutable.py stage5-finalize --translations <JSON绝对路径>` 交 runner 同事务渲染。结构及具体步骤见 `professor-contact-email-generator` 的“中文核对译文”规则；source_text 原样复制，不能以旧稿翻译。md 的“中文译文（仅供核对，不发送）”位于日文邮件正文后；发送 txt 和用户模板不改变。既有手改 md 保护继续生效，不在 finalize 后补写。validator 对本次新增中译做忠实性核对，日文长度/三句兴趣/标题逐字规则不计中文；中译不是新事实源。旧直接 CLI 无 translations 参数保持兼容，既有无译文邮件不自动迁移。
