@@ -423,7 +423,7 @@ def build(*, atomic_write,
                 draft, protected, banned = assemble_draft(email, raw, choices, sources, template_text)
                 variants.append(("initial", draft, protected, banned, "套磁邮件",
                                  Path(template_path).name if template_path else "内嵌",
-                                 render_source_table(email, raw)))
+                                 render_source_table(email, raw, professor_dir)))
             if mode in ("followup", "both"):
                 draft, protected, banned = assemble_followup_draft(
                     email, choices, sources, followup_template, verify)

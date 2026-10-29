@@ -1654,6 +1654,30 @@ class TestStage5(BaseEnv):
         state = json.loads((self.prof_dir / "套磁邮件状态.json").read_text(encoding="utf-8"))
         self.assertEqual(state["emails"][self.choices()["email_id"]]["validation"]["result"], "pass")
 
+    def test_stage5_email_analysis_links_are_md_only(self):
+        g1 = self.prepare()
+        raw_path = self.root / "email_raw.json"
+        raw_path.write_text(json.dumps(self.raw_result(g1), ensure_ascii=False), encoding="utf-8")
+        choices_path = self.root / "choices.json"
+        choices_path.write_text(json.dumps(self.choices(), ensure_ascii=False), encoding="utf-8")
+        draft = parse(run_cli("stage5-plan", "--program-root", self.root,
+                              "--result", raw_path, "--choices", choices_path))
+        self.assertEqual(draft["status"], "ok", draft)
+        original = draft["drafts"][0]["draft"]
+        humanized_path = self.root / "humanized.txt"
+        humanized_path.write_text(original, encoding="utf-8")
+        out = parse(run_cli("stage5-finalize", "--program-root", self.root,
+                            "--result", raw_path, "--humanized", humanized_path,
+                            "--choices", choices_path))
+        self.assertEqual(out["status"], "ok", out)
+        md = (self.prof_dir / "套磁邮件.md").read_text(encoding="utf-8")
+        txt = (self.prof_dir / "套磁邮件.txt").read_text(encoding="utf-8")
+        self.assertIn("[分析](<论文分析/AAAA1111.md>)", md)
+        body = md.split("## 邮件正文\n", 1)[1].split("## 来源标注", 1)[0].strip()
+        self.assertEqual(body, original.strip())
+        self.assertEqual(txt.strip(), original.strip())
+        self.assertNotIn("[分析]", txt)
+
     def test_stage5_checklist_header_row_matches_body_salutation(self):
         # The 「抬头逐字」 checklist row must show the assembled body's own
         # salutation line verbatim; a synthesized header variant (e.g. one
