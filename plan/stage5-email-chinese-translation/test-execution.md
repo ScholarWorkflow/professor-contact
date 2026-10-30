@@ -67,3 +67,25 @@
 - 这是**根代理的输入准备擦写**（把完整 `email_id` 简写成 idea 编号），不是产品缺陷，也不是用户业务输入不匹配。产品对合法完整 id 的行为已用同一安装包单独核对：`--owner <pack> '試験 教授::DIR00001::DIR00001_1'` → `choices_rows` 1 行；不传目标 id → 1 行；仅简写 `DIR00001_1` → `choices_rows: []`（与该次运行一致）。该观察只是失败归因的定位，不是新的验收项。
 - 按 `PROJECT_CONSENSUS.md` §基础设施重试与停止与 TP1.2 §D「只发送一次；超时、网络中断或不确定时保存同一请求后人工决定」，未自动重发第二次正式请求。
 - 因此 T4 记为**无法判断**（真实模型通路与 agent 接线未产生可判定的最终产物），T4 Gate 3 仍未执行；T1–T3 离线机械结果不能替代 T4 的翻译语义与实际模型接线。整体测试与合并结论仍不作 PASS。
+
+### T4 正式模型观察第 2 次（用户明确授权的新正式尝试）
+
+- 授权与性质：用户在本轮明确选择“授权重跑 T4 正式请求”。这是**新的正式尝试**，不是同条件重试；第 1 次结果与日志全部保留在上节，未被覆盖。
+- 产品版本：`11a9c3af1e67eacaa62191f4376dda5aeaf3b1d5`。固定版本由 `bbd62bba` 更新到此，**影响说明**：`bbd62bba..11a9c3af` 的 `scripts/` 与 `tests/` 零差异，只改文档（两份 agent md、`SKILL.md`、`docs/workflow-reference.md`）与计划记录；其中 SKILL 5.11 第 3 步新增“可选目标 `email_id` 必须整串逐字沿用来源字段”，正对第 1 次的根因。
+- 环境：新隔离 consumer `/tmp/pc155-t4b-K5dD1h/consumer`；APM 0.29.0 装 11 依赖 + 7 个 MCP；`yq` 核对 lock `resolved_commit == 11a9c3af…`（`true`）；安装版 `SKILL.md` 已含新规则（grep 命中 1 次）；两个 exact named agent toml 在位；模型 `gpt-6-luna` / `low`。
+- fixture：同一既有 helper，单教授 + 两套合成模板，`case.doCleanups()` 已撤销 checker 注入；真实 `contact_evidence.py --check` 返回 `fresh`。
+- 请求：只发一次；`curl_rc=0`、HTTP 200、`output.exit_code=0`、`termination_reason=completed`、`child_thread_reads` 3 条——第 1 层 `professor-contact-email-generator`，第 2 层 `professor-contact-email-validator` 两轮，确认具名 generator 与 validator 均被真实调用。
+
+产物核对（TP1.2 §E 五项）：
+
+|检查点|结果|
+|---|---|
+|中译位置与覆盖|两份 md 均在 `## 邮件正文` 之后、`## 来源标注` 之前含 `## 中文译文（仅供核对，不发送）`，且含主题与完整正文（首封 41–57 行，跟进 39–51 行）|
+|事实/日期/否定/请求强度|`2027年4月`、`2026年10月1日`、`faculty@example.test`、署名逐项对应；请求句与“可能性”语气保持；未见新增经历或论文事实|
+|译文不发送|两份 `.txt` 只含日文 Subject + 正文，`grep 中文译文` 均为 0|
+|用户模板不变|两份模板与写入值字节一致（sha256 前 12 位 `d1e586586c3d` / `ab7411182a2d`）|
+|validator 边界|唯一 blocking 为 rule 4，`location` 是“邮件正文：研究方向句”，指日文正文混入中文方向名；**未指向中文译文节**，即中文未被计入日文规则。首封校验 1 轮通过（`套磁邮件状态.json`：`result: pass`、`rounds: 1`、`issues: []`）|
+
+- 整轮结果：Stage 5 返回 **partial**，跟进邮件两轮校验均未通过。原因不在本 PR 功能：合成 fixture 的方向名 `name_ja` 本身就是中文「合成输入比较」（既有 helper 把 `name_ja` 与 `name_zh` 设为同一字符串），模型照抄进日文正文后被 validator 正确判为中文混入。这属既有合成 helper 的性质，不在 PR155 范围。
+- 本执行者只记事实：T4 五项观察本轮均有真实产物可核对且符合，但整轮以 partial 结束，故**不自行判 T4 通过、不自行给 Gate 3**，交独立 reviewer 按上述产物判定。
+- 保留物：`/tmp/pc155-t4b-K5dD1h/{request.json,response.json,http-status.txt,request-exit.txt,request.stderr,prompt.txt}`，以及 `consumer/testdata/pc155-t4b-K5dD1h/program/教授研究/X分野/試験 教授/{套磁邮件.md,.txt,套磁跟进邮件.md,.txt,套磁邮件状态.json}`。
