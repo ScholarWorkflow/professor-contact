@@ -227,7 +227,7 @@ Stage 4 freezes the selected direction's current user-answer slice into every em
 2. Stage 5 must never run `humanizer-ja` over an assembled email, template text, Subject, header, signature, fixed request/closing text, or a follow-up body.
 3. Model-created dynamic fields are still limited to the reference contract: `interest_sentences_ja`, `future_aspiration_ja`, and `learning_candidates`. If optional polishing is configured, call `humanizer-ja` only on those dynamic strings **before** template assembly, then write the polished strings back into the result JSON. Do not change schema/kind/email_id/source_map or the required three-part structure.
 4. User-selected choices such as `learning`, `signature_name`, first-choice wording, dates and explicit subjects are not humanized.
-5. After result JSON and choices are final, use the deterministic Stage 5 wrapper, passing the same `--email-pack` this run's `stage5-plan` used. Pass `--polish-mode dynamic-fields-only` only when the model-generated dynamic fields were actually polished; otherwise use the default `none`:
+5. After result JSON and choices are final, run the final `stage5-plan --result --choices`, translate every `drafts[].translation_source` as described in the 中文核对译文 section below into one `--translations` JSON, then use the deterministic Stage 5 wrapper, passing the same `--email-pack` this run's `stage5-plan` used. Pass `--polish-mode dynamic-fields-only` only when the model-generated dynamic fields were actually polished; otherwise use the default `none`. `--translations` is required on this normal generation path:
 
 ```bash
 <professor-contact-skill-dir>/scripts/stage5_immutable stage5-finalize \
@@ -235,6 +235,7 @@ Stage 4 freezes the selected direction's current user-answer slice into every em
   --mode both --result <result.json> --choices <choices.json> \
   --template <abs template> --followup-template <abs followup template> \
   --email-pack <abs path from the Stage-4 success row> \
+  --translations <abs translations.json> \
   [--polish-mode dynamic-fields-only] [--email-id ...]
 ```
 
@@ -285,6 +286,16 @@ Stage 5 runs on both install targets with identical business rules; only the har
 - Before calling, state the `business` goal explicitly and attach the full dynamic-field context, so the humanizer's own clarifying questions are never treated as Stage 5's implicit user-input protocol. If a fact or choice needed for polishing is missing, block first under Stage 5's user-input rules — the humanizer never guesses.
 - Only the contract-allowed dynamic fields (`interest_sentences_ja`, `future_aspiration_ja`, `learning_candidates`) may be polished, before template assembly. After polishing, write the strings back into the result JSON and re-check before finalize: `schema`/`kind`/`email_id`/`source_map`, the facts and the three-part structure are unchanged; template fixed text stays byte-stable and never enters the humanizer. Only then run `stage5_immutable.py stage5-finalize` (with `--polish-mode dynamic-fields-only` when polish actually happened).
 
+## 中文核对译文（首封与跟进）
+
+完成可选 dynamic-field polish 和用户 choices 后，先调用同一教授、同一选中范围的 `contact_state.py stage5-plan --result <result JSON> --choices <choices JSON>`（保留原 program_root/email_pack/mode/template 等参数）。读取每个 `drafts[].output_id` 和 `translation_source`：后者就是最终发送 txt 的规范化 Subject+正文，不是旧稿，也不是重新润色整封模板的入口。
+
+逐份忠实翻译该文本的件名和完整正文为中文，保持姓名/日期/事实/否定/不确定性及请求强度，不补充论文事实或经历。将 JSON 对象写入本教授独占临时文件，结构为 `{output_id: {"source_text": <原样 translation_source>, "subject_zh": <中文件名>, "body_zh": <完整中文正文>}}`；用 JSON 库保存 source_text 原值，禁止模型重新抄写日文。首封与跟进各用自己的 output_id，跟进不能拿首封中译代替。若随后改动动态字段/choices/模板，重新 plan 并重译受影响邮件。
+
+当前正常生成必须把该文件以 `--translations <absolute JSON path>` 传给 `stage5_immutable.py stage5-finalize`。runner 负责把“中文译文（仅供核对，不发送）”放在 md 邮件正文后，txt 保持日文；不得 finalize 后直接 append md，也不得改写用户模板。翻译文件缺失/格式不符/原文过期时保留 runner 失败，不宣称完成，修正对应翻译输入后再走既有流程。该临时文件与 result/choices 同属本教授请求，消费者完成后按既有清理规则处理。
+
+最终 validator 必须检查本次生成邮件的中译完整忠实；日文三句/长度/标题逐字规则只针对日文邮件正文，不套用中文。旧 CLI 省略参数及已有无译文邮件保持兼容，无批量迁移或自动重跑。
+
 ## Contact-evidence-first email ladder (Issue #10)
 
 Stage 5 consumes the upstream reconciled artifact `教授研究/_联系方式证据.json` (frozen per professor into `邮件输入.json` `emails[].contact_evidence` by Stage 4) **before** any recipient-email lookup, and only escalates to the Step 2.5 web ladder when the evidence is insufficient, conflicting or ambiguous. The roles are strictly split: `邮件输入.json` is Stage 5's **single fact source** — the recipient is read from the frozen snapshot, never from the live artifact or a Stage-5 rebuild — while the upstream `--check`/rebuild only **certifies** it: the live record fingerprint must stay byte-identical to the snapshot's `record_fingerprint`, otherwise the decision is `needs_refresh` and Stage 4 must re-run. Before any email decision the runner locates professor-research's `contact_evidence.py` via the installed-skill locator (`PROFESSOR_CONTACT_EVIDENCE_SCRIPT` injection → shared skills root next to this runner's install → sibling registered checkout `professor-research/.apm/skills/professor-collector/scripts/`; **never derived from program_root**, which holds only user data) and runs it as `contact_evidence.py <program_root> --check`, consuming **the target professor's own `professors[]` freshness result** — never the top-level `result`/`artifact_degraded`. `generated_at`/30-day TTL remains only the send-time age policy.
@@ -313,7 +324,7 @@ The verification gate is executable and mandatory, not background guidance:
 4. **Hard gate:** do not create result JSON, consume choices, call `stage5_immutable.py stage5-finalize`, or spawn a validator until this owner invocation's selected execution range reports `verify: ok`. The runner enforces the same order: a `stage5-plan --result --choices` whose cache is not usable stops with `verify_*` (or the bare Stage-4 reason) and never reads the choices file, so a recipient decision taken before the gate has exactly one route — Step 2.5 writing `_contact_verify.json` `items.email`. A choices row can only confirm that verified address (`recipient_conflict` otherwise), never replace it. Ordinary `verify_missing` / `needs_recheck` is work for Step 2.5, not a completed Stage 5 result.
 5. If finalize nevertheless returns `verify_missing` or another `verify_*` cache refusal, run the initial plan again to obtain its current `verify_diagnostics` and hints, then apply the same failure-identifier stop rule before any further repair. Never present an intermediate runner refusal as successful or completed Stage 5.
 
-`stage5-plan` (no result/choices) → Step 2.5 until `verify: ok` → model result JSON → optional dynamic-field-only polish → user choices → `stage5_immutable.py stage5-finalize` → final validator loop → `stage5-record-validation`.
+`stage5-plan` (no result/choices) → Step 2.5 until `verify: ok` → model result JSON → optional dynamic-field-only polish → user choices → final plan + Chinese translation → `stage5_immutable.py stage5-finalize --translations <file>` → final validator loop → `stage5-record-validation`.
 
 A `needs_refresh` / `direction_materials_changed` stop from any plan or finalize call is not a retryable transient: return to Stage 4 to refreeze that professor's pack, then restart Stage 5 from the fresh initial plan. The refreshed `model_input.direction_materials` (not the previous result, draft or source_map) is the input to the new round.
 

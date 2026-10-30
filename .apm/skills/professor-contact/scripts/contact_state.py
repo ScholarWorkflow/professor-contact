@@ -2206,6 +2206,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--result", required=True)
     p.add_argument("--humanized")
     p.add_argument("--humanized-map", help="JSON object mapping output_id to absolute humanized body path")
+    p.add_argument("--translations", help="Chinese translations JSON keyed by output_id; Markdown only")
     p.add_argument("--choices",
                    help="当前教授选择 JSON 文件的路径；只含本教授已分配的行")
     p.add_argument("--template")
